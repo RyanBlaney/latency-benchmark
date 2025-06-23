@@ -1,5 +1,10 @@
 package common
 
+import (
+	"context"
+	"time"
+)
+
 // StreamType represents the type of an audio stream
 type StreamType string
 
@@ -10,8 +15,134 @@ const (
 )
 
 // StreamMetadata contains metadata and info about the stream
+// TODO: ensure metadata matches all possible content types
 type StreamMetadata struct {
-	URL     string     `json:"url"`
+	URL         string            `json:"url"`
+	Type        StreamType        `json:"type"`
+	Bitrate     int               `json:"bitrate,omitempty"`
+	SampleRate  int               `json:"sample_rate,omitempty"`
+	Channels    int               `json:"channels,omitempty"`
+	Codec       string            `json:"codec,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	Artist      string            `json:"artist,omitempty"`
+	Genre       string            `json:"genre,omitempty"`
+	Station     string            `json:"station,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Timestamp   time.Time         `json:"timestamp"`
+}
+
+// AudioData represents processed audio data
+type AudioData struct {
+	PCM        []float64       `json:"-"` // Raw PCM data
+	SampleRate int             `json:"sample_rate"`
+	Channels   int             `json:"channels"`
+	Duration   time.Duration   `json:"duration"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Metadata   *StreamMetadata `json:"metadata,omitempty"`
+}
+
+// StreamStats containing streaming statistics
+type StreamStats struct {
+	BytesReceived    int64         `json:"bytes_received"`
+	SegmentsReceived int           `json:"segments_received,omitempty"` // HLS specific
+	Dropouts         int           `json:"dropouts"`
+	AverageBitrate   float64       `json:"average_bitrate"`
+	ConnectionTime   time.Duration `json:"connection_time"`
+	FirstByteTime    time.Duration `json:"first_byte_time"`
+	BufferHealth     float64       `json:"buffer_health"` // 0.0-1.0
+}
+
+// StreamHandler defines the interface for handling different stream types
+type StreamHandler interface {
+	// Type returns the stream type this handler supports
+	Type() StreamType
+
+	// CanHandle determines if this handler can process the given URL
+	CanHandle(url string) bool
+
+	// Connect establishes connection to the stream
+	Connect(ctx context.Context, url string) error
+
+	// GetMetadata retrieves stream metadata
+	GetMetadata() (*StreamMetadata, error)
+
+	// ReadAudio reads audio data from the stream
+	ReadAudio(ctx context.Context) (*AudioData, error)
+
+	// GetStats returns current streaming statistics
+	GetStats() *StreamStats
+
+	// Close closes the stream connection
+	Close() error
+}
+
+// StreamDetector defines the interface for detecting stream types
+type StreamDetector interface {
+	// DetectType determines the stream type for URL and headers
+	DetectType(ctx context.Context, url string) (StreamType, error)
+
+	// ProbeStream performs a lightweight probe to gather basic info
+	ProbeStream(ctx context.Context, url string) (*StreamMetadata, error)
+}
+
+// StreamManager defines the interface for managing multiple streams
+type StreamManager interface {
+	// CreateHandler creates a handler for the given stream type
+	CreateHandler(streamType StreamType) (StreamHandler, error)
+
+	// DetectAndCreate detects stream type and creates appropriate handler
+	DetectAndCreate(ctx context.Context, url string) (StreamHandler, error)
+
+	// RegisterHandler registers a custom stream handler
+	RegisterHandler(streamType StreamType, handler StreamHandler) error
+
+	// SupportedTypes returns a list of supported stream types
+	SupportedTypes() []StreamType
+}
+
+// StreamValidator defines validation interface
+type StreamValidator interface {
+	// ValidateURL validates if URL is accessible and valid
+	ValidateURL(ctx context.Context, url string) error
+
+	// ValidateStream validates stream content and format
+	ValidateStream(ctx context.Context, handler StreamHandler) error
+
+	// ValidateAudio validates audio data quality
+	ValidateAudio(data *AudioData) error
+}
+
+// StreamError represents stream-related errors
+type StreamError struct {
 	Type    StreamType `json:"type"`
-	Bitrate int        `json:"bitrate,omitempty"`
+	URL     string     `json:"url"`
+	Code    string     `json:"code"`
+	Message string     `json:"message"`
+	Cause   error      `json:"-"`
+}
+
+func (e *StreamError) Unwrap() error {
+	return e.Cause
+}
+
+// Common error codes
+const (
+	ErrCodeConnection    = "CONNECTION_FAILEeD"
+	ErrCodeTimeout       = "TIMEOUT"
+	ErrCodeInvalidFormat = "INVALID_FORMAT"
+	ErrCodeDecoding      = "DECODING_FAILED"
+	ErrCodeMetadata      = "METADATA_ERROR"
+	ErrCodeUnsupported   = "UNSUPPORTED_STREAM"
+)
+
+// NewStreamError creates a new stream error
+func NewStreamError(streamType StreamType, url, code, message string, cause error) *StreamError {
+	return &StreamError{
+		Type:    streamType,
+		URL:     url,
+		Code:    code,
+		Message: message,
+		Cause:   cause,
+	}
 }
