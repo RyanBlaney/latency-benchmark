@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	//"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
-	//"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
 )
 
 // Factory implements StreamManager interface

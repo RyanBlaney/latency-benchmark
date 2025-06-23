@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/tunein/cdn-benchmark-cli/configs"
 )
 
 var (
@@ -69,9 +70,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table",
 		"output format (json, table, csv, yaml)")
 
+	// Bind flags to viper with correct keys to avoid namespace conflicts
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
 	viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
-	viper.BindPFlag("output_format", rootCmd.PersistentFlags().Lookup("output"))
+	viper.BindPFlag("output_format", rootCmd.PersistentFlags().Lookup("output")) // Bind --output flag to output_format config
 	viper.BindPFlag("config_dir", rootCmd.PersistentFlags().Lookup("config-dir"))
 	viper.BindPFlag("data_dir", rootCmd.PersistentFlags().Lookup("data-dir"))
 }
@@ -116,7 +118,7 @@ func initConfig() {
 
 // initializeConfig initializes configuration after flags are parsed
 func initializeConfig(cmd *cobra.Command) error {
-	// Bind all flags to viper
+	// Bind all flags to viper, but skip the ones we've already handled manually
 	return bindFlags(cmd, viper.GetViper())
 }
 
@@ -124,7 +126,22 @@ func initializeConfig(cmd *cobra.Command) error {
 func bindFlags(cmd *cobra.Command, v *viper.Viper) error {
 	var lastErr error
 
+	// List of flags that have already been bound manually in init()
+	// to avoid conflicts with configuration struct fields
+	skipFlags := map[string]bool{
+		"verbose":    true,
+		"log-level":  true,
+		"output":     true, // Skip this one - it's bound to output_format
+		"config-dir": true,
+		"data-dir":   true,
+	}
+
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		// Skip flags that were already bound manually
+		if skipFlags[f.Name] {
+			return
+		}
+
 		// Environment variable name
 		envVarSuffix := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 
@@ -150,48 +167,110 @@ func bindFlags(cmd *cobra.Command, v *viper.Viper) error {
 	return lastErr
 }
 
-// setDefaults sets default configuration values
+// setDefaults sets default configuration values using the configs package
 func setDefaults() {
-	// Application defaults
-	viper.SetDefault("verbose", false)
-	viper.SetDefault("log_level", "info")
-	viper.SetDefault("output_format", "table")
+	defaultConfig := configs.GetDefaultConfig()
 
-	// Directory defaults
-	home, _ := os.UserHomeDir()
-	viper.SetDefault("config_dir", filepath.Join(home, ".config", "cdn-benchmark"))
-	viper.SetDefault("data_dir", filepath.Join(home, ".local", "share", "cdn-benchmark"))
+	// Application defaults
+	viper.SetDefault("verbose", defaultConfig.Verbose)
+	viper.SetDefault("log_level", defaultConfig.LogLevel)
+	viper.SetDefault("output_format", defaultConfig.OutputFormat)
+	viper.SetDefault("config_dir", defaultConfig.ConfigDir)
+	viper.SetDefault("data_dir", defaultConfig.DataDir)
 
 	// Test defaults
-	viper.SetDefault("test.timeout", "30s")
-	viper.SetDefault("test.retry_attempts", 3)
-	viper.SetDefault("test.retry_delay", "5s")
+	viper.SetDefault("test.timeout", defaultConfig.Test.Timeout)
+	viper.SetDefault("test.retry_attempts", defaultConfig.Test.RetryAttempts)
+	viper.SetDefault("test.retry_delay", defaultConfig.Test.RetryDelay)
+	viper.SetDefault("test.concurrent", defaultConfig.Test.Concurrent)
+	viper.SetDefault("test.max_concurrency", defaultConfig.Test.MaxConcurrency)
 
 	// Stream defaults
-	viper.SetDefault("stream.connection_timeout", "10s")
-	viper.SetDefault("stream.read_timeout", "30s")
-	viper.SetDefault("stream.buffer_size", 8192)
-	viper.SetDefault("stream.max_redirects", 3)
+	viper.SetDefault("stream.connection_timeout", defaultConfig.Stream.ConnectionTimeout)
+	viper.SetDefault("stream.read_timeout", defaultConfig.Stream.ReadTimeout)
+	viper.SetDefault("stream.buffer_size", defaultConfig.Stream.BufferSize)
+	viper.SetDefault("stream.max_redirects", defaultConfig.Stream.MaxRedirects)
+	viper.SetDefault("stream.user_agent", defaultConfig.Stream.UserAgent)
+
+	// Set default headers if any
+	for key, value := range defaultConfig.Stream.Headers {
+		viper.SetDefault(fmt.Sprintf("stream.headers.%s", key), value)
+	}
 
 	// Audio processing defaults
-	viper.SetDefault("audio.sample_rate", 44100)
-	viper.SetDefault("audio.channels", 2)
-	viper.SetDefault("audio.buffer_duration", "1s")
-	viper.SetDefault("audio.window_size", 2048)
-	viper.SetDefault("audio.overlap", 0.5)
+	viper.SetDefault("audio.sample_rate", defaultConfig.Audio.SampleRate)
+	viper.SetDefault("audio.channels", defaultConfig.Audio.Channels)
+	viper.SetDefault("audio.buffer_duration", defaultConfig.Audio.BufferDuration)
+	viper.SetDefault("audio.window_size", defaultConfig.Audio.WindowSize)
+	viper.SetDefault("audio.overlap", defaultConfig.Audio.Overlap)
+	viper.SetDefault("audio.window_function", defaultConfig.Audio.WindowFunction)
+	viper.SetDefault("audio.fft_size", defaultConfig.Audio.FFTSize)
+	viper.SetDefault("audio.mel_bins", defaultConfig.Audio.MelBins)
 
 	// Quality thresholds
-	viper.SetDefault("quality.min_similarity", 0.95)
-	viper.SetDefault("quality.max_latency", "5s")
-	viper.SetDefault("quality.min_bitrate", 128)
+	viper.SetDefault("quality.min_similarity", defaultConfig.Quality.MinSimilarity)
+	viper.SetDefault("quality.max_latency", defaultConfig.Quality.MaxLatency)
+	viper.SetDefault("quality.min_bitrate", defaultConfig.Quality.MinBitrate)
+	viper.SetDefault("quality.max_dropouts", defaultConfig.Quality.MaxDropouts)
+	viper.SetDefault("quality.buffer_health", defaultConfig.Quality.BufferHealth)
 
 	// Output defaults
-	viper.SetDefault("output.precision", 3)
-	viper.SetDefault("output.include_metadata", true)
-	viper.SetDefault("output.timestamps", true)
+	viper.SetDefault("output.precision", defaultConfig.Output.Precision)
+	viper.SetDefault("output.include_metadata", defaultConfig.Output.IncludeMetadata)
+	viper.SetDefault("output.timestamps", defaultConfig.Output.Timestamps)
+	viper.SetDefault("output.colors", defaultConfig.Output.Colors)
+	viper.SetDefault("output.pager", defaultConfig.Output.Pager)
+
+	// Regional defaults
+	for regionKey, regionConfig := range defaultConfig.Regions {
+		viper.SetDefault(fmt.Sprintf("regions.%s.name", regionKey), regionConfig.Name)
+		viper.SetDefault(fmt.Sprintf("regions.%s.endpoint", regionKey), regionConfig.Endpoint)
+		viper.SetDefault(fmt.Sprintf("regions.%s.location", regionKey), regionConfig.Location)
+		viper.SetDefault(fmt.Sprintf("regions.%s.enabled", regionKey), regionConfig.Enabled)
+
+		// Set region headers
+		for headerKey, headerValue := range regionConfig.Headers {
+			viper.SetDefault(fmt.Sprintf("regions.%s.headers.%s", regionKey, headerKey), headerValue)
+		}
+	}
+
+	// Test profiles defaults
+	for profileKey, profileConfig := range defaultConfig.Profiles {
+		viper.SetDefault(fmt.Sprintf("profiles.%s.name", profileKey), profileConfig.Name)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.description", profileKey), profileConfig.Description)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.duration", profileKey), profileConfig.Duration)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.regions", profileKey), profileConfig.Regions)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.metrics", profileKey), profileConfig.Metrics)
+
+		// Profile thresholds
+		viper.SetDefault(fmt.Sprintf("profiles.%s.thresholds.min_similarity", profileKey), profileConfig.Thresholds.MinSimilarity)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.thresholds.max_latency", profileKey), profileConfig.Thresholds.MaxLatency)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.thresholds.min_bitrate", profileKey), profileConfig.Thresholds.MinBitrate)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.thresholds.max_dropouts", profileKey), profileConfig.Thresholds.MaxDropouts)
+		viper.SetDefault(fmt.Sprintf("profiles.%s.thresholds.buffer_health", profileKey), profileConfig.Thresholds.BufferHealth)
+
+		// Profile tags
+		for tagKey, tagValue := range profileConfig.Tags {
+			viper.SetDefault(fmt.Sprintf("profiles.%s.tags.%s", profileKey, tagKey), tagValue)
+		}
+	}
 }
 
 // GetConfig returns the current viper instance
 func GetConfig() *viper.Viper {
 	return viper.GetViper()
+}
+
+// LoadAppConfig loads and validates the application configuration
+func LoadAppConfig() (*configs.Config, error) {
+	config, err := configs.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	if err := configs.ValidateConfig(config); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return config, nil
 }

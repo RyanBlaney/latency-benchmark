@@ -2,10 +2,7 @@ package stream
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"

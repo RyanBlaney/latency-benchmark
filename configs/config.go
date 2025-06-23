@@ -127,11 +127,62 @@ type StreamMetadata struct {
 	Format     string `mapstructure:"format"`
 }
 
-// LoadConfig loads configuration from viper
+// LoadConfig loads configuration from viper with proper handling of conflicting keys
 func LoadConfig() (*Config, error) {
 	config := &Config{}
 
-	if err := viper.Unmarshal(config); err != nil {
+	// Create a copy of viper settings to avoid modifying the global instance
+	configViper := viper.New()
+
+	// Copy all settings from the global viper instance, excluding conflicting flag keys
+	conflictingKeys := map[string]bool{
+		"output":  true, // conflicts with output config section
+		"regions": true, // conflicts with regions config section
+	}
+
+	for _, key := range viper.AllKeys() {
+		if !conflictingKeys[key] {
+			configViper.Set(key, viper.Get(key))
+		}
+	}
+
+	// Handle the output flag conflict by mapping it to output_format
+	if viper.IsSet("output") {
+		configViper.Set("output_format", viper.GetString("output"))
+	}
+
+	// Handle regions flag conflict by mapping it to benchmark.regions
+	if viper.IsSet("regions") {
+		configViper.Set("benchmark.regions", viper.GetStringSlice("regions"))
+	}
+
+	// Ensure output configuration section exists with defaults if not already set
+	if !configViper.IsSet("output.precision") {
+		defaultOutput := GetDefaultOutputConfig()
+		configViper.Set("output.precision", defaultOutput.Precision)
+		configViper.Set("output.include_metadata", defaultOutput.IncludeMetadata)
+		configViper.Set("output.timestamps", defaultOutput.Timestamps)
+		configViper.Set("output.colors", defaultOutput.Colors)
+		configViper.Set("output.pager", defaultOutput.Pager)
+	}
+
+	// Ensure regions configuration section exists with defaults if not already set
+	if !configViper.IsSet("regions.local") {
+		defaultRegions := GetDefaultRegions()
+		for regionKey, regionConfig := range defaultRegions {
+			configViper.Set(fmt.Sprintf("regions.%s.name", regionKey), regionConfig.Name)
+			configViper.Set(fmt.Sprintf("regions.%s.endpoint", regionKey), regionConfig.Endpoint)
+			configViper.Set(fmt.Sprintf("regions.%s.location", regionKey), regionConfig.Location)
+			configViper.Set(fmt.Sprintf("regions.%s.enabled", regionKey), regionConfig.Enabled)
+
+			// Set region headers
+			for headerKey, headerValue := range regionConfig.Headers {
+				configViper.Set(fmt.Sprintf("regions.%s.headers.%s", regionKey, headerKey), headerValue)
+			}
+		}
+	}
+
+	if err := configViper.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("unable to decode configuration: %w", err)
 	}
 

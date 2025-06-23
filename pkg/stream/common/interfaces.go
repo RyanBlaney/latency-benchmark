@@ -59,7 +59,7 @@ type StreamHandler interface {
 	Type() StreamType
 
 	// CanHandle determines if this handler can process the given URL
-	CanHandle(url string) bool
+	CanHandle(ctx context.Context, url string) bool
 
 	// Connect establishes connection to the stream
 	Connect(ctx context.Context, url string) error
