@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
 )
 
 type Detector struct {
@@ -42,30 +44,17 @@ func (sd *Detector) DetectType(ctx context.Context, streamURL string) (common.St
 
 // detectFromURL attempts to detect stream type from URL patterns
 func (sd *Detector) detectFromURL(streamURL string) common.StreamType {
-	u, err := url.Parse(streamURL)
-	if err != nil {
-		fmt.Printf("{DEBUG}: Error in parsing URl: %v", err)
-		return common.StreamTypeUnsupported
-	}
-
-	path := strings.ToLower(u.Path)
+	var st common.StreamType
 
 	// HLS detection patterns
-	if strings.HasSuffix(path, ".m3u8") ||
-		strings.Contains(path, "/playlist.m3u8") ||
-		strings.Contains(path, "/index.m3u8") ||
-		strings.Contains(u.RawQuery, "m3u8") {
+	st = hls.DetectFromURL(streamURL)
+	if st == common.StreamTypeHLS {
 		return common.StreamTypeHLS
 	}
 
 	// ICEcast detection patterns
-	if strings.HasSuffix(path, ".mp3") ||
-		strings.HasSuffix(path, ".aac") ||
-		strings.HasSuffix(path, ".ogg") ||
-		strings.HasSuffix(path, "/stream") ||
-		strings.Contains(path, "/listen") ||
-		u.Port() == "8000" || // Common ICEcast port
-		u.Port() == "8080" {
+	st = icecast.DetectFromURL(streamURL)
+	if st == common.StreamTypeICEcast {
 		return common.StreamTypeICEcast
 	}
 
@@ -74,41 +63,17 @@ func (sd *Detector) detectFromURL(streamURL string) common.StreamType {
 
 // detectFromHeaders performs HTTP HEAD request to detect stream type from headers
 func (sd *Detector) detectFromHeaders(ctx context.Context, streamURL string) (common.StreamType, error) {
-	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
-	if err != nil {
-		fmt.Printf("{DEBUG}: Error creating request to HTTP headers: %v", err)
-		return common.StreamTypeUnsupported, err
-	}
-
-	// Set user agent to avoid blocking
-	req.Header.Set("User-Agent", "TuneIN-CDN-Benchmark/1.0")
-	req.Header.Set("Accept", "*/*")
-
-	resp, err := sd.client.Do(req)
-	if err != nil {
-		fmt.Printf("{DEBUG}: Error getting response from client: %v", err)
-		return common.StreamTypeUnsupported, err
-	}
-	defer resp.Body.Close()
-
-	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	server := strings.ToLower(resp.Header.Get("Server"))
+	var st common.StreamType
 
 	// HLS detection
-	if strings.Contains(contentType, "application/vnd.apple.mpegurl") ||
-		strings.Contains(contentType, "application/x-mpegurl") ||
-		strings.Contains(contentType, "vnd.apple.mpegurl") {
+	st = hls.DetectFromHeaders(ctx, sd.client, streamURL)
+	if st == common.StreamTypeHLS {
 		return common.StreamTypeHLS, nil
 	}
 
 	// ICEcast detection
-	if strings.Contains(contentType, "audio/mpeg") ||
-		strings.Contains(contentType, "audio/aac") ||
-		strings.Contains(contentType, "audio/ogg") ||
-		strings.Contains(contentType, "application/ogg") ||
-		strings.Contains(server, "icecast") ||
-		resp.Header.Get("icy-name") != "" ||
-		resp.Header.Get("icy-description") != "" {
+	st = icecast.DetectFromHeaders(ctx, sd.client, streamURL)
+	if st == common.StreamTypeICEcast {
 		return common.StreamTypeICEcast, nil
 	}
 
