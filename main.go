@@ -1,6 +1,6 @@
 package main
 
-import "github.com/RyanBlaney/cdn-benchmark-cli/cmd/root"
+import "github.com/tunein/cdn-benchmark-cli/cmd"
 
 func main() {
 	root.Execute()
