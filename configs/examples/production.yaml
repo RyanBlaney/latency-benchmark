@@ -1,0 +1,127 @@
+# Application settings
+verbose: false
+log_level: warn
+output_format: json
+
+# Test configuration
+test:
+  timeout: 5m
+  retry_attempts: 5
+  retry_delay: 10s
+  concurrent: true
+  max_concurrency: 8
+
+# Stream handling
+stream:
+  connection_timeout: 15s
+  read_timeout: 60s
+  buffer_size: 16384
+  max_redirects: 5
+  user_agent: "TuneIn-CDN-Benchmark-Prod/1.0"
+  headers:
+    "X-Forwarded-For": "10.0.0.1"
+    "Cache-Control": "no-cache"
+
+# Audio processing (high quality)
+audio:
+  sample_rate: 48000
+  channels: 2
+  buffer_duration: 2s
+  window_size: 4096
+  overlap: 0.75
+  window_function: "hamming"
+  fft_size: 4096
+  mel_bins: 256
+
+# Strict quality thresholds
+quality:
+  min_similarity: 0.98
+  max_latency: 2s
+  min_bitrate: 256
+  max_dropouts: 1
+  buffer_health: 0.95
+
+# Output configuration
+output:
+  precision: 4
+  include_metadata: true
+  timestamps: true
+  colors: false
+  pager: false
+
+# Regional configuration
+regions:
+  us-west-1:
+    name: "US West (California)"
+    endpoint: "https://us-west-1.tunein.com"
+    location: "San Francisco, CA"
+    enabled: true
+  us-east-1:
+    name: "US East (Virginia)"
+    endpoint: "https://us-east-1.tunein.com"
+    location: "Ashburn, VA"
+    enabled: true
+  eu-west-1:
+    name: "EU West (Ireland)"
+    endpoint: "https://eu-west-1.tunein.com"
+    location: "Dublin, Ireland"
+    enabled: true
+  ap-southeast-1:
+    name: "Asia Pacific (Singapore)"
+    endpoint: "https://ap-southeast-1.tunein.com"
+    location: "Singapore"
+    enabled: true
+
+# Production test profiles
+profiles:
+  production:
+    name: "Production Benchmark"
+    description: "Comprehensive production testing suite"
+    duration: 10m
+    regions: ["us-west-1", "us-east-1", "eu-west-1"]
+    metrics: ["latency", "quality", "reliability", "spectral_analysis"]
+    streams:
+      - name: "Primary HLS"
+        url: "https://cdn1.tunein.com/hls/primary.m3u8"
+        type: "hls"
+        reference: "https://origin.tunein.com/hls/primary.m3u8"
+        expected:
+          bitrate: 320
+          sample_rate: 48000
+          channels: 2
+          codec: "aac"
+      - name: "Secondary HLS"
+        url: "https://cdn2.tunein.com/hls/secondary.m3u8"
+        type: "hls"
+        expected:
+          bitrate: 256
+          sample_rate: 44100
+          channels: 2
+      - name: "ICEcast Backup"
+        url: "https://backup.tunein.com:8000/stream"
+        type: "icecast"
+        expected:
+          bitrate: 192
+          codec: "mp3"
+    thresholds:
+      min_similarity: 0.99
+      max_latency: 1s
+      min_bitrate: 256
+    tags:
+      environment: "production"
+      team: "infrastructure"
+      alert_channel: "cdn-alerts"
+
+  nightly:
+    name: "Nightly Regression"
+    description: "Automated nightly testing"
+    duration: 30m
+    regions: ["us-west-1", "us-east-1", "eu-west-1", "ap-southeast-1"]
+    metrics: ["full_suite"]
+    streams:
+      - name: "All Production Streams"
+        url: "config://production_streams"
+        type: "multiple"
+    tags:
+      schedule: "nightly"
+      automation: "true"

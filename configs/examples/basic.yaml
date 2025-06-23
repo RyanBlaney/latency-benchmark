@@ -1,0 +1,62 @@
+# Application settings
+verbose: false
+log_level: info
+output_format: table
+
+# Test configuration
+test:
+  timeout: 30s
+  retry_attempts: 3
+  retry_delay: 5s
+  concurrent: false
+  max_concurrency: 4
+
+# Stream handling
+stream:
+  connection_timeout: 10s
+  read_timeout: 30s
+  buffer_size: 8192
+  max_redirects: 3
+  user_agent: "TuneIn-CDN-Benchmark/1.0"
+
+# Audio processing
+audio:
+  sample_rate: 44100
+  channels: 2
+  buffer_duration: 1s
+  window_size: 2048
+  overlap: 0.5
+  window_function: "hann"
+  fft_size: 2048
+  mel_bins: 128
+
+# Quality thresholds
+quality:
+  min_similarity: 0.95
+  max_latency: 5s
+  min_bitrate: 128
+  max_dropouts: 3
+  buffer_health: 0.8
+
+# Output formatting
+output:
+  precision: 3
+  include_metadata: true
+  timestamps: true
+  colors: true
+  pager: false
+
+# Basic test profile
+profiles:
+  quick:
+    name: "Quick Test"
+    description: "Fast connectivity and basic quality check"
+    duration: 30s
+    metrics: ["latency", "connectivity", "basic_quality"]
+    streams:
+      - name: "Test HLS Stream"
+        url: "https://example.com/stream.m3u8"
+        type: "hls"
+      - name: "Test ICEcast Stream"
+        url: "https://example.com:8000/stream"
+        type: "icecast"
