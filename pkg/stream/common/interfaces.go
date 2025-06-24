@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
@@ -73,6 +74,9 @@ type StreamHandler interface {
 
 	// GetStats returns current streaming statistics
 	GetStats() *StreamStats
+
+	// GetClient returns the HTTP Client
+	GetClient() *http.Client
 
 	// Close closes the stream connection
 	Close() error

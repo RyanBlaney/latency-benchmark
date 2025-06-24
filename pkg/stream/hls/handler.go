@@ -142,3 +142,8 @@ func (h *Handler) Close() error {
 func (h *Handler) GetPlaylist() *M3U8Playlist {
 	return h.playlist
 }
+
+// GetClient returns the HTTP Client
+func (h *Handler) GetClient() *http.Client {
+	return h.client
+}

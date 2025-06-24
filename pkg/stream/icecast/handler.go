@@ -244,6 +244,11 @@ func (h *Handler) GetStats() *common.StreamStats {
 	return h.stats
 }
 
+// GetClient returns the HTTP Client
+func (h *Handler) GetClient() *http.Client {
+	return h.client
+}
+
 // Close closes the stream connection
 func (h *Handler) Close() error {
 	h.connected = false
