@@ -19,6 +19,7 @@ const (
 type StreamMetadata struct {
 	URL         string            `json:"url"`
 	Type        StreamType        `json:"type"`
+	Format      string            `json:"format"`
 	Bitrate     int               `json:"bitrate,omitempty"`
 	SampleRate  int               `json:"sample_rate,omitempty"`
 	Channels    int               `json:"channels,omitempty"`

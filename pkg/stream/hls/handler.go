@@ -16,6 +16,7 @@ type Handler struct {
 	metadata  *common.StreamMetadata
 	stats     *common.StreamStats
 	connected bool
+	playlist  *M3U8Playlist
 }
 
 // NewHandler creates a new HLS stream handler
@@ -43,9 +44,8 @@ func (h *Handler) CanHandle(ctx context.Context, url string) bool {
 		return true
 	}
 
-	// TODO: add m3u8 parsing
-
-	return false
+	// M3U8 content parsing
+	return IsValidHLSContent(ctx, h.client, url)
 }
 
 func (h *Handler) Connect(ctx context.Context, url string) error {
@@ -56,25 +56,26 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	h.url = url
 	startTime := time.Now()
 
-	// TODO: Implement actual HLS playlist parsing and validation
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// Parse the M3U8 playlist
+	playlist, err := DetectFromM3U8Content(ctx, h.client, url)
 	if err != nil {
 		return common.NewStreamError(common.StreamTypeHLS, url,
-			common.ErrCodeConnection, "failed to create request", err)
+			common.ErrCodeConnection, "failed to parse M3U8 playlist", err)
 	}
 
-	req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
-	req.Header.Set("Accept", "application/vnd.apple.mpegurl,application/x-mpegurl")
-
-	resp, err := h.client.Do(req)
-	if err != nil {
+	if !playlist.IsValid {
 		return common.NewStreamError(common.StreamTypeHLS, url,
-			common.ErrCodeConnection, "connection failed", err)
+			common.ErrCodeInvalidFormat, "invalid M3U8 playlist format", nil)
 	}
-	defer resp.Body.Close()
+
+	// Store the parsed playlist
+	h.playlist = playlist
+
+	// Extract metadata from the parsed playlist
+	h.metadata = playlist.Metadata
 
 	h.stats.ConnectionTime = time.Since(startTime)
-	h.stats.FirstByteTime = h.stats.ConnectionTime // TODO: more advanced end-to-end latency
+	h.stats.FirstByteTime = h.stats.ConnectionTime
 	h.connected = true
 
 	return nil
@@ -86,14 +87,15 @@ func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 		return nil, fmt.Errorf("not connected")
 	}
 
+	// Return the metadata extracted from playlist parsing
 	if h.metadata == nil {
+		// Fallback metadata if parsing failed
 		h.metadata = &common.StreamMetadata{
-			URL:       h.url,
-			Type:      common.StreamTypeHLS,
-			Headers:   make(map[string]string),
-			Timestamp: time.Now(),
-			// TODO: Parse actual metadata from m3u8 playlist
-			Codec:      "aac", // Default assumption
+			URL:        h.url,
+			Type:       common.StreamTypeHLS,
+			Headers:    make(map[string]string),
+			Timestamp:  time.Now(),
+			Codec:      "aac",
 			SampleRate: 44100,
 			Channels:   2,
 		}
@@ -134,4 +136,9 @@ func (h *Handler) GetStats() *common.StreamStats {
 func (h *Handler) Close() error {
 	h.connected = false
 	return nil
+}
+
+// GetPlaylist returns the parsed playlist
+func (h *Handler) GetPlaylist() *M3U8Playlist {
+	return h.playlist
 }
