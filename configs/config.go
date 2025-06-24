@@ -213,4 +213,3 @@ func ValidateConfig(config *Config) error {
 
 	return nil
 }
-
