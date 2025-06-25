@@ -65,6 +65,7 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 			common.ErrCodeConnection, "failed to create request", err)
 	}
 
+	// TODO: specify headers in config
 	req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
 	req.Header.Set("Accept", "audio/*")
 	req.Header.Set("Icy-MetaData", "1") // Request ICEcast metadata

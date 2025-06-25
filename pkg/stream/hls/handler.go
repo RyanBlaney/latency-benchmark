@@ -21,6 +21,7 @@ type Handler struct {
 	connected         bool
 	playlist          *M3U8Playlist
 	parser            *Parser
+	downloader        *AudioDownloader
 	metadataExtractor *MetadataExtractor
 	config            *Config
 }
@@ -36,10 +37,18 @@ func NewHandlerWithConfig(config *Config) *Handler {
 		config = DefaultConfig()
 	}
 
-	return &Handler{
-		client: &http.Client{
-			Timeout: time.Duration(config.Detection.TimeoutSeconds) * time.Second,
+	// Create HTTP client with configured timeouts
+	client := &http.Client{
+		Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: false,
 		},
+	}
+
+	return &Handler{
+		client:            client,
 		stats:             &common.StreamStats{},
 		parser:            NewConfigurableParser(config.Parser).Parser,
 		metadataExtractor: NewConfigurableMetadataExtractor(config.MetadataExtractor).MetadataExtractor,
@@ -54,16 +63,25 @@ func (h *Handler) Type() common.StreamType {
 
 // CanHandle determines if this handler can process the given URL
 func (h *Handler) CanHandle(ctx context.Context, url string) bool {
-	if st := DetectFromURL(url); st == common.StreamTypeHLS {
+	// Use configurable detection for better accuracy
+	streamType, _, err := ConfigurableDetection(ctx, url, h.config)
+	if err == nil && streamType == common.StreamTypeHLS {
 		return true
 	}
 
-	if st := DetectFromHeaders(ctx, h.client, url); st == common.StreamTypeHLS {
+	// Fallback to individual detection methods for backward compatibility
+	detector := NewDetectorWithConfig(h.config.Detection)
+
+	if st := detector.DetectFromURL(url); st == common.StreamTypeHLS {
 		return true
 	}
 
-	// M3U8 content parsing
-	return IsValidHLSContent(ctx, h.client, url)
+	if st := detector.DetectFromHeaders(ctx, url, h.config.HTTP); st == common.StreamTypeHLS {
+		return true
+	}
+
+	// M3U8 content parsing as final check
+	return detector.IsValidHLSContent(ctx, url, h.config.HTTP, h.config.Parser)
 }
 
 // Connect establishes connection to the HLS stream
@@ -102,13 +120,20 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 
 // parsePlaylist parses the M3U8 playlist with current configuration
 func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist, error) {
+	// Create context with configured timeout
+	ctx, cancel := context.WithTimeout(ctx, h.config.HTTP.ConnectionTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
-	req.Header.Set("Accept", "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain")
+	// Set headers from configuration
+	headers := h.config.GetHTTPHeaders()
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -121,7 +146,7 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 	}
 
 	// Store response headers
-	headers := make(map[string]string)
+	headers = make(map[string]string)
 	for key, values := range resp.Header {
 		if len(values) > 0 {
 			headers[strings.ToLower(key)] = values[0]
@@ -151,15 +176,34 @@ func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 
 	// Return the metadata extracted during connection
 	if h.metadata == nil {
-		// Fallback metadata if parsing failed
+		// Fallback metadata if parsing failed, using configured defaults
 		h.metadata = &common.StreamMetadata{
-			URL:        h.url,
-			Type:       common.StreamTypeHLS,
-			Headers:    make(map[string]string),
-			Timestamp:  time.Now(),
-			Codec:      h.config.MetadataExtractor.DefaultValues["codec"].(string),
-			SampleRate: h.config.MetadataExtractor.DefaultValues["sample_rate"].(int),
-			Channels:   h.config.MetadataExtractor.DefaultValues["channels"].(int),
+			URL:       h.url,
+			Type:      common.StreamTypeHLS,
+			Headers:   make(map[string]string),
+			Timestamp: time.Now(),
+		}
+
+		// Apply default values from configuration
+		if defaults := h.config.MetadataExtractor.DefaultValues; defaults != nil {
+			if codec, ok := defaults["codec"].(string); ok {
+				h.metadata.Codec = codec
+			}
+			if sampleRate, ok := defaults["sample_rate"].(int); ok {
+				h.metadata.SampleRate = sampleRate
+			} else if sampleRateFloat, ok := defaults["sample_rate"].(float64); ok {
+				h.metadata.SampleRate = int(sampleRateFloat)
+			}
+			if channels, ok := defaults["channels"].(int); ok {
+				h.metadata.Channels = channels
+			} else if channelsFloat, ok := defaults["channels"].(float64); ok {
+				h.metadata.Channels = int(channelsFloat)
+			}
+			if bitrate, ok := defaults["bitrate"].(int); ok {
+				h.metadata.Bitrate = bitrate
+			} else if bitrateFloat, ok := defaults["bitrate"].(float64); ok {
+				h.metadata.Bitrate = int(bitrateFloat)
+			}
 		}
 	}
 
@@ -172,21 +216,46 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 		return nil, fmt.Errorf("not connected")
 	}
 
-	// TODO: implement actual HLS segment downloading and audio extraction
-	// This is a placeholder that simulates audio data
-	audioData := &common.AudioData{
-		PCM:        make([]float64, 1024), // Mock PCM data
-		SampleRate: h.metadata.SampleRate,
-		Channels:   h.metadata.Channels,
-		Duration:   time.Second,
-		Timestamp:  time.Now(),
-		Metadata:   h.metadata,
+	if h.playlist == nil {
+		return nil, fmt.Errorf("no playlist available")
 	}
 
-	h.stats.SegmentsReceived++
-	h.stats.BytesReceived += 1024 * 4 // Simulate bytes
+	// Initialize downloader if not exists
+	if h.downloader == nil {
+		h.downloader = NewAudioDownloader(h.client, nil) // Use default config
+	}
+
+	// Download audio sample using configured duration
+	targetDuration := h.config.Audio.SampleDuration
+
+	audioData, err := h.downloader.DownloadAudioSample(ctx, h.playlist, targetDuration)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download audio sample: %w", err)
+	}
+
+	// Enrich metadata from playlist/stream info
+	h.enrichAudioMetadata(audioData)
+
+	// Update stats
+	h.stats.SegmentsReceived = h.downloader.GetDownloadStats().SegmentsDownloaded
+	h.stats.BytesReceived = h.downloader.GetDownloadStats().BytesDownloaded
 
 	return audioData, nil
+}
+
+// enrichAudioMetadata enriches audio data with metadata from the stream
+func (h *Handler) enrichAudioMetadata(audioData *common.AudioData) {
+	if h.metadata == nil {
+		return
+	}
+
+	// Copy the existing stream metadata to audio data
+	// Create a copy to avoid modifying the original
+	metadataCopy := *h.metadata
+	metadataCopy.Timestamp = time.Now()
+
+	// Set the metadata reference
+	audioData.Metadata = &metadataCopy
 }
 
 // GetStats returns current streaming statistics
@@ -223,10 +292,9 @@ func (h *Handler) UpdateConfig(config *Config) {
 
 	h.config = config
 
-	// Update timeout if changed
-	if config.Detection.TimeoutSeconds > 0 {
-		h.client.Timeout = time.Duration(config.Detection.TimeoutSeconds) * time.Second
-	}
+	// Update HTTP client timeout if changed
+	totalTimeout := config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout
+	h.client.Timeout = totalTimeout
 
 	// Recreate parser and metadata extractor with new config
 	h.parser = NewConfigurableParser(config.Parser).Parser
@@ -262,8 +330,16 @@ func (h *Handler) GetSegmentURLs() ([]string, error) {
 		return nil, fmt.Errorf("no playlist available")
 	}
 
-	urls := make([]string, 0, len(h.playlist.Segments))
-	for _, segment := range h.playlist.Segments {
+	maxSegments := h.config.Audio.MaxSegments
+	segments := h.playlist.Segments
+
+	// Limit segments if configured
+	if maxSegments > 0 && len(segments) > maxSegments {
+		segments = segments[:maxSegments]
+	}
+
+	urls := make([]string, 0, len(segments))
+	for _, segment := range segments {
 		// Resolve relative URLs if needed
 		segmentURL := h.resolveURL(segment.URI)
 		urls = append(urls, segmentURL)
@@ -310,5 +386,28 @@ func (h *Handler) resolveURL(uri string) string {
 	// Resolve relative to base
 	resolvedURL := baseURL.ResolveReference(relativeURL)
 	return resolvedURL.String()
+}
+
+// IsConfigured returns true if the handler has a non-default configuration
+func (h *Handler) IsConfigured() bool {
+	return h.config != nil && h.config != DefaultConfig()
+}
+
+// GetConfiguredUserAgent returns the configured user agent
+func (h *Handler) GetConfiguredUserAgent() string {
+	if h.config != nil && h.config.HTTP != nil {
+		return h.config.HTTP.UserAgent
+	}
+	return "TuneIn-CDN-Benchmark/1.0"
+}
+
+// ShouldFollowLive returns true if live playlist following is enabled
+func (h *Handler) ShouldFollowLive() bool {
+	return h.config != nil && h.config.Audio != nil && h.config.Audio.FollowLive
+}
+
+// ShouldAnalyzeSegments returns true if segment analysis is enabled
+func (h *Handler) ShouldAnalyzeSegments() bool {
+	return h.config != nil && h.config.Audio != nil && h.config.Audio.AnalyzeSegments
 }
 

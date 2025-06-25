@@ -60,6 +60,7 @@ func GetDefaultStreamConfig() StreamConfig {
 		BufferSize:        8192,
 		MaxRedirects:      3,
 		UserAgent:         "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader:      "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
 		Headers:           make(map[string]string),
 	}
 }

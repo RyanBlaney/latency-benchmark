@@ -18,6 +18,7 @@ stream:
   buffer_size: 8192
   max_redirects: 3
   user_agent: "TuneIn-CDN-Benchmark/1.0"
+  accept_header: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain"
 
 # Audio processing
 audio:

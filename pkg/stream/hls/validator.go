@@ -18,7 +18,7 @@ type Validator struct {
 	config *Config
 }
 
-// NewValidator creates a new HLS validator
+// NewValidator creates a new HLS validator with default configuration
 func NewValidator() *Validator {
 	return NewValidatorWithConfig(nil)
 }
@@ -29,10 +29,18 @@ func NewValidatorWithConfig(config *Config) *Validator {
 		config = DefaultConfig()
 	}
 
-	return &Validator{
-		client: &http.Client{
-			Timeout: time.Duration(config.Detection.TimeoutSeconds) * time.Second,
+	// Create HTTP client with configured timeouts
+	client := &http.Client{
+		Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: false,
 		},
+	}
+
+	return &Validator{
+		client: client,
 		config: config,
 	}
 }
@@ -52,21 +60,28 @@ func (v *Validator) ValidateURL(ctx context.Context, streamURL string) error {
 			common.ErrCodeUnsupported, "unsupported URL scheme", nil)
 	}
 
-	// Check if URL looks like HLS
-	if DetectFromURL(streamURL) != common.StreamTypeHLS {
+	// Check if URL looks like HLS using configured patterns
+	detector := NewDetectorWithConfig(v.config.Detection)
+	if detector.DetectFromURL(streamURL) != common.StreamTypeHLS {
 		return common.NewStreamError(common.StreamTypeHLS, streamURL,
 			common.ErrCodeInvalidFormat, "URL does not appear to be HLS", nil)
 	}
 
-	// Perform HEAD request to check accessibility
+	// Perform HEAD request to check accessibility with configured timeout
+	ctx, cancel := context.WithTimeout(ctx, v.config.HTTP.ConnectionTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
 	if err != nil {
 		return common.NewStreamError(common.StreamTypeHLS, streamURL,
 			common.ErrCodeConnection, "failed to create request", err)
 	}
 
-	req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
-	req.Header.Set("Accept", "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain")
+	// Set headers from configuration
+	headers := v.config.GetHTTPHeaders()
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := v.client.Do(req)
 	if err != nil {
@@ -81,11 +96,19 @@ func (v *Validator) ValidateURL(ctx context.Context, streamURL string) error {
 			common.ErrCodeConnection, fmt.Sprintf("HTTP %d", resp.StatusCode), nil)
 	}
 
-	// Validate content type for HLS
+	// Validate content type for HLS using configured content types
 	contentType := resp.Header.Get("Content-Type")
 	if contentType != "" && !v.isValidHLSContentType(contentType) {
 		return common.NewStreamError(common.StreamTypeHLS, streamURL,
 			common.ErrCodeInvalidFormat, fmt.Sprintf("invalid content type: %s", contentType), nil)
+	}
+
+	// Check required headers if configured
+	for _, requiredHeader := range v.config.Detection.RequiredHeaders {
+		if resp.Header.Get(requiredHeader) == "" {
+			return common.NewStreamError(common.StreamTypeHLS, streamURL,
+				common.ErrCodeInvalidFormat, fmt.Sprintf("missing required header: %s", requiredHeader), nil)
+		}
 	}
 
 	return nil
@@ -155,10 +178,17 @@ func (v *Validator) ValidateAudio(data *common.AudioData) error {
 		return fmt.Errorf("invalid duration: %v", data.Duration)
 	}
 
-	// HLS-specific audio validation
 	if data.Metadata != nil && data.Metadata.Type == common.StreamTypeHLS {
-		// Check if sample rate matches expected values for HLS
+		// Check if sample rate matches expected values for HLS using configured defaults
 		validSampleRates := []int{22050, 44100, 48000}
+
+		// Add configured default sample rate if it's not in the standard list
+		if defaultSampleRate, ok := v.config.MetadataExtractor.DefaultValues["sample_rate"]; ok {
+			if rate, ok := defaultSampleRate.(int); ok && !slices.Contains(validSampleRates, rate) {
+				validSampleRates = append(validSampleRates, rate)
+			}
+		}
+
 		validRate := slices.Contains(validSampleRates, data.SampleRate)
 		if !validRate {
 			return fmt.Errorf("unusual sample rate for HLS: %d", data.SampleRate)
@@ -168,12 +198,21 @@ func (v *Validator) ValidateAudio(data *common.AudioData) error {
 		if v.isAllSilence(data.PCM) {
 			return fmt.Errorf("audio data contains only silence")
 		}
+
+		// Validate against configured minimum bitrate if available
+		if data.Metadata.Bitrate > 0 {
+			if minBitrate, ok := v.config.MetadataExtractor.DefaultValues["min_bitrate"]; ok {
+				if minRate, ok := minBitrate.(int); ok && data.Metadata.Bitrate < minRate {
+					return fmt.Errorf("bitrate %d is below minimum %d", data.Metadata.Bitrate, minRate)
+				}
+			}
+		}
 	}
 
 	return nil
 }
 
-// validateMetadata validates HLS metadata
+// validateMetadata validates HLS metadata using configuration
 func (v *Validator) validateMetadata(metadata *common.StreamMetadata) error {
 	if metadata.Type != common.StreamTypeHLS {
 		return common.NewStreamError(common.StreamTypeHLS, metadata.URL,
@@ -181,12 +220,26 @@ func (v *Validator) validateMetadata(metadata *common.StreamMetadata) error {
 	}
 
 	if metadata.Codec == "" {
+		// Check if we have a default codec configured
+		if defaultCodec, ok := v.config.MetadataExtractor.DefaultValues["codec"]; ok {
+			if codec, ok := defaultCodec.(string); ok && codec != "" {
+				return nil // Allow empty codec if we have a default
+			}
+		}
 		return common.NewStreamError(common.StreamTypeHLS, metadata.URL,
 			common.ErrCodeInvalidFormat, "codec not detected", nil)
 	}
 
-	// Validate HLS-appropriate codecs
-	validCodecs := []string{"aac", "mp3", "ac3"}
+	// Validate HLS-appropriate codecs (can be configured in the future)
+	validCodecs := []string{"aac", "mp3", "ac3", "he-aac", "opus"}
+
+	// Add configured default codec if it's not in the standard list
+	if defaultCodec, ok := v.config.MetadataExtractor.DefaultValues["codec"]; ok {
+		if codec, ok := defaultCodec.(string); ok && !slices.Contains(validCodecs, strings.ToLower(codec)) {
+			validCodecs = append(validCodecs, strings.ToLower(codec))
+		}
+	}
+
 	validCodec := false
 	for _, codec := range validCodecs {
 		if strings.EqualFold(metadata.Codec, codec) {
@@ -202,7 +255,7 @@ func (v *Validator) validateMetadata(metadata *common.StreamMetadata) error {
 	return nil
 }
 
-// validatePlaylist validates M3U8 playlist structure
+// validatePlaylist validates M3U8 playlist structure using configuration
 func (v *Validator) validatePlaylist(playlist *M3U8Playlist, url string) error {
 	if !playlist.IsValid {
 		return common.NewStreamError(common.StreamTypeHLS, url,
@@ -227,10 +280,20 @@ func (v *Validator) validatePlaylist(playlist *M3U8Playlist, url string) error {
 			common.ErrCodeInvalidFormat, "media playlist missing target duration", nil)
 	}
 
+	// Validate segment count against configured maximum
+	if v.config.Parser.MaxSegmentAnalysis > 0 && len(playlist.Segments) > v.config.Parser.MaxSegmentAnalysis {
+		if v.config.Parser.StrictMode {
+			return common.NewStreamError(common.StreamTypeHLS, url,
+				common.ErrCodeInvalidFormat, fmt.Sprintf("too many segments: %d > %d", len(playlist.Segments), v.config.Parser.MaxSegmentAnalysis), nil)
+		}
+		// In non-strict mode, just log a warning (in a real implementation you'd use a logger)
+		fmt.Printf("Warning: Playlist has %d segments, more than configured maximum %d\n", len(playlist.Segments), v.config.Parser.MaxSegmentAnalysis)
+	}
+
 	return nil
 }
 
-// validatePlaylistContent validates playlist content quality
+// validatePlaylistContent validates playlist content quality using configuration
 func (v *Validator) validatePlaylistContent(playlist *M3U8Playlist, streamURL string) error {
 	// Validate segments
 	for i, segment := range playlist.Segments {
@@ -249,6 +312,14 @@ func (v *Validator) validatePlaylistContent(playlist *M3U8Playlist, streamURL st
 			if _, err := url.Parse(segment.URI); err != nil {
 				return common.NewStreamError(common.StreamTypeHLS, streamURL,
 					common.ErrCodeInvalidFormat, fmt.Sprintf("segment %d has invalid URI", i), err)
+			}
+		}
+
+		// In strict mode, validate segment duration against target duration
+		if v.config.Parser.StrictMode && playlist.TargetDuration > 0 {
+			if segment.Duration > float64(playlist.TargetDuration)*1.5 {
+				return common.NewStreamError(common.StreamTypeHLS, streamURL,
+					common.ErrCodeInvalidFormat, fmt.Sprintf("segment %d duration exceeds target duration significantly", i), nil)
 			}
 		}
 	}
@@ -315,19 +386,33 @@ func (v *Validator) validateBandwidthProgression(variants []M3U8Variant, url str
 		}
 	}
 
-	// Check progression ratios
+	// Check progression ratios (more lenient in non-strict mode)
+	minRatio := 1.1
+	maxRatio := 10.0
+
+	if !v.config.Parser.StrictMode {
+		minRatio = 1.05 // More lenient
+		maxRatio = 20.0 // More lenient
+	}
+
 	for i := 1; i < len(bandwidths); i++ {
 		ratio := float64(bandwidths[i]) / float64(bandwidths[i-1])
-		if ratio < 1.1 || ratio > 10.0 {
-			return common.NewStreamError(common.StreamTypeHLS, url,
-				common.ErrCodeInvalidFormat, "unreasonable bandwidth progression in variants", nil)
+		if ratio < minRatio || ratio > maxRatio {
+			errMsg := "unreasonable bandwidth progression in variants"
+			if v.config.Parser.StrictMode {
+				return common.NewStreamError(common.StreamTypeHLS, url,
+					common.ErrCodeInvalidFormat, errMsg, nil)
+			} else {
+				// Just log warning in non-strict mode
+				fmt.Printf("Warning: %s (ratio: %.2f)\n", errMsg, ratio)
+			}
 		}
 	}
 
 	return nil
 }
 
-// isValidHLSContentType checks if content type is valid for HLS
+// isValidHLSContentType checks if content type is valid for HLS using configured content types
 func (v *Validator) isValidHLSContentType(contentType string) bool {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 
@@ -336,13 +421,15 @@ func (v *Validator) isValidHLSContentType(contentType string) bool {
 		contentType = contentType[:idx]
 	}
 
-	validTypes := []string{
-		"application/vnd.apple.mpegurl",
-		"application/x-mpegurl",
-		"text/plain",
+	// Use configured content types
+	for _, validType := range v.config.Detection.ContentTypes {
+		if strings.EqualFold(contentType, validType) {
+			return true
+		}
 	}
 
-	return slices.Contains(validTypes, contentType)
+	// Fallback to text/plain which is sometimes used
+	return contentType == "text/plain"
 }
 
 // isAllSilence checks if audio data is all silence
@@ -357,3 +444,50 @@ func (v *Validator) isAllSilence(pcm []float64) bool {
 
 	return true
 }
+
+// GetConfig returns the validator's configuration
+func (v *Validator) GetConfig() *Config {
+	return v.config
+}
+
+// UpdateConfig updates the validator's configuration
+func (v *Validator) UpdateConfig(config *Config) {
+	if config == nil {
+		return
+	}
+
+	v.config = config
+
+	// Update HTTP client with new timeouts
+	v.client.Timeout = config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout
+}
+
+// ValidateConfiguration validates the validator's own configuration
+func (v *Validator) ValidateConfiguration() error {
+	if v.config == nil {
+		return fmt.Errorf("validator configuration is nil")
+	}
+
+	if v.config.HTTP.ConnectionTimeout <= 0 {
+		return fmt.Errorf("connection timeout must be positive")
+	}
+
+	if v.config.HTTP.ReadTimeout <= 0 {
+		return fmt.Errorf("read timeout must be positive")
+	}
+
+	if v.config.Detection.TimeoutSeconds <= 0 {
+		return fmt.Errorf("detection timeout must be positive")
+	}
+
+	if len(v.config.Detection.URLPatterns) == 0 {
+		return fmt.Errorf("at least one URL pattern must be configured")
+	}
+
+	if len(v.config.Detection.ContentTypes) == 0 {
+		return fmt.Errorf("at least one content type must be configured")
+	}
+
+	return nil
+}
+

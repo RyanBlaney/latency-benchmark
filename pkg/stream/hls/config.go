@@ -1,9 +1,11 @@
 package hls
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
@@ -13,6 +15,8 @@ type Config struct {
 	Parser            *ParserConfig            `json:"parser"`
 	MetadataExtractor *MetadataExtractorConfig `json:"metadata_extractor"`
 	Detection         *DetectionConfig         `json:"detection"`
+	HTTP              *HTTPConfig              `json:"http"`
+	Audio             *AudioConfig             `json:"audio"`
 }
 
 // ParserConfig holds configuration for M3U8 parsing
@@ -58,6 +62,26 @@ type CustomHeaderMapping struct {
 	Description string `json:"description"`
 }
 
+// HTTPConfig holds HTTP-related configuration for HLS
+type HTTPConfig struct {
+	UserAgent         string            `json:"user_agent"`
+	AcceptHeader      string            `json:"accept_header"`
+	ConnectionTimeout time.Duration     `json:"connection_timeout"`
+	ReadTimeout       time.Duration     `json:"read_timeout"`
+	MaxRedirects      int               `json:"max_redirects"`
+	CustomHeaders     map[string]string `json:"custom_headers"`
+	BufferSize        int               `json:"buffer_size"`
+}
+
+// AudioConfig holds audio-specific configuration for HLS
+type AudioConfig struct {
+	SampleDuration  time.Duration `json:"sample_duration"`
+	BufferDuration  time.Duration `json:"buffer_duration"`
+	MaxSegments     int           `json:"max_segments"`
+	FollowLive      bool          `json:"follow_live"`
+	AnalyzeSegments bool          `json:"analyze_segments"`
+}
+
 // DefaultConfig returns the default HLS configuration
 func DefaultConfig() *Config {
 	return &Config{
@@ -95,6 +119,137 @@ func DefaultConfig() *Config {
 			RequiredHeaders: []string{},
 			TimeoutSeconds:  5,
 		},
+		HTTP: &HTTPConfig{
+			UserAgent:         "TuneIn-CDN-Benchmark/1.0",
+			AcceptHeader:      "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
+			ConnectionTimeout: 5,
+			ReadTimeout:       15,
+			MaxRedirects:      5,
+			CustomHeaders:     make(map[string]string),
+			BufferSize:        16384,
+		},
+		Audio: &AudioConfig{
+			SampleDuration:  30 * time.Second,
+			BufferDuration:  2 * time.Second,
+			MaxSegments:     10,
+			FollowLive:      false,
+			AnalyzeSegments: false,
+		},
+	}
+}
+
+// ConfigFromAppConfig creates an HLS config from application config
+// This allows HLS library to remain a standalone library while integrating with the main app
+func ConfigFromAppConfig(appConfig interface{}) *Config {
+	config := DefaultConfig()
+
+	if appCfg, ok := appConfig.(map[string]interface{}); ok {
+		if streamCfg, exists := appCfg["stream"].(map[string]interface{}); exists {
+			if userAgent, ok := streamCfg["user_agent"].(string); ok && userAgent != "" {
+				config.HTTP.UserAgent = userAgent
+			}
+			if headers, ok := streamCfg["headers"].(map[string]string); ok {
+				config.HTTP.CustomHeaders = headers
+			}
+			if connTimeout, ok := streamCfg["connection_timeout"].(time.Duration); ok {
+				config.HTTP.ConnectionTimeout = connTimeout
+			}
+			if readTimeout, ok := streamCfg["read_timeout"].(time.Duration); ok {
+				config.HTTP.ReadTimeout = readTimeout
+			}
+			if maxRedirects, ok := streamCfg["max_redirects"].(int); ok {
+				config.HTTP.MaxRedirects = maxRedirects
+			}
+			if bufferSize, ok := streamCfg["buffer_size"].(int); ok {
+				config.HTTP.BufferSize = bufferSize
+			}
+		}
+
+		// Apply audio config if available
+		if audioCfg, exists := appCfg["audio"].(map[string]interface{}); exists {
+			if bufferDuration, ok := audioCfg["buffer_duration"].(time.Duration); ok {
+				config.Audio.BufferDuration = bufferDuration
+			}
+			if sampleRate, ok := audioCfg["sample_rate"].(int); ok {
+				config.MetadataExtractor.DefaultValues["sample_rate"] = sampleRate
+			}
+			if channels, ok := audioCfg["channels"].(int); ok {
+				config.MetadataExtractor.DefaultValues["channels"] = channels
+			}
+		}
+
+		// Apply HLS-specific config if available
+		if hlsCfg, exists := appCfg["hls"].(map[string]interface{}); exists {
+			applyHLSSpecificConfig(config, hlsCfg)
+		}
+	}
+
+	return config
+}
+
+// ConfigFromMap creates an HLS config from a map (useful for testing and flexibility)
+func ConfigFromMap(configMap map[string]interface{}) *Config {
+	return ConfigFromAppConfig(configMap)
+}
+
+// applyHLSSpecificConfig applies HLS-specific configuration overrides
+func applyHLSSpecificConfig(config *Config, hlsCfg map[string]interface{}) {
+	// Apply parser config
+	if parserCfg, exists := hlsCfg["parser"].(map[string]interface{}); exists {
+		if strictMode, ok := parserCfg["strict_mode"].(bool); ok {
+			config.Parser.StrictMode = strictMode
+		}
+		if maxSegments, ok := parserCfg["max_segment_analysis"].(int); ok {
+			config.Parser.MaxSegmentAnalysis = maxSegments
+		}
+		if ignoreUnknown, ok := parserCfg["ignore_unknown_tags"].(bool); ok {
+			config.Parser.IgnoreUnknownTags = ignoreUnknown
+		}
+		if validateURIs, ok := parserCfg["validate_uris"].(bool); ok {
+			config.Parser.ValidateURIs = validateURIs
+		}
+	}
+
+	// Apply detection config
+	if detectionCfg, exists := hlsCfg["detection"].(map[string]interface{}); exists {
+		if patterns, ok := detectionCfg["url_patterns"].([]string); ok {
+			config.Detection.URLPatterns = patterns
+		}
+		if contentTypes, ok := detectionCfg["content_types"].([]string); ok {
+			config.Detection.ContentTypes = contentTypes
+		}
+		if timeout, ok := detectionCfg["timeout_seconds"].(int); ok {
+			config.Detection.TimeoutSeconds = timeout
+		}
+	}
+
+	// Apply HTTP config
+	if httpCfg, exists := hlsCfg["http"].(map[string]interface{}); exists {
+		if userAgent, ok := httpCfg["user_agent"].(string); ok {
+			config.HTTP.UserAgent = userAgent
+		}
+		if acceptHeader, ok := httpCfg["accept_header"].(string); ok {
+			config.HTTP.AcceptHeader = acceptHeader
+		}
+		if headers, ok := httpCfg["custom_headers"].(map[string]string); ok {
+			config.HTTP.CustomHeaders = headers
+		}
+	}
+
+	// Apply audio config
+	if audioCfg, exists := hlsCfg["audio"].(map[string]interface{}); exists {
+		if duration, ok := audioCfg["sample_duration"].(time.Duration); ok {
+			config.Audio.SampleDuration = duration
+		}
+		if maxSegments, ok := audioCfg["max_segments"].(int); ok {
+			config.Audio.MaxSegments = maxSegments
+		}
+		if followLive, ok := audioCfg["follow_live"].(bool); ok {
+			config.Audio.FollowLive = followLive
+		}
+		if analyzeSegments, ok := audioCfg["analyze_segments"].(bool); ok {
+			config.Audio.AnalyzeSegments = analyzeSegments
+		}
 	}
 }
 
@@ -304,4 +459,45 @@ func (cp *ConfigurableParser) ParseM3U8Content(reader any) (*M3U8Playlist, error
 	return cp.Parser.ParseM3U8Content(reader.(interface {
 		Read([]byte) (int, error)
 	}))
+}
+
+// GetHTTPHeaders returns all HTTP headers that should be set for requests
+func (c *Config) GetHTTPHeaders() map[string]string {
+	headers := make(map[string]string)
+
+	// Set standard headers
+	headers["User-Agent"] = c.HTTP.UserAgent
+	headers["Accept"] = c.HTTP.AcceptHeader
+
+	// Add custom headers
+	for k, v := range c.HTTP.CustomHeaders {
+		headers[k] = v
+	}
+
+	return headers
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	if c.HTTP.ConnectionTimeout <= 0 {
+		return fmt.Errorf("HTTP connection timeout must be positive")
+	}
+
+	if c.HTTP.ReadTimeout <= 0 {
+		return fmt.Errorf("HTTP read timeout must be positive")
+	}
+
+	if c.HTTP.MaxRedirects < 0 {
+		return fmt.Errorf("max redirects cannot be negative")
+	}
+
+	if c.HTTP.BufferSize <= 0 {
+		return fmt.Errorf("buffer size must be positive")
+	}
+
+	if c.Audio.SampleDuration <= 0 {
+		return fmt.Errorf("sample duration must be positive")
+	}
+
+	return nil
 }
