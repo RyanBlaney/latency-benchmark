@@ -1,3 +1,4 @@
+// pkg/stream/hls/config.go
 package hls
 
 import (

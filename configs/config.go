@@ -1,3 +1,4 @@
+// configs/config.go
 package configs
 
 import (
@@ -6,6 +7,7 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
 )
 
 // Config represents the application configuration
@@ -97,9 +99,50 @@ type HLSAudioConfig struct {
 	AnalyzeSegments bool          `mapstructure:"analyze_segments"`
 }
 
-// ICEcastConfig contains ICEcast-specific configuration (placeholder for future)
+// ICEcastConfig contains ICEcast-specific configuration
 type ICEcastConfig struct {
-	// Future ICEcast-specific configs would go here
+	MetadataExtractor ICEcastMetadataExtractorConfig `mapstructure:"metadata_extractor"`
+	Detection         ICEcastDetectionConfig         `mapstructure:"detection"`
+	HTTP              ICEcastHTTPConfig              `mapstructure:"http"`
+	Audio             ICEcastAudioConfig             `mapstructure:"audio"`
+}
+
+// ICEcastMetadataExtractorConfig holds configuration for metadata extraction
+type ICEcastMetadataExtractorConfig struct {
+	EnableHeaderMappings bool                   `mapstructure:"enable_header_mappings"`
+	EnableICYMetadata    bool                   `mapstructure:"enable_icy_metadata"`
+	DefaultValues        map[string]interface{} `mapstructure:"default_values"`
+	ICYMetadataTimeout   time.Duration          `mapstructure:"icy_metadata_timeout"`
+}
+
+// ICEcastDetectionConfig holds configuration for stream detection
+type ICEcastDetectionConfig struct {
+	URLPatterns     []string `mapstructure:"url_patterns"`
+	ContentTypes    []string `mapstructure:"content_types"`
+	RequiredHeaders []string `mapstructure:"required_headers"`
+	TimeoutSeconds  int      `mapstructure:"timeout_seconds"`
+	CommonPorts     []string `mapstructure:"common_ports"`
+}
+
+// ICEcastHTTPConfig holds HTTP-related configuration for ICEcast
+type ICEcastHTTPConfig struct {
+	UserAgent         string            `mapstructure:"user_agent"`
+	AcceptHeader      string            `mapstructure:"accept_header"`
+	ConnectionTimeout time.Duration     `mapstructure:"connection_timeout"`
+	ReadTimeout       time.Duration     `mapstructure:"read_timeout"`
+	MaxRedirects      int               `mapstructure:"max_redirects"`
+	CustomHeaders     map[string]string `mapstructure:"custom_headers"`
+	RequestICYMeta    bool              `mapstructure:"request_icy_meta"`
+}
+
+// ICEcastAudioConfig holds audio-specific configuration for ICEcast
+type ICEcastAudioConfig struct {
+	BufferSize       int           `mapstructure:"buffer_size"`
+	SampleDuration   time.Duration `mapstructure:"sample_duration"`
+	MaxReadAttempts  int           `mapstructure:"max_read_attempts"`
+	ReadTimeout      time.Duration `mapstructure:"read_timeout"`
+	HandleICYMeta    bool          `mapstructure:"handle_icy_meta"`
+	MetadataInterval int           `mapstructure:"metadata_interval"`
 }
 
 // TestConfig contains test execution settings
@@ -248,6 +291,57 @@ func (c *Config) ToHLSConfig() *hls.Config {
 	}
 
 	return hls.ConfigFromAppConfig(configMap)
+}
+
+// ToICEcastConfig converts the main config to an ICEcast config map
+func (c *Config) ToICEcastConfig() *icecast.Config {
+	configMap := map[string]interface{}{
+		"stream": map[string]interface{}{
+			"user_agent":         c.Stream.UserAgent,
+			"connection_timeout": c.Stream.ConnectionTimeout,
+			"read_timeout":       c.Stream.ReadTimeout,
+			"max_redirects":      c.Stream.MaxRedirects,
+			"headers":            c.Stream.Headers,
+		},
+		"audio": map[string]interface{}{
+			"buffer_size": c.Audio.BufferDuration,
+			"sample_rate": c.Audio.SampleRate,
+			"channels":    c.Audio.Channels,
+		},
+		"icecast": map[string]interface{}{
+			"metadata_extractor": map[string]interface{}{
+				"enable_header_mappings": c.ICEcast.MetadataExtractor.EnableHeaderMappings,
+				"enable_icy_metadata":    c.ICEcast.MetadataExtractor.EnableICYMetadata,
+				"default_values":         c.ICEcast.MetadataExtractor.DefaultValues,
+				"icy_metadata_timeout":   c.ICEcast.MetadataExtractor.ICYMetadataTimeout,
+			},
+			"detection": map[string]interface{}{
+				"url_patterns":     c.ICEcast.Detection.URLPatterns,
+				"content_types":    c.ICEcast.Detection.ContentTypes,
+				"required_headers": c.ICEcast.Detection.RequiredHeaders,
+				"timeout_seconds":  c.ICEcast.Detection.TimeoutSeconds,
+				"common_ports":     c.ICEcast.Detection.CommonPorts,
+			},
+			"http": map[string]interface{}{
+				"user_agent":         c.ICEcast.HTTP.UserAgent,
+				"accept_header":      c.ICEcast.HTTP.AcceptHeader,
+				"connection_timeout": c.ICEcast.HTTP.ConnectionTimeout,
+				"read_timeout":       c.ICEcast.HTTP.ReadTimeout,
+				"max_redirects":      c.ICEcast.HTTP.MaxRedirects,
+				"custom_headers":     c.ICEcast.HTTP.CustomHeaders,
+				"request_icy_meta":   c.ICEcast.HTTP.RequestICYMeta,
+			},
+			"audio": map[string]interface{}{
+				"buffer_size":       c.ICEcast.Audio.BufferSize,
+				"sample_duration":   c.ICEcast.Audio.SampleDuration,
+				"max_read_attempts": c.ICEcast.Audio.MaxReadAttempts,
+				"read_timeout":      c.ICEcast.Audio.ReadTimeout,
+				"handle_icy_meta":   c.ICEcast.Audio.HandleICYMeta,
+				"metadata_interval": c.ICEcast.Audio.MetadataInterval,
+			},
+		},
+	}
+	return icecast.ConfigFromAppConfig(configMap)
 }
 
 // LoadConfig loads configuration from viper with proper handling of conflicting keys
