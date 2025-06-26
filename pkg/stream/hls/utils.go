@@ -959,7 +959,8 @@ type URLResolver struct {
 func NewURLResolver(baseURL string) (*URLResolver, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid base URL: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, baseURL,
+			common.ErrCodeInvalidFormat, "invalid base URL", nil)
 	}
 	return &URLResolver{baseURL: parsedURL}, nil
 }
@@ -1203,4 +1204,3 @@ func (pa *PlaylistAnalyzer) analyzeVariants(variants []M3U8Variant) *VariantAnal
 
 	return analysis
 }
-
