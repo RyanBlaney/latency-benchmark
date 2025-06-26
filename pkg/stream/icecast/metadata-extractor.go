@@ -22,7 +22,7 @@ type MetadataExtractor struct {
 type HeaderMapping struct {
 	HeaderKey   string
 	MetadataKey string
-	Transformer func(value string) interface{}
+	Transformer func(value string) any
 }
 
 // NewMetadataExtractor creates a new metadata extractor with default mappings
@@ -61,27 +61,27 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "icy-name",
 			MetadataKey: "station",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-genre",
 			MetadataKey: "genre",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-description",
 			MetadataKey: "title",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-url",
 			MetadataKey: "icy-url",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-br",
 			MetadataKey: "bitrate",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				if bitrate, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 					return bitrate
 				}
@@ -91,7 +91,7 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "icy-sr",
 			MetadataKey: "sample_rate",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				if rate, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 					return rate
 				}
@@ -101,7 +101,7 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "icy-channels",
 			MetadataKey: "channels",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				if channels, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 					return channels
 				}
@@ -111,19 +111,19 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "content-type",
 			MetadataKey: "content_type",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				return strings.ToLower(strings.TrimSpace(value))
 			},
 		},
 		{
 			HeaderKey:   "server",
 			MetadataKey: "server",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-metaint",
 			MetadataKey: "icy_metaint",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				if interval, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 					return interval
 				}
@@ -133,24 +133,24 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "icy-pub",
 			MetadataKey: "icy_public",
-			Transformer: func(value string) interface{} {
+			Transformer: func(value string) any {
 				return strings.TrimSpace(value) == "1"
 			},
 		},
 		{
 			HeaderKey:   "icy-notice1",
 			MetadataKey: "icy_notice1",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-notice2",
 			MetadataKey: "icy_notice2",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 		{
 			HeaderKey:   "icy-version",
 			MetadataKey: "icy_version",
-			Transformer: func(value string) interface{} { return strings.TrimSpace(value) },
+			Transformer: func(value string) any { return strings.TrimSpace(value) },
 		},
 	}
 
@@ -236,7 +236,7 @@ func (me *MetadataExtractor) extractCodecFromContentType(metadata *common.Stream
 }
 
 // setMetadataField sets a field in the metadata based on field name
-func (me *MetadataExtractor) setMetadataField(metadata *common.StreamMetadata, field string, value interface{}) {
+func (me *MetadataExtractor) setMetadataField(metadata *common.StreamMetadata, field string, value any) {
 	switch field {
 	case "station":
 		if str, ok := value.(string); ok {
@@ -356,8 +356,8 @@ func (cme *ConfigurableMetadataExtractor) applyConfig() {
 }
 
 // createCustomTransformer creates a transformer function based on configuration
-func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform string) func(string) interface{} {
-	return func(value string) interface{} {
+func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform string) func(string) any {
+	return func(value string) any {
 		value = strings.TrimSpace(value)
 		switch transform {
 		case "int":
@@ -377,7 +377,7 @@ func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform stri
 		case "upper":
 			return strings.ToUpper(value)
 		case "title":
-			return strings.Title(strings.ToLower(value))
+			return titleCaser.String(strings.ToLower(value))
 		default:
 			return value
 		}
@@ -485,4 +485,3 @@ func (me *MetadataExtractor) UpdateWithICYMetadata(metadata *common.StreamMetada
 	metadata.Headers["icy_current_title"] = icyTitle
 	metadata.Timestamp = time.Now()
 }
-
