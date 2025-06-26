@@ -121,8 +121,8 @@ func DefaultConfig() *Config {
 		HTTP: &HTTPConfig{
 			UserAgent:         "TuneIn-CDN-Benchmark/1.0",
 			AcceptHeader:      "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
-			ConnectionTimeout: 5,
-			ReadTimeout:       15,
+			ConnectionTimeout: 5 * time.Second,
+			ReadTimeout:       15 * time.Second,
 			MaxRedirects:      5,
 			CustomHeaders:     make(map[string]string),
 			BufferSize:        16384,

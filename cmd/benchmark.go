@@ -18,6 +18,7 @@ import (
 	"github.com/tunein/cdn-benchmark-cli/configs"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 var (
@@ -115,10 +116,8 @@ func init() {
 
 func bindBenchmarkFlags() {
 	flagMap := map[string]string{
-		"profile":  "benchmark.profile",
-		"duration": "benchmark.duration",
-		// Don't bind regions here - it conflicts with regions config section
-		// "regions":            "benchmark.regions",
+		"profile":            "benchmark.profile",
+		"duration":           "benchmark.duration",
 		"streams":            "benchmark.streams",
 		"reference":          "benchmark.reference",
 		"concurrent":         "benchmark.concurrent",
@@ -138,16 +137,44 @@ func bindBenchmarkFlags() {
 }
 
 func runBenchmark(cmd *cobra.Command, args []string) error {
+	// Configure logging level based on flags
+	if viper.GetBool("verbose") {
+		logging.SetLevel(logging.DebugLevel)
+	} else {
+		switch viper.GetString("log_level") {
+		case "debug":
+			logging.SetLevel(logging.DebugLevel)
+		case "info":
+			logging.SetLevel(logging.InfoLevel)
+		case "warn":
+			logging.SetLevel(logging.WarnLevel)
+		case "error":
+			logging.SetLevel(logging.ErrorLevel)
+		default:
+			logging.SetLevel(logging.InfoLevel)
+		}
+	}
+
+	logging.Info("Starting CDN Benchmark Suite", logging.Fields{
+		"duration": benchmarkDuration,
+		"regions":  benchmarkRegions,
+		"streams":  len(args) + len(benchmarkStreams),
+	})
+
 	// Load configuration
 	config, err := configs.LoadConfig()
 	if err != nil {
+		logging.Error(err, "Failed to load configuration")
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	// Validate configuration
 	if err := configs.ValidateConfig(config); err != nil {
+		logging.Error(err, "Configuration validation failed")
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
+
+	logging.Debug("Configuration loaded and validated successfully")
 
 	// Create context with cancellation for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -158,20 +185,28 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down gracefully...\n")
+		logging.Warn("Received interrupt signal, shutting down gracefully")
 		cancel()
 	}()
 
 	// Initialize stream factory
 	factory := stream.NewFactory()
+	logging.Debug("Stream factory initialized")
 
 	// Collect all stream URLs
 	streamURLs := args
 	if benchmarkProfile != "" {
 		profile, exists := config.Profiles[benchmarkProfile]
 		if !exists {
+			logging.Error(nil, "Profile not found", logging.Fields{"profile": benchmarkProfile})
 			return fmt.Errorf("profile '%s' not found in configuration", benchmarkProfile)
 		}
+
+		logging.Debug("Loading streams from profile", logging.Fields{
+			"profile":      benchmarkProfile,
+			"stream_count": len(profile.Streams),
+		})
+
 		for _, endpoint := range profile.Streams {
 			streamURLs = append(streamURLs, endpoint.URL)
 		}
@@ -179,39 +214,43 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 	streamURLs = append(streamURLs, benchmarkStreams...)
 
 	if len(streamURLs) == 0 {
+		logging.Error(nil, "No stream URLs specified")
 		return fmt.Errorf("no stream URLs specified")
 	}
 
-	// Print test configuration
-	fmt.Printf("Starting CDN Benchmark Suite\n")
-	fmt.Printf("Configuration:\n")
-	fmt.Printf("  Streams: %d\n", len(streamURLs))
-	fmt.Printf("  Duration: %v\n", benchmarkDuration)
-	fmt.Printf("  Regions: %v\n", benchmarkRegions)
-	fmt.Printf("  Concurrent: %v\n", benchmarkConcurrent)
-	if benchmarkReference != "" {
-		fmt.Printf("  Reference: %s\n", benchmarkReference)
-	}
-	fmt.Printf("\n")
-
 	// Validate all streams before starting tests
-	fmt.Printf("Validating streams...\n")
+	logging.Info("Starting stream validation", logging.Fields{"total_streams": len(streamURLs)})
+
 	validStreams, err := validateStreams(ctx, factory, streamURLs)
 	if err != nil {
+		logging.Error(err, "Stream validation failed")
 		return fmt.Errorf("stream validation failed: %w", err)
 	}
 
 	if len(validStreams) == 0 {
+		logging.Error(nil, "No valid streams found after validation")
 		return fmt.Errorf("no valid streams found")
 	}
 
-	fmt.Printf("Validated %d/%d streams\n\n", len(validStreams), len(streamURLs))
+	logging.Info("Stream validation completed", logging.Fields{
+		"valid_streams": len(validStreams),
+		"total_streams": len(streamURLs),
+		"success_rate":  float64(len(validStreams)) / float64(len(streamURLs)),
+	})
 
 	// Execute benchmark tests
+	logging.Info("Starting benchmark execution")
 	results, err := executeBenchmarkTests(ctx, factory, config, validStreams)
 	if err != nil {
+		logging.Error(err, "Benchmark execution failed")
 		return fmt.Errorf("benchmark execution failed: %w", err)
 	}
+
+	logging.Info("Benchmark execution completed", logging.Fields{
+		"total_tests":      results.TotalTests,
+		"successful_tests": results.SuccessfulTests,
+		"success_rate":     results.SuccessRate,
+	})
 
 	// Output results
 	return outputResults(results)
@@ -222,30 +261,56 @@ func validateStreams(ctx context.Context, factory *stream.Factory, urls []string
 	var validStreams []string
 
 	for i, url := range urls {
-		fmt.Printf("  [%d/%d] Validating %s... ", i+1, len(urls), url)
+		logger := logging.WithFields(logging.Fields{
+			"url":   url,
+			"step":  "validation",
+			"index": i + 1,
+			"total": len(urls),
+		})
 
 		handler, err := factory.DetectAndCreate(ctx, url)
 		if err != nil {
-			fmt.Printf("❌ Failed: %v\n", err)
+			// Stream errors will be automatically logged by the library
+			if streamErr, ok := err.(*common.StreamError); ok {
+				streamErr.LogWith(logger)
+			} else {
+				logger.Error(err, "Failed to create handler")
+			}
 			continue
 		}
 
 		err = handler.Connect(ctx, url)
 		if err != nil {
-			fmt.Printf("❌ Connection failed: %v\n", err)
+			if streamErr, ok := err.(*common.StreamError); ok {
+				streamErr.LogWith(logger)
+			} else {
+				logger.Error(err, "Connection failed")
+			}
 			handler.Close()
 			continue
 		}
 
 		metadata, err := handler.GetMetadata()
 		if err != nil {
-			fmt.Printf("❌ Metadata error: %v\n", err)
+			if streamErr, ok := err.(*common.StreamError); ok {
+				streamErr.LogWith(logger)
+			} else {
+				logger.Error(err, "Metadata extraction failed")
+			}
 			handler.Close()
 			continue
 		}
 
 		handler.Close()
-		fmt.Printf("✅ %s (%s)\n", metadata.Type, metadata.Station)
+
+		// Log successful validation
+		logger.Info("Stream validation successful", logging.Fields{
+			"stream_type": string(metadata.Type),
+			"station":     metadata.Station,
+			"codec":       metadata.Codec,
+			"bitrate":     metadata.Bitrate,
+		})
+
 		validStreams = append(validStreams, url)
 	}
 
@@ -281,18 +346,15 @@ type BenchmarkSummary struct {
 }
 
 // executeBenchmarkTests runs the actual benchmark tests
-// executeBenchmarkTests runs the actual benchmark tests
 func executeBenchmarkTests(ctx context.Context, factory *stream.Factory, config *configs.Config, urls []string) (*BenchmarkSummary, error) {
 	var results []BenchmarkResult
 	startTime := time.Now()
 
-	// Determine regions to test - prioritize command line flag over config
+	// Determine regions to test
 	var regions []string
 	if len(benchmarkRegions) > 0 {
-		// Use regions from command line flag
 		regions = benchmarkRegions
 	} else {
-		// Use enabled regions from config
 		for name, region := range config.Regions {
 			if region.Enabled {
 				regions = append(regions, name)
@@ -301,32 +363,24 @@ func executeBenchmarkTests(ctx context.Context, factory *stream.Factory, config 
 	}
 
 	if len(regions) == 0 {
-		regions = []string{"default"} // Use default region if none specified
+		regions = []string{"default"}
 	}
 
-	fmt.Printf("Running benchmark tests...\n")
-	totalTests := len(urls) * len(regions)
-	currentTest := 0
+	logging.Info("Starting benchmark tests", logging.Fields{
+		"total_streams": len(urls),
+		"regions":       regions,
+		"total_tests":   len(urls) * len(regions),
+	})
 
 	for _, url := range urls {
 		for _, region := range regions {
-			currentTest++
-			fmt.Printf("  [%d/%d] Testing %s in %s... ", currentTest, totalTests, url, region)
-
 			result := executeSingleTest(ctx, factory, url, region)
 			results = append(results, result)
-
-			if result.Success {
-				fmt.Printf("✅ Quality: %.2f, Latency: %.1fms\n",
-					result.QualityScore, result.LatencyMs)
-			} else {
-				fmt.Printf("❌ %s\n", result.Error)
-			}
 
 			// Check for context cancellation
 			select {
 			case <-ctx.Done():
-				fmt.Printf("\nBenchmark cancelled\n")
+				logging.Warn("Benchmark cancelled")
 				goto summarize
 			default:
 			}
@@ -376,6 +430,12 @@ func executeSingleTest(ctx context.Context, factory *stream.Factory, url, region
 		Tags:      make(map[string]string),
 	}
 
+	logger := logging.WithFields(logging.Fields{
+		"url":    url,
+		"region": region,
+		"step":   "benchmark_test",
+	})
+
 	// Add tags from command line
 	for _, tag := range benchmarkTags {
 		parts := strings.SplitN(tag, "=", 2)
@@ -392,6 +452,11 @@ func executeSingleTest(ctx context.Context, factory *stream.Factory, url, region
 	handler, err := factory.DetectAndCreate(testCtx, url)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to create handler: %v", err)
+		if streamErr, ok := err.(*common.StreamError); ok {
+			streamErr.LogWith(logger)
+		} else {
+			logger.Error(err, "Failed to create handler")
+		}
 		result.EndTime = time.Now()
 		result.Duration = result.EndTime.Sub(result.StartTime)
 		return result
@@ -403,6 +468,11 @@ func executeSingleTest(ctx context.Context, factory *stream.Factory, url, region
 	err = handler.Connect(testCtx, url)
 	if err != nil {
 		result.Error = fmt.Sprintf("connection failed: %v", err)
+		if streamErr, ok := err.(*common.StreamError); ok {
+			streamErr.LogWith(logger)
+		} else {
+			logger.Error(err, "Connection failed")
+		}
 		result.EndTime = time.Now()
 		result.Duration = result.EndTime.Sub(result.StartTime)
 		return result
@@ -412,30 +482,33 @@ func executeSingleTest(ctx context.Context, factory *stream.Factory, url, region
 	metadata, err := handler.GetMetadata()
 	if err != nil {
 		result.Error = fmt.Sprintf("metadata error: %v", err)
+		if streamErr, ok := err.(*common.StreamError); ok {
+			streamErr.LogWith(logger)
+		} else {
+			logger.Error(err, "Metadata extraction failed")
+		}
 		result.EndTime = time.Now()
 		result.Duration = result.EndTime.Sub(result.StartTime)
 		return result
 	}
 	result.Metadata = metadata
 
-	// Simulate audio quality testing and latency measurement
-	// In real implementation, this would:
-	// 1. Read audio data for specified duration
-	// 2. Perform spectral analysis and fingerprinting
-	// 3. Compare against reference stream if provided
-	// 4. Measure network and processing latency
-	// 5. Calculate quality metrics
-
-	// For now, simulate with basic timing and mock values
-	time.Sleep(1 * time.Second) // Simulate processing time
+	// Simulate processing time
+	time.Sleep(1 * time.Second)
 
 	stats := handler.GetStats()
 	result.Stats = stats
 
-	// Mock quality score and latency (replace with actual implementation)
-	result.QualityScore = 0.95 + (rand.Float64()-0.5)*0.1 // 0.90-1.0
-	result.LatencyMs = 50 + rand.Float64()*100            // 50-150ms
+	// Mock quality score and latency
+	result.QualityScore = 0.95 + (rand.Float64()-0.5)*0.1
+	result.LatencyMs = 50 + rand.Float64()*100
 	result.Success = true
+
+	logger.Info("Benchmark test completed", logging.Fields{
+		"quality_score": result.QualityScore,
+		"latency_ms":    result.LatencyMs,
+		"success":       result.Success,
+	})
 
 	result.EndTime = time.Now()
 	result.Duration = result.EndTime.Sub(result.StartTime)
@@ -490,9 +563,9 @@ func outputTable(summary *BenchmarkSummary) error {
 	fmt.Printf("%s\n", strings.Repeat("-", 100))
 
 	for _, result := range summary.Results {
-		status := "✅ Success"
+		status := "Success"
 		if !result.Success {
-			status = "❌ Failed"
+			status = "Failed"
 		}
 
 		// Truncate URL for display
@@ -543,3 +616,4 @@ func outputCSV(summary *BenchmarkSummary) error {
 
 	return nil
 }
+

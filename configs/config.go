@@ -1,4 +1,3 @@
-// configs/config.go
 package configs
 
 import (
@@ -65,10 +64,10 @@ type HLSParserConfig struct {
 
 // HLSMetadataExtractorConfig holds configuration for metadata extraction
 type HLSMetadataExtractorConfig struct {
-	EnableURLPatterns     bool                   `mapstructure:"enable_url_patterns"`
-	EnableHeaderMappings  bool                   `mapstructure:"enable_header_mappings"`
-	EnableSegmentAnalysis bool                   `mapstructure:"enable_segment_analysis"`
-	DefaultValues         map[string]interface{} `mapstructure:"default_values"`
+	EnableURLPatterns     bool           `mapstructure:"enable_url_patterns"`
+	EnableHeaderMappings  bool           `mapstructure:"enable_header_mappings"`
+	EnableSegmentAnalysis bool           `mapstructure:"enable_segment_analysis"`
+	DefaultValues         map[string]any `mapstructure:"default_values"`
 }
 
 // HLSDetectionConfig holds configuration for stream detection
@@ -109,10 +108,10 @@ type ICEcastConfig struct {
 
 // ICEcastMetadataExtractorConfig holds configuration for metadata extraction
 type ICEcastMetadataExtractorConfig struct {
-	EnableHeaderMappings bool                   `mapstructure:"enable_header_mappings"`
-	EnableICYMetadata    bool                   `mapstructure:"enable_icy_metadata"`
-	DefaultValues        map[string]interface{} `mapstructure:"default_values"`
-	ICYMetadataTimeout   time.Duration          `mapstructure:"icy_metadata_timeout"`
+	EnableHeaderMappings bool           `mapstructure:"enable_header_mappings"`
+	EnableICYMetadata    bool           `mapstructure:"enable_icy_metadata"`
+	DefaultValues        map[string]any `mapstructure:"default_values"`
+	ICYMetadataTimeout   time.Duration  `mapstructure:"icy_metadata_timeout"`
 }
 
 // ICEcastDetectionConfig holds configuration for stream detection
@@ -237,8 +236,8 @@ type StreamMetadata struct {
 // ToHLSConfig converts the main config to an HLS config
 func (c *Config) ToHLSConfig() *hls.Config {
 	// Create a map representation for the ConfigFromAppConfig function
-	configMap := map[string]interface{}{
-		"stream": map[string]interface{}{
+	configMap := map[string]any{
+		"stream": map[string]any{
 			"user_agent":         c.Stream.UserAgent,
 			"connection_timeout": c.Stream.ConnectionTimeout,
 			"read_timeout":       c.Stream.ReadTimeout,
@@ -246,43 +245,43 @@ func (c *Config) ToHLSConfig() *hls.Config {
 			"buffer_size":        c.Stream.BufferSize,
 			"headers":            c.Stream.Headers,
 		},
-		"audio": map[string]interface{}{
+		"audio": map[string]any{
 			"buffer_duration": c.Audio.BufferDuration,
 			"sample_rate":     c.Audio.SampleRate,
 			"channels":        c.Audio.Channels,
 		},
-		"hls": map[string]interface{}{
-			"parser": map[string]interface{}{
+		"hls": map[string]any{
+			"parser": map[string]any{
 				"strict_mode":          c.HLS.Parser.StrictMode,
 				"max_segment_analysis": c.HLS.Parser.MaxSegmentAnalysis,
 				"ignore_unknown_tags":  c.HLS.Parser.IgnoreUnknownTags,
 				"validate_uris":        c.HLS.Parser.ValidateURIs,
 				"custom_tag_handlers":  c.HLS.Parser.CustomTagHandlers,
 			},
-			"metadata_extractor": map[string]interface{}{
+			"metadata_extractor": map[string]any{
 				"enable_url_patterns":     c.HLS.MetadataExtractor.EnableURLPatterns,
 				"enable_header_mappings":  c.HLS.MetadataExtractor.EnableHeaderMappings,
 				"enable_segment_analysis": c.HLS.MetadataExtractor.EnableSegmentAnalysis,
 				"default_values":          c.HLS.MetadataExtractor.DefaultValues,
 			},
-			"detection": map[string]interface{}{
+			"detection": map[string]any{
 				"url_patterns":     c.HLS.Detection.URLPatterns,
 				"content_types":    c.HLS.Detection.ContentTypes,
 				"required_headers": c.HLS.Detection.RequiredHeaders,
 				"timeout_seconds":  c.HLS.Detection.TimeoutSeconds,
 			},
-			"http": map[string]interface{}{
+			"http": map[string]any{
 				"user_agent":         c.HLS.HTTP.UserAgent,
 				"accept_header":      c.HLS.HTTP.AcceptHeader,
-				"connection_timeout": c.HLS.HTTP.ConnectionTimeout,
-				"read_timeout":       c.HLS.HTTP.ReadTimeout,
+				"connection_timeout": c.HLS.HTTP.ConnectionTimeout, // This should now be time.Duration
+				"read_timeout":       c.HLS.HTTP.ReadTimeout,       // This should now be time.Duration
 				"max_redirects":      c.HLS.HTTP.MaxRedirects,
 				"custom_headers":     c.HLS.HTTP.CustomHeaders,
 				"buffer_size":        c.HLS.HTTP.BufferSize,
 			},
-			"audio": map[string]interface{}{
-				"sample_duration":  c.HLS.Audio.SampleDuration,
-				"buffer_duration":  c.HLS.Audio.BufferDuration,
+			"audio": map[string]any{
+				"sample_duration":  c.HLS.Audio.SampleDuration, // This should now be time.Duration
+				"buffer_duration":  c.HLS.Audio.BufferDuration, // This should now be time.Duration
 				"max_segments":     c.HLS.Audio.MaxSegments,
 				"follow_live":      c.HLS.Audio.FollowLive,
 				"analyze_segments": c.HLS.Audio.AnalyzeSegments,
@@ -295,34 +294,34 @@ func (c *Config) ToHLSConfig() *hls.Config {
 
 // ToICEcastConfig converts the main config to an ICEcast config map
 func (c *Config) ToICEcastConfig() *icecast.Config {
-	configMap := map[string]interface{}{
-		"stream": map[string]interface{}{
+	configMap := map[string]any{
+		"stream": map[string]any{
 			"user_agent":         c.Stream.UserAgent,
 			"connection_timeout": c.Stream.ConnectionTimeout,
 			"read_timeout":       c.Stream.ReadTimeout,
 			"max_redirects":      c.Stream.MaxRedirects,
 			"headers":            c.Stream.Headers,
 		},
-		"audio": map[string]interface{}{
+		"audio": map[string]any{
 			"buffer_duration": c.Audio.BufferDuration,
 			"sample_rate":     c.Audio.SampleRate,
 			"channels":        c.Audio.Channels,
 		},
-		"icecast": map[string]interface{}{
-			"metadata_extractor": map[string]interface{}{
+		"icecast": map[string]any{
+			"metadata_extractor": map[string]any{
 				"enable_header_mappings": c.ICEcast.MetadataExtractor.EnableHeaderMappings,
 				"enable_icy_metadata":    c.ICEcast.MetadataExtractor.EnableICYMetadata,
 				"default_values":         c.ICEcast.MetadataExtractor.DefaultValues,
 				"icy_metadata_timeout":   c.ICEcast.MetadataExtractor.ICYMetadataTimeout,
 			},
-			"detection": map[string]interface{}{
+			"detection": map[string]any{
 				"url_patterns":     c.ICEcast.Detection.URLPatterns,
 				"content_types":    c.ICEcast.Detection.ContentTypes,
 				"required_headers": c.ICEcast.Detection.RequiredHeaders,
 				"timeout_seconds":  c.ICEcast.Detection.TimeoutSeconds,
 				"common_ports":     c.ICEcast.Detection.CommonPorts,
 			},
-			"http": map[string]interface{}{
+			"http": map[string]any{
 				"user_agent":         c.ICEcast.HTTP.UserAgent,
 				"accept_header":      c.ICEcast.HTTP.AcceptHeader,
 				"connection_timeout": c.ICEcast.HTTP.ConnectionTimeout,
@@ -331,7 +330,7 @@ func (c *Config) ToICEcastConfig() *icecast.Config {
 				"custom_headers":     c.ICEcast.HTTP.CustomHeaders,
 				"request_icy_meta":   c.ICEcast.HTTP.RequestICYMeta,
 			},
-			"audio": map[string]interface{}{
+			"audio": map[string]any{
 				"buffer_duration":   c.ICEcast.Audio.BufferDuration,
 				"sample_duration":   c.ICEcast.Audio.SampleDuration,
 				"max_read_attempts": c.ICEcast.Audio.MaxReadAttempts,
@@ -344,7 +343,6 @@ func (c *Config) ToICEcastConfig() *icecast.Config {
 	return icecast.ConfigFromAppConfig(configMap)
 }
 
-// LoadConfig loads configuration from viper with proper handling of conflicting keys
 // LoadConfig loads configuration from viper with proper handling of conflicting keys
 func LoadConfig() (*Config, error) {
 	config := &Config{}
@@ -418,8 +416,9 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	// Set HLS defaults if not already configured
-	setHLSDefaults(configViper)
+	// Set all defaults if not already configured (this replaces setHLSDefaults)
+	fmt.Printf("🔧 Applying configuration defaults...\n")
+	setDefaults(configViper)
 
 	if err := configViper.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("unable to decode configuration: %w", err)

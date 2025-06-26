@@ -8,9 +8,126 @@ import (
 	"github.com/spf13/viper"
 )
 
-// setHLSDefaults sets default HLS configuration values
+// setDefaults sets default configuration values for all components
+func setDefaults(v *viper.Viper) {
+	// Global stream defaults (apply to all stream types)
+	if !v.IsSet("stream.connection_timeout") {
+		v.Set("stream.connection_timeout", 10*time.Second)
+	}
+	if !v.IsSet("stream.read_timeout") {
+		v.Set("stream.read_timeout", 30*time.Second)
+	}
+	if !v.IsSet("stream.buffer_size") {
+		v.Set("stream.buffer_size", 8192)
+	}
+	if !v.IsSet("stream.max_redirects") {
+		v.Set("stream.max_redirects", 3)
+	}
+	if !v.IsSet("stream.user_agent") {
+		v.Set("stream.user_agent", "TuneIn-CDN-Benchmark/1.0")
+	}
+	if !v.IsSet("stream.headers") {
+		v.Set("stream.headers", map[string]string{})
+	}
+
+	// Global test defaults
+	if !v.IsSet("test.timeout") {
+		v.Set("test.timeout", 30*time.Second)
+	}
+	if !v.IsSet("test.retry_attempts") {
+		v.Set("test.retry_attempts", 3)
+	}
+	if !v.IsSet("test.retry_delay") {
+		v.Set("test.retry_delay", 5*time.Second)
+	}
+	if !v.IsSet("test.concurrent") {
+		v.Set("test.concurrent", false)
+	}
+	if !v.IsSet("test.max_concurrency") {
+		v.Set("test.max_concurrency", 4)
+	}
+
+	// Global audio defaults
+	if !v.IsSet("audio.sample_rate") {
+		v.Set("audio.sample_rate", 44100)
+	}
+	if !v.IsSet("audio.channels") {
+		v.Set("audio.channels", 2)
+	}
+	if !v.IsSet("audio.buffer_duration") {
+		v.Set("audio.buffer_duration", 1*time.Second)
+	}
+	if !v.IsSet("audio.window_size") {
+		v.Set("audio.window_size", 2048)
+	}
+	if !v.IsSet("audio.overlap") {
+		v.Set("audio.overlap", 0.5)
+	}
+	if !v.IsSet("audio.window_function") {
+		v.Set("audio.window_function", "hann")
+	}
+	if !v.IsSet("audio.fft_size") {
+		v.Set("audio.fft_size", 2048)
+	}
+	if !v.IsSet("audio.mel_bins") {
+		v.Set("audio.mel_bins", 128)
+	}
+
+	// Global quality defaults
+	if !v.IsSet("quality.min_similarity") {
+		v.Set("quality.min_similarity", 0.95)
+	}
+	if !v.IsSet("quality.max_latency") {
+		v.Set("quality.max_latency", 5*time.Second)
+	}
+	if !v.IsSet("quality.min_bitrate") {
+		v.Set("quality.min_bitrate", 128)
+	}
+	if !v.IsSet("quality.max_dropouts") {
+		v.Set("quality.max_dropouts", 3)
+	}
+	if !v.IsSet("quality.buffer_health") {
+		v.Set("quality.buffer_health", 0.8)
+	}
+
+	// Global output defaults
+	if !v.IsSet("output.precision") {
+		v.Set("output.precision", 3)
+	}
+	if !v.IsSet("output.include_metadata") {
+		v.Set("output.include_metadata", true)
+	}
+	if !v.IsSet("output.timestamps") {
+		v.Set("output.timestamps", true)
+	}
+	if !v.IsSet("output.colors") {
+		v.Set("output.colors", true)
+	}
+	if !v.IsSet("output.pager") {
+		v.Set("output.pager", false)
+	}
+
+	// Application defaults
+	if !v.IsSet("verbose") {
+		v.Set("verbose", false)
+	}
+	if !v.IsSet("log_level") {
+		v.Set("log_level", "info")
+	}
+	if !v.IsSet("output_format") {
+		v.Set("output_format", "table")
+	}
+
+	// HLS-specific defaults (these override global stream settings for HLS)
+	setHLSDefaults(v)
+
+	// ICEcast-specific defaults (these override global stream settings for ICEcast)
+	setICEcastDefaults(v)
+}
+
+// setHLSDefaults sets HLS-specific configuration defaults
 func setHLSDefaults(v *viper.Viper) {
-	// Set HLS parser defaults
+	// HLS parser defaults
 	if !v.IsSet("hls.parser.strict_mode") {
 		v.Set("hls.parser.strict_mode", false)
 	}
@@ -27,7 +144,7 @@ func setHLSDefaults(v *viper.Viper) {
 		v.Set("hls.parser.custom_tag_handlers", map[string]string{})
 	}
 
-	// Set HLS detection defaults
+	// HLS detection defaults
 	if !v.IsSet("hls.detection.url_patterns") {
 		v.Set("hls.detection.url_patterns", []string{
 			`\.m3u8$`,
@@ -50,18 +167,18 @@ func setHLSDefaults(v *viper.Viper) {
 		v.Set("hls.detection.required_headers", []string{})
 	}
 
-	// Set HLS HTTP defaults
+	// HLS HTTP defaults (these override global stream settings)
 	if !v.IsSet("hls.http.user_agent") {
-		v.Set("hls.http.user_agent", "TuneIn-CDN-Benchmark/1.0")
+		v.Set("hls.http.user_agent", "TuneIn-CDN-Benchmark-HLS/1.0")
 	}
 	if !v.IsSet("hls.http.accept_header") {
 		v.Set("hls.http.accept_header", "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain")
 	}
 	if !v.IsSet("hls.http.connection_timeout") {
-		v.Set("hls.http.connection_timeout", "5s")
+		v.Set("hls.http.connection_timeout", 5*time.Second)
 	}
 	if !v.IsSet("hls.http.read_timeout") {
-		v.Set("hls.http.read_timeout", "15s")
+		v.Set("hls.http.read_timeout", 15*time.Second)
 	}
 	if !v.IsSet("hls.http.max_redirects") {
 		v.Set("hls.http.max_redirects", 5)
@@ -73,12 +190,12 @@ func setHLSDefaults(v *viper.Viper) {
 		v.Set("hls.http.custom_headers", map[string]string{})
 	}
 
-	// Set HLS audio defaults
+	// HLS audio defaults
 	if !v.IsSet("hls.audio.sample_duration") {
-		v.Set("hls.audio.sample_duration", "30s")
+		v.Set("hls.audio.sample_duration", 30*time.Second)
 	}
 	if !v.IsSet("hls.audio.buffer_duration") {
-		v.Set("hls.audio.buffer_duration", "2s")
+		v.Set("hls.audio.buffer_duration", 2*time.Second)
 	}
 	if !v.IsSet("hls.audio.max_segments") {
 		v.Set("hls.audio.max_segments", 10)
@@ -90,7 +207,7 @@ func setHLSDefaults(v *viper.Viper) {
 		v.Set("hls.audio.analyze_segments", false)
 	}
 
-	// Set HLS metadata extractor defaults
+	// HLS metadata extractor defaults
 	if !v.IsSet("hls.metadata_extractor.enable_url_patterns") {
 		v.Set("hls.metadata_extractor.enable_url_patterns", true)
 	}
@@ -101,8 +218,101 @@ func setHLSDefaults(v *viper.Viper) {
 		v.Set("hls.metadata_extractor.enable_segment_analysis", true)
 	}
 	if !v.IsSet("hls.metadata_extractor.default_values") {
-		v.Set("hls.metadata_extractor.default_values", map[string]interface{}{
+		v.Set("hls.metadata_extractor.default_values", map[string]any{
 			"codec":       "aac",
+			"channels":    2,
+			"sample_rate": 44100,
+		})
+	}
+}
+
+// setICEcastDefaults sets ICEcast-specific configuration defaults
+func setICEcastDefaults(v *viper.Viper) {
+	// ICEcast detection defaults
+	if !v.IsSet("icecast.detection.url_patterns") {
+		v.Set("icecast.detection.url_patterns", []string{
+			`/stream$`,
+			`/listen\.pls$`,
+			`\.pls$`,
+			`:8000/`,
+			`:8080/`,
+		})
+	}
+	if !v.IsSet("icecast.detection.content_types") {
+		v.Set("icecast.detection.content_types", []string{
+			"audio/mpeg",
+			"audio/mp3",
+			"audio/aac",
+			"audio/ogg",
+			"application/ogg",
+		})
+	}
+	if !v.IsSet("icecast.detection.timeout_seconds") {
+		v.Set("icecast.detection.timeout_seconds", 5)
+	}
+	if !v.IsSet("icecast.detection.required_headers") {
+		v.Set("icecast.detection.required_headers", []string{})
+	}
+	if !v.IsSet("icecast.detection.common_ports") {
+		v.Set("icecast.detection.common_ports", []string{"8000", "8080", "8443"})
+	}
+
+	// ICEcast HTTP defaults (these override global stream settings)
+	if !v.IsSet("icecast.http.user_agent") {
+		v.Set("icecast.http.user_agent", "TuneIn-CDN-Benchmark-ICEcast/1.0")
+	}
+	if !v.IsSet("icecast.http.accept_header") {
+		v.Set("icecast.http.accept_header", "audio/*, application/ogg, */*")
+	}
+	if !v.IsSet("icecast.http.connection_timeout") {
+		v.Set("icecast.http.connection_timeout", 10*time.Second)
+	}
+	if !v.IsSet("icecast.http.read_timeout") {
+		v.Set("icecast.http.read_timeout", 30*time.Second)
+	}
+	if !v.IsSet("icecast.http.max_redirects") {
+		v.Set("icecast.http.max_redirects", 3)
+	}
+	if !v.IsSet("icecast.http.custom_headers") {
+		v.Set("icecast.http.custom_headers", map[string]string{})
+	}
+	if !v.IsSet("icecast.http.request_icy_meta") {
+		v.Set("icecast.http.request_icy_meta", true)
+	}
+
+	// ICEcast audio defaults
+	if !v.IsSet("icecast.audio.buffer_duration") {
+		v.Set("icecast.audio.buffer_duration", 2*time.Second)
+	}
+	if !v.IsSet("icecast.audio.sample_duration") {
+		v.Set("icecast.audio.sample_duration", 30*time.Second)
+	}
+	if !v.IsSet("icecast.audio.max_read_attempts") {
+		v.Set("icecast.audio.max_read_attempts", 10)
+	}
+	if !v.IsSet("icecast.audio.read_timeout") {
+		v.Set("icecast.audio.read_timeout", 5*time.Second)
+	}
+	if !v.IsSet("icecast.audio.handle_icy_meta") {
+		v.Set("icecast.audio.handle_icy_meta", true)
+	}
+	if !v.IsSet("icecast.audio.metadata_interval") {
+		v.Set("icecast.audio.metadata_interval", 8192)
+	}
+
+	// ICEcast metadata extractor defaults
+	if !v.IsSet("icecast.metadata_extractor.enable_header_mappings") {
+		v.Set("icecast.metadata_extractor.enable_header_mappings", true)
+	}
+	if !v.IsSet("icecast.metadata_extractor.enable_icy_metadata") {
+		v.Set("icecast.metadata_extractor.enable_icy_metadata", true)
+	}
+	if !v.IsSet("icecast.metadata_extractor.icy_metadata_timeout") {
+		v.Set("icecast.metadata_extractor.icy_metadata_timeout", 5*time.Second)
+	}
+	if !v.IsSet("icecast.metadata_extractor.default_values") {
+		v.Set("icecast.metadata_extractor.default_values", map[string]any{
+			"codec":       "mp3",
 			"channels":    2,
 			"sample_rate": 44100,
 		})
@@ -454,3 +664,4 @@ func GetDefaultOutputConfigForFormat(format string) OutputConfig {
 
 	return base
 }
+

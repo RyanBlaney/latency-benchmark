@@ -167,4 +167,4 @@ func (n *NoOpLogger) Error(err error, msg string, fields ...Fields) {}
 func (n *NoOpLogger) Fatal(err error, msg string, fields ...Fields) {}
 func (n *NoOpLogger) WithFields(fields Fields) Logger               { return n }
 func (n *NoOpLogger) WithContext(ctx context.Context) Logger        { return n }
-func (n *NoOpLogger) SetLevel(level Level)
+func (n *NoOpLogger) SetLevel(level Level)                          {}
