@@ -492,7 +492,12 @@ func (v *Validator) ValidateICEcastSpecific(ctx context.Context, streamURL strin
 	}
 
 	// Validate content if possible
-	if !detector.IsValidICEcastContent(ctx, streamURL, v.config.HTTP) {
+	if st := detector.DetectFromHeaders(ctx, streamURL, v.config.HTTP); st != common.StreamTypeICEcast {
+		return common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeInvalidFormat, "invalid ICEcast content", nil)
+	}
+
+	if st := detector.DetectFromURL(streamURL); st != common.StreamTypeICEcast {
 		return common.NewStreamError(common.StreamTypeICEcast, streamURL,
 			common.ErrCodeInvalidFormat, "invalid ICEcast content", nil)
 	}
