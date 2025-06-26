@@ -136,6 +136,7 @@ type ICEcastHTTPConfig struct {
 
 // ICEcastAudioConfig holds audio-specific configuration for ICEcast
 type ICEcastAudioConfig struct {
+	BufferSize       int           `mapstructure:"buffer_size"`
 	BufferDuration   time.Duration `mapstructure:"buffer_duration"`
 	SampleDuration   time.Duration `mapstructure:"sample_duration"`
 	MaxReadAttempts  int           `mapstructure:"max_read_attempts"`
@@ -331,6 +332,7 @@ func (c *Config) ToICEcastConfig() *icecast.Config {
 				"request_icy_meta":   c.ICEcast.HTTP.RequestICYMeta,
 			},
 			"audio": map[string]any{
+				"buffer_size":       c.ICEcast.Audio.BufferSize,
 				"buffer_duration":   c.ICEcast.Audio.BufferDuration,
 				"sample_duration":   c.ICEcast.Audio.SampleDuration,
 				"max_read_attempts": c.ICEcast.Audio.MaxReadAttempts,
@@ -476,6 +478,68 @@ func ValidateConfig(config *Config) error {
 
 	if config.HLS.Audio.MaxSegments <= 0 {
 		return fmt.Errorf("HLS max segments must be positive")
+	}
+
+	// Validate ICEcast configuration
+	if config.ICEcast.HTTP.ConnectionTimeout <= 0 {
+		return fmt.Errorf("ICEcast connection timeout must be positive")
+	}
+
+	if config.ICEcast.HTTP.ReadTimeout <= 0 {
+		return fmt.Errorf("ICEcast read timeout must be positive")
+	}
+
+	if config.ICEcast.HTTP.MaxRedirects < 0 {
+		return fmt.Errorf("ICEcast max redirects cannot be negative")
+	}
+
+	if config.ICEcast.Audio.SampleDuration <= 0 {
+		return fmt.Errorf("ICEcast sample duration must be positive")
+	}
+
+	if config.ICEcast.Audio.BufferDuration <= 0 {
+		return fmt.Errorf("ICEcast buffer duration must be positive")
+	}
+
+	if config.ICEcast.Audio.MaxReadAttempts <= 0 {
+		return fmt.Errorf("ICEcast max read attempts must be positive")
+	}
+
+	if config.ICEcast.Audio.ReadTimeout <= 0 {
+		return fmt.Errorf("ICEcast audio read timeout must be positive")
+	}
+
+	if config.ICEcast.MetadataExtractor.ICYMetadataTimeout <= 0 {
+		return fmt.Errorf("ICEcast ICY metadata timeout must be positive")
+	}
+
+	if config.ICEcast.Detection.TimeoutSeconds <= 0 {
+		return fmt.Errorf("ICEcast detection timeout must be positive")
+	}
+
+	if len(config.ICEcast.Detection.URLPatterns) == 0 {
+		return fmt.Errorf("ICEcast must have at least one URL pattern")
+	}
+
+	if len(config.ICEcast.Detection.ContentTypes) == 0 {
+		return fmt.Errorf("ICEcast must have at least one content type")
+	}
+
+	// Validate that stream configuration is reasonable
+	if config.Stream.ConnectionTimeout <= 0 {
+		return fmt.Errorf("stream connection timeout must be positive")
+	}
+
+	if config.Stream.ReadTimeout <= 0 {
+		return fmt.Errorf("stream read timeout must be positive")
+	}
+
+	if config.Stream.MaxRedirects < 0 {
+		return fmt.Errorf("stream max redirects cannot be negative")
+	}
+
+	if config.Stream.BufferSize <= 0 {
+		return fmt.Errorf("stream buffer size must be positive")
 	}
 
 	return nil

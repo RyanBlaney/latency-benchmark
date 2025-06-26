@@ -231,9 +231,13 @@ func setICEcastDefaults(v *viper.Viper) {
 	// ICEcast detection defaults
 	if !v.IsSet("icecast.detection.url_patterns") {
 		v.Set("icecast.detection.url_patterns", []string{
+			`\.mp3$`,
+			`\.aac$`,
+			`\.ogg$`,
 			`/stream$`,
-			`/listen\.pls$`,
-			`\.pls$`,
+			`/listen$`,
+			`/audio$`,
+			`/radio$`,
 			`:8000/`,
 			`:8080/`,
 		})
@@ -254,7 +258,7 @@ func setICEcastDefaults(v *viper.Viper) {
 		v.Set("icecast.detection.required_headers", []string{})
 	}
 	if !v.IsSet("icecast.detection.common_ports") {
-		v.Set("icecast.detection.common_ports", []string{"8000", "8080", "8443"})
+		v.Set("icecast.detection.common_ports", []string{"8000", "8080", "8443", "9000"})
 	}
 
 	// ICEcast HTTP defaults (these override global stream settings)
@@ -281,6 +285,9 @@ func setICEcastDefaults(v *viper.Viper) {
 	}
 
 	// ICEcast audio defaults
+	if !v.IsSet("icecast.audio.buffer_size") {
+		v.Set("icecast.audio.buffer_size", 4096)
+	}
 	if !v.IsSet("icecast.audio.buffer_duration") {
 		v.Set("icecast.audio.buffer_duration", 2*time.Second)
 	}
