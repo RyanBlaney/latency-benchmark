@@ -30,12 +30,12 @@ type ParserConfig struct {
 
 // MetadataExtractorConfig holds configuration for metadata extraction
 type MetadataExtractorConfig struct {
-	EnableURLPatterns     bool                   `json:"enable_url_patterns"`
-	EnableHeaderMappings  bool                   `json:"enable_header_mappings"`
-	EnableSegmentAnalysis bool                   `json:"enable_segment_analysis"`
-	CustomPatterns        []CustomURLPattern     `json:"custom_patterns"`
-	CustomHeaderMappings  []CustomHeaderMapping  `json:"custom_header_mappings"`
-	DefaultValues         map[string]interface{} `json:"default_values"`
+	EnableURLPatterns     bool                  `json:"enable_url_patterns"`
+	EnableHeaderMappings  bool                  `json:"enable_header_mappings"`
+	EnableSegmentAnalysis bool                  `json:"enable_segment_analysis"`
+	CustomPatterns        []CustomURLPattern    `json:"custom_patterns"`
+	CustomHeaderMappings  []CustomHeaderMapping `json:"custom_header_mappings"`
+	DefaultValues         map[string]any        `json:"default_values"`
 }
 
 // DetectionConfig holds configuration for stream detection
@@ -98,7 +98,7 @@ func DefaultConfig() *Config {
 			EnableSegmentAnalysis: true,
 			CustomPatterns:        []CustomURLPattern{},
 			CustomHeaderMappings:  []CustomHeaderMapping{},
-			DefaultValues: map[string]interface{}{
+			DefaultValues: map[string]any{
 				"codec":       "aac",
 				"channels":    2,
 				"sample_rate": 44100,
@@ -140,11 +140,11 @@ func DefaultConfig() *Config {
 
 // ConfigFromAppConfig creates an HLS config from application config
 // This allows HLS library to remain a standalone library while integrating with the main app
-func ConfigFromAppConfig(appConfig interface{}) *Config {
+func ConfigFromAppConfig(appConfig any) *Config {
 	config := DefaultConfig()
 
-	if appCfg, ok := appConfig.(map[string]interface{}); ok {
-		if streamCfg, exists := appCfg["stream"].(map[string]interface{}); exists {
+	if appCfg, ok := appConfig.(map[string]any); ok {
+		if streamCfg, exists := appCfg["stream"].(map[string]any); exists {
 			if userAgent, ok := streamCfg["user_agent"].(string); ok && userAgent != "" {
 				config.HTTP.UserAgent = userAgent
 			}
@@ -166,7 +166,7 @@ func ConfigFromAppConfig(appConfig interface{}) *Config {
 		}
 
 		// Apply audio config if available
-		if audioCfg, exists := appCfg["audio"].(map[string]interface{}); exists {
+		if audioCfg, exists := appCfg["audio"].(map[string]any); exists {
 			if bufferDuration, ok := audioCfg["buffer_duration"].(time.Duration); ok {
 				config.Audio.BufferDuration = bufferDuration
 			}
@@ -179,7 +179,7 @@ func ConfigFromAppConfig(appConfig interface{}) *Config {
 		}
 
 		// Apply HLS-specific config if available
-		if hlsCfg, exists := appCfg["hls"].(map[string]interface{}); exists {
+		if hlsCfg, exists := appCfg["hls"].(map[string]any); exists {
 			applyHLSSpecificConfig(config, hlsCfg)
 		}
 	}
@@ -188,14 +188,14 @@ func ConfigFromAppConfig(appConfig interface{}) *Config {
 }
 
 // ConfigFromMap creates an HLS config from a map (useful for testing and flexibility)
-func ConfigFromMap(configMap map[string]interface{}) *Config {
+func ConfigFromMap(configMap map[string]any) *Config {
 	return ConfigFromAppConfig(configMap)
 }
 
 // applyHLSSpecificConfig applies HLS-specific configuration overrides
-func applyHLSSpecificConfig(config *Config, hlsCfg map[string]interface{}) {
+func applyHLSSpecificConfig(config *Config, hlsCfg map[string]any) {
 	// Apply parser config
-	if parserCfg, exists := hlsCfg["parser"].(map[string]interface{}); exists {
+	if parserCfg, exists := hlsCfg["parser"].(map[string]any); exists {
 		if strictMode, ok := parserCfg["strict_mode"].(bool); ok {
 			config.Parser.StrictMode = strictMode
 		}
@@ -211,7 +211,7 @@ func applyHLSSpecificConfig(config *Config, hlsCfg map[string]interface{}) {
 	}
 
 	// Apply detection config
-	if detectionCfg, exists := hlsCfg["detection"].(map[string]interface{}); exists {
+	if detectionCfg, exists := hlsCfg["detection"].(map[string]any); exists {
 		if patterns, ok := detectionCfg["url_patterns"].([]string); ok {
 			config.Detection.URLPatterns = patterns
 		}
@@ -224,7 +224,7 @@ func applyHLSSpecificConfig(config *Config, hlsCfg map[string]interface{}) {
 	}
 
 	// Apply HTTP config
-	if httpCfg, exists := hlsCfg["http"].(map[string]interface{}); exists {
+	if httpCfg, exists := hlsCfg["http"].(map[string]any); exists {
 		if userAgent, ok := httpCfg["user_agent"].(string); ok {
 			config.HTTP.UserAgent = userAgent
 		}
@@ -237,7 +237,7 @@ func applyHLSSpecificConfig(config *Config, hlsCfg map[string]interface{}) {
 	}
 
 	// Apply audio config
-	if audioCfg, exists := hlsCfg["audio"].(map[string]interface{}); exists {
+	if audioCfg, exists := hlsCfg["audio"].(map[string]any); exists {
 		if duration, ok := audioCfg["sample_duration"].(time.Duration); ok {
 			config.Audio.SampleDuration = duration
 		}
@@ -315,8 +315,8 @@ func (cme *ConfigurableMetadataExtractor) createCustomPatternExtractor(fields ma
 }
 
 // createCustomTransformer creates a transformer function based on configuration
-func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform string) func(string) interface{} {
-	return func(value string) interface{} {
+func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform string) func(string) any {
+	return func(value string) any {
 		switch transform {
 		case "int":
 			if i, err := strconv.Atoi(value); err == nil {
