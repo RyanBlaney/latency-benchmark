@@ -17,12 +17,23 @@ import (
 // The detector maintains an HTTP client with configurable timeout and redirect
 // behavior, which is shared across all detection operations for consistency.
 type Detector struct {
-	client *http.Client
+	client        *http.Client
+	hlsConfig     *hls.Config
+	icecastConfig *icecast.Config
+}
+
+// Config holds configuration for the stream detector
+type Config struct {
+	TimeoutSeconds int             `json:"timeout_seconds"`
+	MaxRedirects   int             `json:"max_redirects"`
+	HLS            *hls.Config     `json:"hls,omitempty"`
+	ICEcast        *icecast.Config `json:"icecast,omitempty"`
 }
 
 // NewDetector creates a new stream detector with default configuration:
 // - 10 second timeout
 // - Maximum of 3 redirects
+// - Default HLS configuration
 //
 // This is suitable for most general-purpose stream detection scenarios.
 func NewDetector() *Detector {
@@ -37,61 +48,74 @@ func NewDetector() *Detector {
 				return nil
 			},
 		},
+		hlsConfig: nil,
 	}
 }
 
-// NewDetectorWithTimeout creates a new stream detector with a custom timeout.
-// The redirect limit remains at 3.
+// NewDetectorWithConfig creates a new stream detector with custom configuration.
+// This provides full control over detection behavior including:
+// - HTTP client timeouts and redirect behavior
+// - HLS-specific detection and parsing settings
+// - ICEcast-specific settings (when implemented)
 //
 // Parameters:
-//   - timeoutSecs: HTTP request timeout in seconds
+//   - config: Complete detector configuration, or nil for defaults
 //
-// Use this when you need a different timeout than the default 10 seconds,
-// such as faster detection for CI/CD or longer timeouts for slow networks.
-func NewDetectorWithTimeout(timeoutSecs int) *Detector {
+// Use this when you need:
+// - Custom timeout and redirect behavior
+// - Specific HLS detection patterns or metadata extraction rules
+// - Custom HTTP headers or buffer sizes for stream-specific operations
+//
+// Example:
+//
+//	config := &stream.Config{
+//	    TimeoutSeconds: 15,
+//	    MaxRedirects: 5,
+//	    HLS: &hls.Config{
+//	        Detection: &hls.DetectionConfig{TimeoutSeconds: 10},
+//	        HTTP: &hls.HTTPConfig{BufferSize: 32768},
+//	    },
+//	}
+//	detector := stream.NewDetectorWithConfig(config)
+func NewDetectorWithConfig(config *Config) *Detector {
+	// Set defaults if config is nil
+	if config == nil {
+		config = &Config{
+			TimeoutSeconds: 10,
+			MaxRedirects:   3,
+			HLS:            nil, // Use package defaults
+		}
+	}
+
+	// Apply defaults for missing fields
+	timeoutSeconds := config.TimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 10
+	}
+
+	maxRedirects := config.MaxRedirects
+	if maxRedirects < 0 {
+		maxRedirects = 3
+	}
+
 	return &Detector{
 		client: &http.Client{
-			Timeout: time.Duration(timeoutSecs) * time.Second,
+			Timeout: time.Duration(timeoutSeconds) * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				// Follow up to 3 redirects
-				if len(via) >= 3 {
+				if len(via) >= maxRedirects {
 					return http.ErrUseLastResponse
 				}
 				return nil
 			},
 		},
-	}
-}
-
-// NewDetectorWithParams creates a new stream detector with custom timeout and redirect limits.
-// This provides full control over the HTTP client behavior.
-//
-// Parameters:
-//   - timeoutSecs: HTTP request timeout in seconds
-//   - redirects: Maximum number of redirects to follow
-//
-// Use this for fine-tuned control, such as:
-// - Setting higher redirect limits for complex CDN setups
-// - Disabling redirects entirely (redirects = 0) for strict URL validation
-// - Adjusting timeouts for specific network conditions
-func NewDetectorWithParams(timeoutSecs int, redirects int) *Detector {
-	return &Detector{
-		client: &http.Client{
-			Timeout: time.Duration(timeoutSecs) * time.Second,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= redirects {
-					return http.ErrUseLastResponse
-				}
-				return nil
-			},
-		},
+		hlsConfig: config.HLS,
 	}
 }
 
 // DetectType determines the stream type for the given URL by delegating to
 // stream-specific detection functions. It implements a fallback strategy:
 //
-//  1. Try HLS detection first
+//  1. Try HLS detection first (with configuration if available)
 //  2. Fall back to ICEcast detection
 //  3. Return unsupported if no match
 //
@@ -116,15 +140,28 @@ func NewDetectorWithParams(timeoutSecs int, redirects int) *Detector {
 //	if streamType == common.StreamTypeHLS {
 //	    // Handle HLS stream
 //	}
-func (sd *Detector) DetectType(ctx context.Context, streamURL string) (common.StreamType, error) {
-	// Try HLS detection
-	streamType, err := hls.DetectType(ctx, sd.client, streamURL)
+func (d *Detector) DetectType(ctx context.Context, streamURL string) (common.StreamType, error) {
+	// Try HLS detection - use configuration if available
+	var streamType common.StreamType
+	var err error
+
+	if d.hlsConfig != nil {
+		streamType, err = hls.DetectTypeWithConfig(ctx, streamURL, d.hlsConfig)
+	} else {
+		streamType, err = hls.DetectType(ctx, d.client, streamURL)
+	}
+
 	if err == nil && streamType == common.StreamTypeHLS {
 		return common.StreamTypeHLS, nil
 	}
 
 	// Try ICEcast detection
-	streamType, err = icecast.DetectType(ctx, sd.client, streamURL)
+	if d.icecastConfig != nil {
+		streamType, err = icecast.DetectTypeWithConfig(ctx, streamURL, d.icecastConfig)
+	} else {
+		streamType, err = icecast.DetectType(ctx, d.client, streamURL)
+	}
+
 	if err == nil && streamType == common.StreamTypeICEcast {
 		return common.StreamTypeICEcast, nil
 	}
@@ -172,9 +209,15 @@ func (d *Detector) ProbeStream(ctx context.Context, streamURL string) (*common.S
 	// Delegate entirely to the appropriate package for stream-specific probing
 	switch streamType {
 	case common.StreamTypeHLS:
+		if d.hlsConfig != nil {
+			return hls.ProbeStreamWithConfig(ctx, streamURL, d.hlsConfig)
+		}
 		return hls.ProbeStream(ctx, d.client, streamURL)
 
 	case common.StreamTypeICEcast:
+		if d.icecastConfig != nil {
+			return icecast.ProbeStreamWithConfig(ctx, streamURL, d.icecastConfig)
+		}
 		return icecast.ProbeStream(ctx, d.client, streamURL)
 
 	default:

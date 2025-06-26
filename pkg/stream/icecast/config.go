@@ -50,6 +50,27 @@ type HTTPConfig struct {
 	RequestICYMeta    bool              `json:"request_icy_meta"`
 }
 
+// GetHTTPHeaders returns configured HTTP headers for ICEcast requests
+func (httpConfig *HTTPConfig) GetHTTPHeaders() map[string]string {
+	headers := make(map[string]string)
+
+	// Set standard headers
+	headers["User-Agent"] = httpConfig.UserAgent
+	headers["Accept"] = httpConfig.AcceptHeader
+
+	// Add ICEcast-specific header if requested
+	if httpConfig.RequestICYMeta {
+		headers["Icy-MetaData"] = "1"
+	}
+
+	// Add custom headers
+	for k, v := range httpConfig.CustomHeaders {
+		headers[k] = v
+	}
+
+	return headers
+}
+
 // AudioConfig holds audio-specific configuration for ICEcast
 type AudioConfig struct {
 	BufferSize       int           `json:"buffer_size"`

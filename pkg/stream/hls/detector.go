@@ -81,6 +81,105 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 	}, nil
 }
 
+// DetectTypeWithConfig determines if the stream is HLS using full configuration
+func DetectTypeWithConfig(ctx context.Context, streamURL string, config *Config) (common.StreamType, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	detector := NewDetectorWithConfig(config.Detection)
+
+	// Create a context with configured timeout
+	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Detection.TimeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Step 1: URL pattern detection (fastest, no network calls)
+	if streamType := detector.DetectFromURL(streamURL); streamType == common.StreamTypeHLS {
+		// Verify with a lightweight HEAD request if configured to do so
+		if len(config.Detection.RequiredHeaders) > 0 || len(config.Detection.ContentTypes) > 0 {
+			if detector.DetectFromHeaders(detectCtx, streamURL, config.HTTP) == common.StreamTypeHLS {
+				return common.StreamTypeHLS, nil
+			}
+		} else {
+			// Trust URL pattern if no header validation required
+			return common.StreamTypeHLS, nil
+		}
+	}
+
+	// Step 2: Header-based detection
+	if streamType := detector.DetectFromHeaders(detectCtx, streamURL, config.HTTP); streamType == common.StreamTypeHLS {
+		return common.StreamTypeHLS, nil
+	}
+
+	// Step 3: Content validation as last resort (most expensive)
+	if detector.IsValidHLSContent(detectCtx, streamURL, config.HTTP, config.Parser) {
+		return common.StreamTypeHLS, nil
+	}
+
+	// Not HLS or detection failed
+	return common.StreamTypeUnsupported, nil
+}
+
+// ProbeStreamWithConfig performs a probe with full configuration control
+func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config) (*common.StreamMetadata, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	detector := NewDetectorWithConfig(config.Detection)
+
+	// Try to get the playlist with full configuration
+	playlist, err := detector.DetectFromM3U8Content(ctx, streamURL, config.HTTP, config.Parser)
+	if err != nil {
+		return nil, fmt.Errorf("failed to probe HLS stream: %w", err)
+	}
+
+	// If we have metadata from parsing, return it
+	if playlist != nil && playlist.Metadata != nil {
+		return playlist.Metadata, nil
+	}
+
+	// Extract metadata using configured extractor if playlist exists but no metadata
+	if playlist != nil {
+		metadataExtractor := NewConfigurableMetadataExtractor(config.MetadataExtractor)
+		metadata := metadataExtractor.ExtractMetadata(playlist, streamURL)
+		return metadata, nil
+	}
+
+	// Final fallback: create basic metadata with configured defaults
+	metadata := &common.StreamMetadata{
+		URL:       streamURL,
+		Type:      common.StreamTypeHLS,
+		Format:    "hls",
+		Headers:   make(map[string]string),
+		Timestamp: time.Now(),
+	}
+
+	// Apply configured default values
+	if config.MetadataExtractor.DefaultValues != nil {
+		if codec, ok := config.MetadataExtractor.DefaultValues["codec"].(string); ok {
+			metadata.Codec = codec
+		}
+		if sampleRate, ok := config.MetadataExtractor.DefaultValues["sample_rate"].(int); ok {
+			metadata.SampleRate = sampleRate
+		} else if sampleRateFloat, ok := config.MetadataExtractor.DefaultValues["sample_rate"].(float64); ok {
+			metadata.SampleRate = int(sampleRateFloat)
+		}
+		if channels, ok := config.MetadataExtractor.DefaultValues["channels"].(int); ok {
+			metadata.Channels = channels
+		} else if channelsFloat, ok := config.MetadataExtractor.DefaultValues["channels"].(float64); ok {
+			metadata.Channels = int(channelsFloat)
+		}
+		if bitrate, ok := config.MetadataExtractor.DefaultValues["bitrate"].(int); ok {
+			metadata.Bitrate = bitrate
+		} else if bitrateFloat, ok := config.MetadataExtractor.DefaultValues["bitrate"].(float64); ok {
+			metadata.Bitrate = int(bitrateFloat)
+		}
+	}
+
+	return metadata, nil
+}
+
 // DetectFromURL matches the URL with configured HLS patterns
 func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	u, err := url.Parse(streamURL)
@@ -264,69 +363,6 @@ func (httpConfig *HTTPConfig) GetHTTPHeaders() map[string]string {
 	return headers
 }
 
-// Package-level convenience functions that use default configuration
-// These maintain backward compatibility with existing code
-
-// DetectFromURL matches the URL with common HLS patterns (backward compatibility)
-func DetectFromURL(streamURL string) common.StreamType {
-	detector := NewDetector()
-	return detector.DetectFromURL(streamURL)
-}
-
-// DetectFromHeaders matches the HTTP headers with common HLS patterns (backward compatibility)
-func DetectFromHeaders(ctx context.Context, client *http.Client, streamURL string) common.StreamType {
-	detector := NewDetector()
-
-	// Create a temporary HTTP config from the client timeout
-	httpConfig := &HTTPConfig{
-		UserAgent:    "TuneIn-CDN-Benchmark/1.0",
-		AcceptHeader: "*/*",
-	}
-
-	if client.Timeout > 0 {
-		httpConfig.ConnectionTimeout = client.Timeout / 2
-		httpConfig.ReadTimeout = client.Timeout / 2
-	}
-
-	return detector.DetectFromHeaders(ctx, streamURL, httpConfig)
-}
-
-// DetectFromM3U8Content attempts to validate and parse M3U8 content (backward compatibility)
-func DetectFromM3U8Content(ctx context.Context, client *http.Client, streamURL string) (*M3U8Playlist, error) {
-	detector := NewDetector()
-
-	// Create a temporary HTTP config from the client
-	httpConfig := &HTTPConfig{
-		UserAgent:    "TuneIn-CDN-Benchmark/1.0",
-		AcceptHeader: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
-	}
-
-	if client.Timeout > 0 {
-		httpConfig.ConnectionTimeout = client.Timeout / 2
-		httpConfig.ReadTimeout = client.Timeout / 2
-	}
-
-	return detector.DetectFromM3U8Content(ctx, streamURL, httpConfig, nil)
-}
-
-// IsValidHLSContent checks if the content appears to be valid HLS (backward compatibility)
-func IsValidHLSContent(ctx context.Context, client *http.Client, streamURL string) bool {
-	detector := NewDetector()
-
-	// Create a temporary HTTP config from the client
-	httpConfig := &HTTPConfig{
-		UserAgent:    "TuneIn-CDN-Benchmark/1.0",
-		AcceptHeader: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
-	}
-
-	if client.Timeout > 0 {
-		httpConfig.ConnectionTimeout = client.Timeout / 2
-		httpConfig.ReadTimeout = client.Timeout / 2
-	}
-
-	return detector.IsValidHLSContent(ctx, streamURL, httpConfig, nil)
-}
-
 // ConfigurableDetection provides a complete detection suite with configuration
 func ConfigurableDetection(ctx context.Context, streamURL string, config *Config) (common.StreamType, *M3U8Playlist, error) {
 	if config == nil {
@@ -362,4 +398,68 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 	}
 
 	return common.StreamTypeUnsupported, nil, fmt.Errorf("stream type not supported or invalid")
+}
+
+// DetectFromURL matches the URL with default HLS patterns (backward compatibility)
+func DetectFromURL(streamURL string) common.StreamType {
+	detector := NewDetector()
+	return detector.DetectFromURL(streamURL)
+}
+
+// DetectFromHeaders matches the HTTP headers with default HLS patterns (backward compatibility)
+func DetectFromHeaders(ctx context.Context, client *http.Client, streamURL string) common.StreamType {
+	detector := NewDetector()
+
+	// Create HTTP config from client
+	httpConfig := &HTTPConfig{
+		UserAgent:    "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader: "*/*",
+		BufferSize:   16384,
+	}
+	if client != nil && client.Timeout > 0 {
+		httpConfig.ConnectionTimeout = client.Timeout / 2
+		httpConfig.ReadTimeout = client.Timeout / 2
+	}
+
+	return detector.DetectFromHeaders(ctx, streamURL, httpConfig)
+}
+
+// DetectFromM3U8Content attempts to validate and parse M3U8 content (backward compatibility)
+func DetectFromM3U8Content(ctx context.Context, client *http.Client, streamURL string) (*M3U8Playlist, error) {
+	detector := NewDetector()
+
+	// Create HTTP config from client
+	httpConfig := &HTTPConfig{
+		UserAgent:     "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader:  "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
+		BufferSize:    16384,
+		MaxRedirects:  5,
+		CustomHeaders: make(map[string]string),
+	}
+	if client != nil && client.Timeout > 0 {
+		httpConfig.ConnectionTimeout = client.Timeout / 2
+		httpConfig.ReadTimeout = client.Timeout / 2
+	}
+
+	return detector.DetectFromM3U8Content(ctx, streamURL, httpConfig, nil)
+}
+
+// IsValidHLSContent checks if the content appears to be valid HLS (backward compatibility)
+func IsValidHLSContent(ctx context.Context, client *http.Client, streamURL string) bool {
+	detector := NewDetector()
+
+	// Create HTTP config from client
+	httpConfig := &HTTPConfig{
+		UserAgent:     "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader:  "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
+		BufferSize:    16384,
+		MaxRedirects:  5,
+		CustomHeaders: make(map[string]string),
+	}
+	if client != nil && client.Timeout > 0 {
+		httpConfig.ConnectionTimeout = client.Timeout / 2
+		httpConfig.ReadTimeout = client.Timeout / 2
+	}
+
+	return detector.IsValidHLSContent(ctx, streamURL, httpConfig, nil)
 }

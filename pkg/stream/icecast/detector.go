@@ -56,6 +56,41 @@ func DetectType(ctx context.Context, client *http.Client, streamURL string) (com
 	return common.StreamTypeUnsupported, nil
 }
 
+// DetectTypeWithConfig determines if the stream is ICEcast using full configuration
+// DetectTypeWithConfig determines if the stream is ICEcast using full configuration
+func DetectTypeWithConfig(ctx context.Context, streamURL string, config *Config) (common.StreamType, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	detector := NewDetectorWithConfig(config.Detection)
+
+	// Create a context with configured timeout
+	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Detection.TimeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Step 1: URL pattern detection (fastest, no network calls)
+	if streamType := detector.DetectFromURL(streamURL); streamType == common.StreamTypeICEcast {
+		// Verify with a lightweight HEAD request if configured to do so
+		if len(config.Detection.RequiredHeaders) > 0 || len(config.Detection.ContentTypes) > 0 {
+			if detector.DetectFromHeaders(detectCtx, streamURL, config.HTTP) == common.StreamTypeICEcast {
+				return common.StreamTypeICEcast, nil
+			}
+		} else {
+			// Trust URL pattern if no header validation required
+			return common.StreamTypeICEcast, nil
+		}
+	}
+
+	// Step 2: Header-based detection
+	if streamType := detector.DetectFromHeaders(detectCtx, streamURL, config.HTTP); streamType == common.StreamTypeICEcast {
+		return common.StreamTypeICEcast, nil
+	}
+
+	// Not ICEcast or detection failed
+	return common.StreamTypeUnsupported, nil
+}
+
 // ProbeStream performs a lightweight probe to gather ICEcast stream metadata
 func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*common.StreamMetadata, error) {
 	// Perform HEAD request to get metadata from headers
@@ -85,6 +120,73 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 
 	// Extract ICEcast-specific metadata from headers
 	extractMetadataFromHeaders(resp.Header, metadata)
+
+	return metadata, nil
+}
+
+// ProbeStreamWithConfig performs a probe with full configuration control
+func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config) (*common.StreamMetadata, error) {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	detector := NewDetectorWithConfig(config.Detection)
+
+	// Use configured timeout
+	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Detection.TimeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Use detector's client or create one with HTTP config timeout
+	client := detector.client
+	if config.HTTP != nil {
+		client = &http.Client{
+			Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
+		}
+	}
+
+	req, err := http.NewRequestWithContext(detectCtx, "HEAD", streamURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers from configuration
+	if config.HTTP != nil {
+		headers := config.HTTP.GetHTTPHeaders()
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
+	} else {
+		// Fallback to default headers
+		req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
+		req.Header.Set("Accept", "audio/*")
+		req.Header.Set("Icy-MetaData", "1")
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to probe stream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+
+	// Create metadata using configured extractor
+	metadata := &common.StreamMetadata{
+		URL:       streamURL,
+		Type:      common.StreamTypeICEcast,
+		Headers:   make(map[string]string),
+		Timestamp: time.Now(),
+	}
+
+	// Extract metadata from headers
+	extractMetadataFromHeaders(resp.Header, metadata)
+
+	// Apply default values from configuration if available
+	if config.MetadataExtractor != nil && config.MetadataExtractor.DefaultValues != nil {
+		applyDefaultValues(metadata, config.MetadataExtractor.DefaultValues)
+	}
 
 	return metadata, nil
 }
@@ -135,7 +237,7 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	// Set headers from configuration
 	if httpConfig != nil {
-		headers := httpConfig.GetHTTPHeaders()
+		headers := httpConfig.CustomHeaders
 		for key, value := range headers {
 			req.Header.Set(key, value)
 		}
@@ -180,79 +282,6 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 	}
 
 	return common.StreamTypeUnsupported
-}
-
-// ProbeStreamWithConfig performs a lightweight probe using configuration
-func (d *Detector) ProbeStreamWithConfig(ctx context.Context, streamURL string, httpConfig *HTTPConfig, metaConfig *MetadataExtractorConfig) (*common.StreamMetadata, error) {
-	// Use configured timeout
-	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(d.config.TimeoutSeconds)*time.Second)
-	defer cancel()
-
-	// Use provided client or create one with timeout
-	client := d.client
-	if httpConfig != nil {
-		client = &http.Client{
-			Timeout: httpConfig.ConnectionTimeout + httpConfig.ReadTimeout,
-		}
-	}
-
-	req, err := http.NewRequestWithContext(detectCtx, "HEAD", streamURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers from configuration
-	if httpConfig != nil {
-		headers := httpConfig.GetHTTPHeaders()
-		for key, value := range headers {
-			req.Header.Set(key, value)
-		}
-	} else {
-		// Fallback to default headers
-		req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
-		req.Header.Set("Accept", "audio/*")
-		req.Header.Set("Icy-MetaData", "1")
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to probe stream: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-	}
-
-	// Create metadata using configured extractor
-	metadata := &common.StreamMetadata{
-		URL:       streamURL,
-		Type:      common.StreamTypeICEcast,
-		Headers:   make(map[string]string),
-		Timestamp: time.Now(),
-	}
-
-	// Extract metadata from headers
-	extractMetadataFromHeaders(resp.Header, metadata)
-
-	// Apply default values from configuration if available
-	if metaConfig != nil && metaConfig.DefaultValues != nil {
-		applyDefaultValues(metadata, metaConfig.DefaultValues)
-	}
-
-	return metadata, nil
-}
-
-// IsValidICEcastContent checks if the content appears to be valid ICEcast
-func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, httpConfig *HTTPConfig) bool {
-	metadata, err := d.ProbeStreamWithConfig(ctx, streamURL, httpConfig, nil)
-	if err != nil {
-		return false
-	}
-
-	// Check if we have basic audio stream indicators
-	return metadata.Type == common.StreamTypeICEcast &&
-		(metadata.ContentType != "" || metadata.Codec != "" || metadata.Bitrate > 0)
 }
 
 // extractMetadataFromHeaders extracts ICEcast metadata from HTTP headers
@@ -413,11 +442,6 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 
 	// Step 2: Header detection
 	if streamType := detector.DetectFromHeaders(ctx, streamURL, config.HTTP); streamType == common.StreamTypeICEcast {
-		return common.StreamTypeICEcast, nil
-	}
-
-	// Step 3: Content validation (lighter than HLS since no parsing needed)
-	if detector.IsValidICEcastContent(ctx, streamURL, config.HTTP) {
 		return common.StreamTypeICEcast, nil
 	}
 
