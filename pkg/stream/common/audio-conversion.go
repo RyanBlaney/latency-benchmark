@@ -1,11 +1,11 @@
 package common
 
 import (
-	"fmt"
 	"math"
 	"time"
 	"unsafe"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 	"github.com/tunein/go-transcoding/v10/transcode"
 )
 
@@ -15,7 +15,8 @@ func ExtractAudioFromFrame(frame *transcode.Frame, expectedSampleRate, expectedC
 	// For most audio formats, plane 0 contains the audio data
 	audioBuffer := frame.GetPlaneBuffer(0)
 	if len(audioBuffer) == 0 {
-		return nil, 0, fmt.Errorf("empty audio buffer in frame")
+		return nil, 0, NewStreamError(StreamTypeHLS, "",
+			ErrCodeDecoding, "empty audio buffer in frame", nil)
 	}
 
 	// We need to determine the actual audio format and parameters
@@ -31,7 +32,8 @@ func ExtractAudioFromFrame(frame *transcode.Frame, expectedSampleRate, expectedC
 		expectedChannels,
 	)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to convert audio data: %w", err)
+		return nil, 0, NewStreamError(StreamTypeHLS, "",
+			ErrCodeDecoding, "failed to convert audio data", err)
 	}
 
 	// Calculate the actual duration based on sample count
@@ -47,7 +49,8 @@ func ExtractAudioFromFrame(frame *transcode.Frame, expectedSampleRate, expectedC
 // convertRawAudioToFloat64 converts raw audio buffer to float64 PCM
 func convertRawAudioToFloat64(buffer []byte, expectedSampleRate, expectedChannels int) ([]float64, int, int, error) {
 	if len(buffer) == 0 {
-		return nil, 0, 0, fmt.Errorf("empty audio buffer")
+		return nil, 0, 0, NewStreamError(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "empty audio buffer", nil)
 	}
 
 	// Try different audio formats in order of likelihood for HLS streams
@@ -80,13 +83,15 @@ func convertRawAudioToFloat64(buffer []byte, expectedSampleRate, expectedChannel
 func tryConvertS16(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Check if buffer size makes sense for 16-bit audio
 	if len(buffer)%2 != 0 {
-		return nil, fmt.Errorf("buffer size not aligned for 16-bit samples")
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "buffer size not aligned for 16-bit samples", nil,
+			logging.Fields{"buffer_size": len(buffer)})
 	}
 
 	sampleCount := len(buffer) / 2
 	samples := make([]float64, sampleCount)
 
-	for i := 0; i < sampleCount; i++ {
+	for i := range sampleCount {
 		// Read 16-bit little-endian signed integer
 		sample := int16(buffer[i*2]) | int16(buffer[i*2+1])<<8
 		// Convert to float64 [-1.0, 1.0]
@@ -96,7 +101,14 @@ func tryConvertS16(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Sanity check: reasonable sample count for expected parameters
 	expectedSamples := estimateExpectedSamples(sampleRate, channels)
 	if sampleCount < expectedSamples/4 || sampleCount > expectedSamples*4 {
-		return nil, fmt.Errorf("sample count %d doesn't match expected range for S16", sampleCount)
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "sample count doesn't match expected range for S16", nil,
+			logging.Fields{
+				"sample_count": sampleCount,
+				"expected_min": estimateExpectedSamples(sampleRate, channels) / 4,
+				"expected_max": estimateExpectedSamples(sampleRate, channels) * 4,
+			})
+
 	}
 
 	return samples, nil
@@ -106,13 +118,15 @@ func tryConvertS16(buffer []byte, sampleRate, channels int) ([]float64, error) {
 func tryConvertFloat32(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Check if buffer size makes sense for 32-bit float audio
 	if len(buffer)%4 != 0 {
-		return nil, fmt.Errorf("buffer size not aligned for 32-bit samples")
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "buffer size not aligned for 32-bit samples", nil,
+			logging.Fields{"buffer_size": len(buffer)})
 	}
 
 	sampleCount := len(buffer) / 4
 	samples := make([]float64, sampleCount)
 
-	for i := 0; i < sampleCount; i++ {
+	for i := range sampleCount {
 		// Read 32-bit little-endian float
 		bits := uint32(buffer[i*4]) | uint32(buffer[i*4+1])<<8 | uint32(buffer[i*4+2])<<16 | uint32(buffer[i*4+3])<<24
 		float32Val := *(*float32)(unsafe.Pointer(&bits))
@@ -128,7 +142,13 @@ func tryConvertFloat32(buffer []byte, sampleRate, channels int) ([]float64, erro
 	}
 
 	if float64(validFloats)/float64(len(samples)) < 0.8 { // At least 80% should be valid
-		return nil, fmt.Errorf("too many invalid float values, probably not float32 format")
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "too many invalid float values, probably not float32 format", nil,
+			logging.Fields{
+				"valid_floats":  validFloats,
+				"total_samples": len(samples),
+				"valid_ratio":   float64(validFloats) / float64(len(samples)),
+			})
 	}
 
 	return samples, nil
@@ -138,13 +158,15 @@ func tryConvertFloat32(buffer []byte, sampleRate, channels int) ([]float64, erro
 func tryConvertS32(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Check if buffer size makes sense for 32-bit audio
 	if len(buffer)%4 != 0 {
-		return nil, fmt.Errorf("buffer size not aligned for 32-bit samples")
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "buffer size not aligned for 32-bit samples", nil,
+			logging.Fields{"buffer_size": len(buffer)})
 	}
 
 	sampleCount := len(buffer) / 4
 	samples := make([]float64, sampleCount)
 
-	for i := 0; i < sampleCount; i++ {
+	for i := range sampleCount {
 		// Read 32-bit little-endian signed integer
 		sample := int32(buffer[i*4]) | int32(buffer[i*4+1])<<8 | int32(buffer[i*4+2])<<16 | int32(buffer[i*4+3])<<24
 		// Convert to float64 [-1.0, 1.0]
@@ -154,7 +176,13 @@ func tryConvertS32(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Sanity check: reasonable sample count for expected parameters
 	expectedSamples := estimateExpectedSamples(sampleRate, channels)
 	if sampleCount < expectedSamples/4 || sampleCount > expectedSamples*4 {
-		return nil, fmt.Errorf("sample count %d doesn't match expected range for S32", sampleCount)
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "sample count doesn't match expected range for U8", nil,
+			logging.Fields{
+				"sample_count": sampleCount,
+				"expected_min": estimateExpectedSamples(sampleRate, channels) / 4,
+				"expected_max": estimateExpectedSamples(sampleRate, channels) * 4,
+			})
 	}
 
 	return samples, nil
@@ -165,7 +193,7 @@ func tryConvertU8(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	sampleCount := len(buffer)
 	samples := make([]float64, sampleCount)
 
-	for i := 0; i < sampleCount; i++ {
+	for i := range sampleCount {
 		// Convert 8-bit unsigned to float64 [-1.0, 1.0]
 		// 8-bit unsigned: 0-255, center at 128
 		samples[i] = (float64(buffer[i]) - 128.0) / 128.0
@@ -174,7 +202,14 @@ func tryConvertU8(buffer []byte, sampleRate, channels int) ([]float64, error) {
 	// Sanity check: reasonable sample count for expected parameters
 	expectedSamples := estimateExpectedSamples(sampleRate, channels)
 	if sampleCount < expectedSamples/4 || sampleCount > expectedSamples*4 {
-		return nil, fmt.Errorf("sample count %d doesn't match expected range for U8", sampleCount)
+		return nil, NewStreamErrorWithFields(StreamTypeHLS, "",
+			ErrCodeInvalidFormat, "sample count doesn't match expected range for U8", nil,
+			logging.Fields{
+				"sample_count": sampleCount,
+				"expected_min": estimateExpectedSamples(sampleRate, channels) / 4,
+				"expected_max": estimateExpectedSamples(sampleRate, channels) * 4,
+			})
+
 	}
 
 	return samples, nil
@@ -213,7 +248,13 @@ func convertWithSizeHeuristic(buffer []byte, expectedSampleRate, expectedChannel
 		}
 	}
 
-	return nil, 0, 0, fmt.Errorf("unable to determine audio format for buffer of size %d", bufferSize)
+	return nil, 0, 0, NewStreamErrorWithFields(StreamTypeHLS, "",
+		ErrCodeInvalidFormat, "unable to determine audio format", nil,
+		logging.Fields{
+			"buffer_size":          bufferSize,
+			"expected_sample_rate": expectedSampleRate,
+			"expected_channels":    expectedChannels,
+		})
 }
 
 // estimateExpectedSamples estimates how many samples we expect for typical HLS segments
@@ -234,7 +275,7 @@ func extractAudioFromFramePlanar(frame *transcode.Frame, expectedSampleRate, exp
 	planesWithData := 0
 	planeSize := 0
 
-	for plane := 0; plane < 8; plane++ { // Check up to 8 planes (more than enough for audio)
+	for plane := range 8 { // Check up to 8 planes (more than enough for audio)
 		buffer := frame.GetPlaneBuffer(plane)
 		if len(buffer) > 0 {
 			planesWithData++
@@ -263,16 +304,20 @@ func extractPlanarAudio(frame *transcode.Frame, numChannels, sampleRate int) ([]
 	var channelData [][]float64
 
 	// Extract data from each plane
-	for plane := 0; plane < numChannels; plane++ {
+	for plane := range numChannels {
 		buffer := frame.GetPlaneBuffer(plane)
 		if len(buffer) == 0 {
-			return nil, 0, fmt.Errorf("empty buffer in plane %d", plane)
+			return nil, 0, NewStreamErrorWithFields(StreamTypeHLS, "",
+				ErrCodeDecoding, "empty buffer in plane", nil,
+				logging.Fields{"plane": plane})
 		}
 
 		// Convert this plane's data
 		samples, _, _, err := convertRawAudioToFloat64(buffer, sampleRate, 1) // 1 channel per plane
 		if err != nil {
-			return nil, 0, fmt.Errorf("failed to convert plane %d: %w", plane, err)
+			return nil, 0, NewStreamErrorWithFields(StreamTypeHLS, "",
+				ErrCodeDecoding, "failed to convert plane", err,
+				logging.Fields{"plane": plane})
 		}
 
 		channelData = append(channelData, samples)
@@ -282,14 +327,20 @@ func extractPlanarAudio(frame *transcode.Frame, numChannels, sampleRate int) ([]
 	sampleCount := len(channelData[0])
 	for i, channel := range channelData {
 		if len(channel) != sampleCount {
-			return nil, 0, fmt.Errorf("channel %d has %d samples, expected %d", i, len(channel), sampleCount)
+			return nil, 0, NewStreamErrorWithFields(StreamTypeHLS, "",
+				ErrCodeInvalidFormat, "channel sample count mismatch", nil,
+				logging.Fields{
+					"channel":          i,
+					"actual_samples":   len(channel),
+					"expected_samples": sampleCount,
+				})
 		}
 	}
 
 	// Interleave the planar data
 	interleavedSamples := make([]float64, sampleCount*numChannels)
-	for sample := 0; sample < sampleCount; sample++ {
-		for channel := 0; channel < numChannels; channel++ {
+	for sample := range sampleCount {
+		for channel := range numChannels {
 			interleavedSamples[sample*numChannels+channel] = channelData[channel][sample]
 		}
 	}
