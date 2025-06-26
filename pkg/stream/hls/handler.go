@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Handler implements StreamHandler for HLS streams
@@ -88,7 +89,8 @@ func (h *Handler) CanHandle(ctx context.Context, url string) bool {
 // Connect establishes connection to the HLS stream
 func (h *Handler) Connect(ctx context.Context, url string) error {
 	if h.connected {
-		return fmt.Errorf("already connected")
+		return common.NewStreamError(common.StreamTypeHLS, url,
+			common.ErrCodeConnection, "already connected", nil)
 	}
 
 	h.url = url
@@ -127,7 +129,9 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, url,
+			common.ErrCodeConnection, "failed to create request", err)
+
 	}
 
 	// Set headers from configuration
@@ -138,12 +142,19 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch playlist: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, url,
+			common.ErrCodeConnection, "failed to fetch playlist", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, url,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+			logging.Fields{
+				"status_code": resp.StatusCode,
+				"status_text": resp.Status,
+			})
+
 	}
 
 	// Store response headers
@@ -162,7 +173,8 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 	// Parse the M3U8 content
 	playlist, err := h.parser.ParseM3U8Content(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse M3U8: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, url,
+			common.ErrCodeInvalidFormat, "failed to parse M3U8", err)
 	}
 
 	// Merge HTTP headers with playlist headers
@@ -177,7 +189,8 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 // GetMetadata retrieves stream metadata
 func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 	if !h.connected {
-		return nil, fmt.Errorf("not connected")
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	// Return the metadata extracted during connection
@@ -219,11 +232,13 @@ func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 // ReadAudio reads audio data from the HLS stream
 func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	if !h.connected {
-		return nil, fmt.Errorf("not connected")
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	if h.playlist == nil {
-		return nil, fmt.Errorf("no playlist available")
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeInvalidFormat, "no playlist available", nil)
 	}
 
 	// Initialize downloader if not exists
@@ -236,7 +251,8 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 
 	audioData, err := h.downloader.DownloadAudioSample(ctx, h.playlist, targetDuration)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download audio sample: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeDecoding, "failed to download audio sample", err)
 	}
 
 	// Enrich metadata from playlist/stream info
@@ -310,17 +326,20 @@ func (h *Handler) UpdateConfig(config *Config) {
 // RefreshPlaylist refreshes the playlist for live streams
 func (h *Handler) RefreshPlaylist(ctx context.Context) error {
 	if !h.connected {
-		return fmt.Errorf("not connected")
+		return common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	// Only refresh for live streams
 	if h.playlist != nil && !h.playlist.IsLive {
-		return fmt.Errorf("not a live stream")
+		return common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeUnsupported, "not a live stream", nil)
 	}
 
 	newPlaylist, err := h.parsePlaylist(ctx, h.url)
 	if err != nil {
-		return fmt.Errorf("failed to refresh playlist: %w", err)
+		return common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "failed to refresh playlist", err)
 	}
 
 	// Update playlist and re-extract metadata
@@ -333,7 +352,8 @@ func (h *Handler) RefreshPlaylist(ctx context.Context) error {
 // GetSegmentURLs returns URLs for all segments in the playlist
 func (h *Handler) GetSegmentURLs() ([]string, error) {
 	if h.playlist == nil {
-		return nil, fmt.Errorf("no playlist available")
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeInvalidFormat, "no playlist available", nil)
 	}
 
 	maxSegments := h.config.Audio.MaxSegments
@@ -357,7 +377,8 @@ func (h *Handler) GetSegmentURLs() ([]string, error) {
 // GetVariantURLs returns URLs for all variants in the playlist
 func (h *Handler) GetVariantURLs() ([]string, error) {
 	if h.playlist == nil {
-		return nil, fmt.Errorf("no playlist available")
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeInvalidFormat, "no playlist available", nil)
 	}
 
 	urls := make([]string, 0, len(h.playlist.Variants))
