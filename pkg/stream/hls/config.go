@@ -1,4 +1,3 @@
-// pkg/stream/hls/config.go
 package hls
 
 import (
@@ -432,20 +431,6 @@ func (cme *ConfigurableMetadataExtractor) applyDefaults(metadata *common.StreamM
 type ConfigurableParser struct {
 	*Parser
 	config *ParserConfig
-}
-
-// NewConfigurableParser creates a configurable parser
-func NewConfigurableParser(config *ParserConfig) *ConfigurableParser {
-	if config == nil {
-		config = DefaultConfig().Parser
-	}
-
-	parser := &ConfigurableParser{
-		Parser: NewParser(),
-		config: config,
-	}
-
-	return parser
 }
 
 // ParseM3U8Content parses with configuration options

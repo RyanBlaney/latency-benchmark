@@ -1,8 +1,10 @@
 package hls
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -153,8 +155,13 @@ func (h *Handler) parsePlaylist(ctx context.Context, url string) (*M3U8Playlist,
 		}
 	}
 
+	var reader io.Reader = resp.Body
+	if h.config.HTTP.BufferSize > 0 {
+		reader = bufio.NewReaderSize(resp.Body, h.config.HTTP.BufferSize)
+	}
+
 	// Parse the M3U8 content
-	playlist, err := h.parser.ParseM3U8Content(resp.Body)
+	playlist, err := h.parser.ParseM3U8Content(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse M3U8: %w", err)
 	}
@@ -222,7 +229,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 
 	// Initialize downloader if not exists
 	if h.downloader == nil {
-		h.downloader = NewAudioDownloader(h.client, nil) // Use default config
+		h.downloader = NewAudioDownloader(h.client, nil, h.config) // Use default config
 	}
 
 	// Download audio sample using configured duration
@@ -410,4 +417,3 @@ func (h *Handler) ShouldFollowLive() bool {
 func (h *Handler) ShouldAnalyzeSegments() bool {
 	return h.config != nil && h.config.Audio != nil && h.config.Audio.AnalyzeSegments
 }
-

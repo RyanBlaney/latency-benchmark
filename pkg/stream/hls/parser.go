@@ -39,6 +39,41 @@ func NewParser() *Parser {
 	return parser
 }
 
+// In parser.go, update NewConfigurableParser
+func NewConfigurableParser(config *ParserConfig) *ConfigurableParser {
+	if config == nil {
+		config = DefaultConfig().Parser
+	}
+
+	parser := &ConfigurableParser{
+		Parser: NewParser(),
+		config: config,
+	}
+
+	// Register custom tag handlers from configuration
+	parser.registerCustomTagHandlers()
+
+	return parser
+}
+
+// Add this new method to ConfigurableParser
+func (cp *ConfigurableParser) registerCustomTagHandlers() {
+	for tagName, handlerName := range cp.config.CustomTagHandlers {
+		// Create a generic handler that stores the value in playlist headers
+		handler := TagHandler{
+			Name:        tagName,
+			Description: fmt.Sprintf("Custom handler: %s", handlerName),
+			Handler: func(value string, playlist *M3U8Playlist, context *ParseContext) error {
+				// Store custom tag values in playlist headers with a prefix
+				key := fmt.Sprintf("custom_%s", strings.ToLower(strings.TrimPrefix(tagName, "#EXT-X-")))
+				playlist.Headers[key] = value
+				return nil
+			},
+		}
+		cp.Parser.RegisterTagHandler(handler)
+	}
+}
+
 // ParseM3U8Content parses M3U8 playlist content from an io.Reader
 func (p *Parser) ParseM3U8Content(reader io.Reader) (*M3U8Playlist, error) {
 	playlist := &M3U8Playlist{

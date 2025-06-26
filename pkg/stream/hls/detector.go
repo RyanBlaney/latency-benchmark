@@ -1,8 +1,10 @@
 package hls
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -213,7 +215,12 @@ func (d *Detector) DetectFromM3U8Content(ctx context.Context, streamURL string, 
 		parser = NewParser()
 	}
 
-	playlist, err := parser.ParseM3U8Content(resp.Body)
+	var reader io.Reader = resp.Body
+	if httpConfig != nil && httpConfig.BufferSize > 0 {
+		reader = bufio.NewReaderSize(resp.Body, httpConfig.BufferSize)
+	}
+
+	playlist, err := parser.ParseM3U8Content(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse M3U8: %w", err)
 	}
@@ -356,4 +363,3 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 
 	return common.StreamTypeUnsupported, nil, fmt.Errorf("stream type not supported or invalid")
 }
-

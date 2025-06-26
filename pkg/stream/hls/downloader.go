@@ -4,6 +4,7 @@
 package hls
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ type AudioDownloader struct {
 	segmentCache  map[string][]byte
 	downloadStats *DownloadStats
 	config        *DownloadConfig
+	hlsConfig     *Config
 	tempDir       string // Directory for temporary files
 }
 
@@ -73,7 +75,7 @@ type SegmentError struct {
 }
 
 // NewAudioDownloader creates a new audio downloader
-func NewAudioDownloader(client *http.Client, config *DownloadConfig) *AudioDownloader {
+func NewAudioDownloader(client *http.Client, config *DownloadConfig, hlsConfig *Config) *AudioDownloader {
 	if config == nil {
 		config = DefaultDownloadConfig()
 	}
@@ -204,10 +206,15 @@ func (ad *AudioDownloader) decodeAllFrames(decoder *transcode.Decoder, stream *t
 	var allSamples []float64
 	var totalDuration time.Duration
 
-	// Default values that we'll extract from the first frame
-	// TODO: incorporate config
 	sampleRate := 44100
+	if ad.config != nil && ad.config.OutputSampleRate > 0 {
+		sampleRate = ad.config.OutputSampleRate
+	}
+
 	channels := 2
+	if ad.config != nil && ad.config.OutputChannels > 0 {
+		channels = ad.config.OutputChannels
+	}
 
 	// Listen for decoder errors in a separate goroutine
 	go func() {
@@ -477,8 +484,12 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// TODO: Specify headers in config
-	req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
+	userAgent := "TuneIn-CDN-Benchmark/1.0" // Default fallback
+	if ad.hlsConfig != nil && ad.hlsConfig.HTTP != nil {
+		userAgent = ad.hlsConfig.HTTP.UserAgent
+	}
+
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "*/*")
 
 	resp, err := ad.client.Do(req)
@@ -491,7 +502,12 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	var reader io.Reader = resp.Body
+	if ad.hlsConfig != nil && ad.hlsConfig.HTTP != nil && ad.hlsConfig.HTTP.BufferSize > 0 {
+		reader = bufio.NewReaderSize(resp.Body, ad.hlsConfig.HTTP.BufferSize)
+	}
+
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

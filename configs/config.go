@@ -137,7 +137,7 @@ type ICEcastHTTPConfig struct {
 
 // ICEcastAudioConfig holds audio-specific configuration for ICEcast
 type ICEcastAudioConfig struct {
-	BufferSize       int           `mapstructure:"buffer_size"`
+	BufferDuration   time.Duration `mapstructure:"buffer_duration"`
 	SampleDuration   time.Duration `mapstructure:"sample_duration"`
 	MaxReadAttempts  int           `mapstructure:"max_read_attempts"`
 	ReadTimeout      time.Duration `mapstructure:"read_timeout"`
@@ -304,9 +304,9 @@ func (c *Config) ToICEcastConfig() *icecast.Config {
 			"headers":            c.Stream.Headers,
 		},
 		"audio": map[string]interface{}{
-			"buffer_size": c.Audio.BufferDuration,
-			"sample_rate": c.Audio.SampleRate,
-			"channels":    c.Audio.Channels,
+			"buffer_duration": c.Audio.BufferDuration,
+			"sample_rate":     c.Audio.SampleRate,
+			"channels":        c.Audio.Channels,
 		},
 		"icecast": map[string]interface{}{
 			"metadata_extractor": map[string]interface{}{
@@ -332,7 +332,7 @@ func (c *Config) ToICEcastConfig() *icecast.Config {
 				"request_icy_meta":   c.ICEcast.HTTP.RequestICYMeta,
 			},
 			"audio": map[string]interface{}{
-				"buffer_size":       c.ICEcast.Audio.BufferSize,
+				"buffer_duration":   c.ICEcast.Audio.BufferDuration,
 				"sample_duration":   c.ICEcast.Audio.SampleDuration,
 				"max_read_attempts": c.ICEcast.Audio.MaxReadAttempts,
 				"read_timeout":      c.ICEcast.Audio.ReadTimeout,
