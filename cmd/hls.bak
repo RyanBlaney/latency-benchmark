@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tunein/cdn-benchmark-cli/configs"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
 	"golang.org/x/text/cases"
@@ -30,8 +30,6 @@ var (
 	hlsShowPlaylistAnalysis bool
 	hlsShowHealthCheck      bool
 	hlsCustomConfig         string
-	hlsTestAudio            bool
-	hlsShowConfig           bool
 )
 
 var titleCaser = cases.Title(language.English)
@@ -41,16 +39,14 @@ var hlsCmd = &cobra.Command{
 	Short: "HLS-specific testing and analysis",
 	Long: `Perform comprehensive HLS testing including playlist validation,
 segment analysis, M3U8 parsing verification, metadata extraction,
-quality assessment, health checking, audio downloading, and performance profiling.
+quality assessment, health checking, and performance profiling.
 
 This command tests the complete HLS detection and parsing pipeline:
-- Configuration loading and validation
 - URL pattern detection
 - HTTP header analysis  
 - M3U8 content parsing
 - Metadata extraction
 - Stream validation
-- Audio downloading and decoding
 - Quality assessment
 - Health monitoring
 - Performance profiling
@@ -59,17 +55,17 @@ Examples:
   # Test basic HLS detection and parsing
   cdn-benchmark hls https://playlist.fns.tunein.com/v3/news/bloomberg/aac_adts/96/media.m3u8
 
-  # Full comprehensive testing with audio
-  cdn-benchmark hls --validate --quality-analysis --playlist-analysis --health-check --test-audio --verbose https://stream.example.com/playlist.m3u8
+  # Full comprehensive testing
+  cdn-benchmark hls --validate --quality-analysis --playlist-analysis --health-check --verbose https://stream.example.com/playlist.m3u8
 
-  # Show detailed playlist information and configuration
-  cdn-benchmark hls --show-playlist --show-config --verbose https://stream.example.com/playlist.m3u8
+  # Show detailed playlist information
+  cdn-benchmark hls --show-playlist --verbose https://stream.example.com/playlist.m3u8
 
-  # Analyze segments with audio testing
-  cdn-benchmark hls --analyze-segments --max-segments 5 --test-audio https://stream.example.com/playlist.m3u8
+  # Analyze specific number of segments
+  cdn-benchmark hls --analyze-segments --max-segments 5 https://stream.example.com/playlist.m3u8
 
-  # Follow live playlist updates with configuration
-  cdn-benchmark hls --follow --timeout 30s --show-config https://live.example.com/playlist.m3u8`,
+  # Follow live playlist updates
+  cdn-benchmark hls --follow --timeout 30s https://live.example.com/playlist.m3u8`,
 	Args: cobra.ExactArgs(1),
 	RunE: runHLSTest,
 }
@@ -99,13 +95,9 @@ func init() {
 		"show stream health assessment")
 	hlsCmd.Flags().StringVar(&hlsCustomConfig, "config", "",
 		"path to custom HLS configuration file")
-	hlsCmd.Flags().BoolVar(&hlsTestAudio, "test-audio", false,
-		"download and test audio data")
-	hlsCmd.Flags().BoolVar(&hlsShowConfig, "show-config", false,
-		"show the effective configuration being used")
 }
 
-// PerformanceTimer tracks timing for various test operations
+// Simple performance timer for the command
 type PerformanceTimer struct {
 	startTimes map[string]time.Time
 	durations  map[string]time.Duration
@@ -144,6 +136,7 @@ func (pt *PerformanceTimer) GetTotalDuration() time.Duration {
 
 func (pt *PerformanceTimer) GetAllDurations() map[string]time.Duration {
 	result := make(map[string]time.Duration)
+
 	maps.Copy(result, pt.durations)
 	return result
 }
@@ -164,56 +157,20 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	timer := NewPerformanceTimer()
 	timer.StartEvent("total_test")
 
-	// Test 0: Configuration Loading and Setup
-	timer.StartEvent("config_loading")
-	fmt.Printf("0️⃣  Configuration Loading\n")
-
-	// Load application configuration
-	appConfig, err := configs.LoadConfig()
-	if err != nil {
-		fmt.Printf("   ❌ Failed to load application config: %v\n", err)
-		return fmt.Errorf("failed to load application config: %w", err)
-	}
-	fmt.Printf("   ✅ Application configuration loaded\n")
-
-	// Convert to HLS configuration
-	hlsConfig := appConfig.ToHLSConfig()
-	if hlsConfig == nil {
-		hlsConfig = hls.DefaultConfig()
-		fmt.Printf("   ⚠️  Using default HLS configuration\n")
-	} else {
-		fmt.Printf("   ✅ HLS configuration created from app config\n")
-	}
-
 	// Load custom configuration if provided
+	var config *hls.Config
 	if hlsCustomConfig != "" {
-		// TODO: Load and merge custom config from file
-		fmt.Printf("   📁 Custom configuration file specified: %s\n", hlsCustomConfig)
-		fmt.Printf("   ⚠️  Custom config loading not yet implemented, using defaults\n")
-	}
-
-	// Validate configuration
-	if err := hlsConfig.Validate(); err != nil {
-		fmt.Printf("   ❌ Configuration validation failed: %v\n", err)
-		return fmt.Errorf("configuration validation failed: %w", err)
-	}
-	fmt.Printf("   ✅ Configuration validation passed\n")
-
-	timer.EndEvent("config_loading")
-	fmt.Printf("\n")
-
-	// Show configuration if requested
-	if hlsShowConfig {
-		fmt.Printf("📊 Effective Configuration\n")
-		displayConfiguration(hlsConfig, verbose)
-		fmt.Printf("\n")
+		// TODO: Load config from file
+		config = hls.DefaultConfig()
+		fmt.Printf("📁 Using custom configuration: %s\n\n", hlsCustomConfig)
+	} else {
+		config = hls.DefaultConfig()
 	}
 
 	// Test 1: URL Pattern Detection
 	timer.StartEvent("url_detection")
 	fmt.Printf("1️⃣  URL Pattern Detection\n")
-	detector := hls.NewDetectorWithConfig(hlsConfig.Detection)
-	urlDetection := detector.DetectFromURL(url)
+	urlDetection := hls.DetectFromURL(url)
 	if urlDetection == common.StreamTypeHLS {
 		fmt.Printf("   ✅ URL pattern indicates HLS stream\n")
 	} else {
@@ -226,7 +183,19 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	// Test 2: HTTP Header Detection
 	timer.StartEvent("header_detection")
 	fmt.Printf("2️⃣  HTTP Header Detection\n")
-	headerDetection := detector.DetectFromHeaders(ctx, url, hlsConfig.HTTP)
+	factory := stream.NewFactory()
+	handler, err := factory.CreateHandler(common.StreamTypeHLS)
+	if err != nil {
+		return fmt.Errorf("failed to create HLS handler: %w", err)
+	}
+	defer handler.Close()
+
+	hlsHandler, ok := handler.(*hls.Handler)
+	if !ok {
+		return fmt.Errorf("handler is not HLS type")
+	}
+
+	headerDetection := hls.DetectFromHeaders(ctx, hlsHandler.GetClient(), url)
 	if headerDetection == common.StreamTypeHLS {
 		fmt.Printf("   ✅ HTTP headers indicate HLS stream\n")
 	} else {
@@ -239,7 +208,7 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	// Test 3: M3U8 Content Parsing
 	timer.StartEvent("m3u8_parsing")
 	fmt.Printf("3️⃣  M3U8 Content Parsing\n")
-	playlist, err := detector.DetectFromM3U8Content(ctx, url, hlsConfig.HTTP, hlsConfig.Parser)
+	playlist, err := hls.DetectFromM3U8Content(ctx, hlsHandler.GetClient(), url)
 	if err != nil {
 		fmt.Printf("   ❌ M3U8 parsing failed: %v\n\n", err)
 		return fmt.Errorf("M3U8 parsing failed: %w", err)
@@ -265,10 +234,6 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	// Test 4: Handler Integration Test
 	timer.StartEvent("handler_integration")
 	fmt.Printf("4️⃣  Handler Integration Test\n")
-
-	// Create handler with configuration
-	hlsHandler := hls.NewHandlerWithConfig(hlsConfig)
-	defer hlsHandler.Close()
 
 	// Test CanHandle method
 	canHandle := hlsHandler.CanHandle(ctx, url)
@@ -298,29 +263,12 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	timer.EndEvent("handler_integration")
 	fmt.Printf("\n")
 
-	// Test 5: Audio Download and Processing (if requested)
-	var audioData *common.AudioData
-	if hlsTestAudio {
-		timer.StartEvent("audio_processing")
-		fmt.Printf("5️⃣  Audio Download and Processing\n")
-
-		audioData, err = hlsHandler.ReadAudio(ctx)
-		if err != nil {
-			fmt.Printf("   ❌ Audio download failed: %v\n", err)
-		} else {
-			fmt.Printf("   ✅ Audio data downloaded successfully\n")
-			displayAudioData(audioData, verbose)
-		}
-		timer.EndEvent("audio_processing")
-		fmt.Printf("\n")
-	}
-
-	// Test 6: Stream Validation (if requested)
+	// Test 5: Stream Validation (if requested)
 	var validationPassed bool
 	if hlsValidateStream {
 		timer.StartEvent("stream_validation")
-		fmt.Printf("6️⃣  Stream Validation\n")
-		validator := hls.NewValidatorWithConfig(hlsConfig)
+		fmt.Printf("5️⃣  Stream Validation\n")
+		validator := hls.NewValidatorWithConfig(config)
 
 		// Validate URL
 		if err := validator.ValidateURL(ctx, url); err != nil {
@@ -337,24 +285,15 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 			validationPassed = true
 		}
 
-		// Validate audio if available
-		if audioData != nil {
-			if err := validator.ValidateAudio(audioData); err != nil {
-				fmt.Printf("   ❌ Audio validation failed: %v\n", err)
-			} else {
-				fmt.Printf("   ✅ Audio validation passed\n")
-			}
-		}
-
 		timer.EndEvent("stream_validation")
 		fmt.Printf("\n")
 	}
 
-	// Test 7: Quality Assessment (if requested)
+	// Test 6: Quality Assessment (if requested)
 	var qualityMetrics *hls.QualityMetrics
 	if hlsShowQualityAnalysis && metadata != nil {
 		timer.StartEvent("quality_assessment")
-		fmt.Printf("7️⃣  Quality Assessment\n")
+		fmt.Printf("6️⃣  Quality Assessment\n")
 		qualityAnalyzer := hls.NewQualityAnalyzer()
 		qualityMetrics = qualityAnalyzer.AnalyzeQuality(metadata)
 		displayQualityMetrics(qualityMetrics, verbose)
@@ -362,11 +301,11 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n")
 	}
 
-	// Test 8: Comprehensive Analysis (if requested)
+	// Test 7: Comprehensive Analysis (if requested)
 	var playlistAnalysis *hls.PlaylistAnalysis
 	if hlsShowPlaylistAnalysis {
 		timer.StartEvent("playlist_analysis")
-		fmt.Printf("8️⃣  Comprehensive Analysis\n")
+		fmt.Printf("7️⃣  Comprehensive Analysis\n")
 		analyzer := hls.NewPlaylistAnalyzer()
 		playlistAnalysis = analyzer.AnalyzePlaylist(playlist)
 		displayPlaylistAnalysis(playlistAnalysis, verbose)
@@ -374,12 +313,12 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n")
 	}
 
-	// Test 9: Health Assessment (if requested)
+	// Test 8: Health Assessment (if requested)
 	var healthStatus *hls.HealthStatus
 	if hlsShowHealthCheck && metadata != nil {
 		timer.StartEvent("health_assessment")
-		fmt.Printf("9️⃣  Health Assessment\n")
-		healthChecker := hls.NewStreamHealthChecker(hlsConfig)
+		fmt.Printf("8️⃣  Health Assessment\n")
+		healthChecker := hls.NewStreamHealthChecker(config)
 		responseTime := timer.GetDuration("m3u8_parsing") + timer.GetDuration("header_detection")
 		healthStatus = healthChecker.CheckStreamHealth(playlist, metadata, responseTime)
 		displayHealthStatus(healthStatus, verbose)
@@ -387,25 +326,25 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n")
 	}
 
-	// Test 10: Segment Analysis (if requested)
+	// Test 9: Segment Analysis (if requested)
 	if hlsAnalyzeSegments && len(playlist.Segments) > 0 {
 		timer.StartEvent("segment_analysis")
-		fmt.Printf("🔟 Segment Analysis\n")
+		fmt.Printf("9️⃣  Segment Analysis\n")
 		analyzeSegments(playlist, hlsMaxSegments, verbose)
 		timer.EndEvent("segment_analysis")
 		fmt.Printf("\n")
 	}
 
-	// Test 11: Show Playlist Details (if requested)
+	// Test 10: Show Playlist Details (if requested)
 	if hlsShowPlaylist {
-		fmt.Printf("1️⃣1️⃣ Playlist Structure\n")
+		fmt.Printf("🔟 Playlist Structure\n")
 		displayPlaylistDetails(playlist, verbose)
 		fmt.Printf("\n")
 	}
 
-	// Test 12: Follow Live Updates (if requested)
+	// Test 11: Follow Live Updates (if requested)
 	if hlsFollowPlaylist && playlist.IsLive {
-		fmt.Printf("1️⃣2️⃣ Live Playlist Following\n")
+		fmt.Printf("1️⃣1️⃣ Live Playlist Following\n")
 		err = followLivePlaylist(ctx, hlsHandler, verbose)
 		if err != nil {
 			fmt.Printf("   ❌ Live following failed: %v\n", err)
@@ -424,16 +363,11 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	// Test Summary
 	fmt.Printf("📋 Test Summary\n")
 	fmt.Printf("═══════════════════════════════════════════════════════════════\n")
-	fmt.Printf("Configuration:     %s\n", getCheckmark(hlsConfig != nil))
 	fmt.Printf("URL Detection:     %s\n", getCheckmark(urlDetection == common.StreamTypeHLS))
 	fmt.Printf("Header Detection:  %s\n", getCheckmark(headerDetection == common.StreamTypeHLS))
 	fmt.Printf("M3U8 Parsing:      %s\n", getCheckmark(playlist.IsValid))
 	fmt.Printf("Handler Integration: %s\n", getCheckmark(canHandle && err == nil))
 	fmt.Printf("Metadata Extraction: %s\n", getCheckmark(metadata != nil))
-
-	if hlsTestAudio {
-		fmt.Printf("Audio Processing:  %s\n", getCheckmark(audioData != nil))
-	}
 
 	if hlsValidateStream {
 		fmt.Printf("Stream Validation: %s\n", getCheckmark(validationPassed))
@@ -464,107 +398,6 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
-
-func displayConfiguration(config *hls.Config, verbose bool) {
-	fmt.Printf("   📋 HLS Configuration:\n")
-
-	// HTTP Configuration
-	fmt.Printf("   🌐 HTTP Settings:\n")
-	fmt.Printf("      • User Agent: %s\n", config.HTTP.UserAgent)
-	fmt.Printf("      • Connection Timeout: %v\n", config.HTTP.ConnectionTimeout)
-	fmt.Printf("      • Read Timeout: %v\n", config.HTTP.ReadTimeout)
-	fmt.Printf("      • Max Redirects: %d\n", config.HTTP.MaxRedirects)
-	fmt.Printf("      • Buffer Size: %d bytes\n", config.HTTP.BufferSize)
-
-	if verbose && len(config.HTTP.CustomHeaders) > 0 {
-		fmt.Printf("      • Custom Headers:\n")
-		for k, v := range config.HTTP.CustomHeaders {
-			fmt.Printf("        - %s: %s\n", k, v)
-		}
-	}
-
-	// Audio Configuration
-	fmt.Printf("   🎵 Audio Settings:\n")
-	fmt.Printf("      • Sample Duration: %v\n", config.Audio.SampleDuration)
-	fmt.Printf("      • Buffer Duration: %v\n", config.Audio.BufferDuration)
-	fmt.Printf("      • Max Segments: %d\n", config.Audio.MaxSegments)
-	fmt.Printf("      • Follow Live: %t\n", config.Audio.FollowLive)
-	fmt.Printf("      • Analyze Segments: %t\n", config.Audio.AnalyzeSegments)
-
-	// Parser Configuration
-	if verbose {
-		fmt.Printf("   🔧 Parser Settings:\n")
-		fmt.Printf("      • Strict Mode: %t\n", config.Parser.StrictMode)
-		fmt.Printf("      • Max Segment Analysis: %d\n", config.Parser.MaxSegmentAnalysis)
-		fmt.Printf("      • Validate URIs: %t\n", config.Parser.ValidateURIs)
-		fmt.Printf("      • Ignore Unknown Tags: %t\n", config.Parser.IgnoreUnknownTags)
-	}
-
-	// Detection Configuration
-	if verbose {
-		fmt.Printf("   🔍 Detection Settings:\n")
-		fmt.Printf("      • Timeout: %d seconds\n", config.Detection.TimeoutSeconds)
-		fmt.Printf("      • URL Patterns: %d configured\n", len(config.Detection.URLPatterns))
-		fmt.Printf("      • Content Types: %d configured\n", len(config.Detection.ContentTypes))
-	}
-}
-
-func displayAudioData(audioData *common.AudioData, verbose bool) {
-	fmt.Printf("   🎵 Audio Data:\n")
-	fmt.Printf("      • Sample Rate: %d Hz\n", audioData.SampleRate)
-	fmt.Printf("      • Channels: %d\n", audioData.Channels)
-	fmt.Printf("      • Duration: %v\n", audioData.Duration)
-	fmt.Printf("      • PCM Samples: %d\n", len(audioData.PCM))
-
-	if len(audioData.PCM) > 0 {
-		// Calculate some basic audio statistics
-		var sum, min, max float64
-		min = audioData.PCM[0]
-		max = audioData.PCM[0]
-
-		for _, sample := range audioData.PCM {
-			sum += sample * sample // RMS calculation
-			if sample < min {
-				min = sample
-			}
-			if sample > max {
-				max = sample
-			}
-		}
-
-		rms := fmt.Sprintf("%.6f", (sum / float64(len(audioData.PCM))))
-		fmt.Printf("      • RMS Level: %s\n", rms)
-		fmt.Printf("      • Peak Range: %.6f to %.6f\n", min, max)
-
-		// Check for silence
-		silenceThreshold := 0.001
-		isSilent := true
-		for _, sample := range audioData.PCM {
-			if sample > silenceThreshold || sample < -silenceThreshold {
-				isSilent = false
-				break
-			}
-		}
-		fmt.Printf("      • Audio Content: %s\n", func() string {
-			if isSilent {
-				return "Silent/No Audio"
-			}
-			return "Audio Detected"
-		}())
-	}
-
-	if verbose && audioData.Metadata != nil {
-		fmt.Printf("      • Audio Metadata:\n")
-		fmt.Printf("        - Source URL: %s\n", audioData.Metadata.URL)
-		fmt.Printf("        - Codec: %s\n", audioData.Metadata.Codec)
-		fmt.Printf("        - Format: %s\n", audioData.Metadata.Format)
-		if audioData.Metadata.Bitrate > 0 {
-			fmt.Printf("        - Bitrate: %d kbps\n", audioData.Metadata.Bitrate)
-		}
-	}
-}
-
-// ... (rest of the display functions remain the same as in the original)
 
 func displayQualityMetrics(metrics *hls.QualityMetrics, verbose bool) {
 	fmt.Printf("   🎯 Quality Assessment:\n")

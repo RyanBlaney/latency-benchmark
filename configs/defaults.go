@@ -4,7 +4,110 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/spf13/viper"
 )
+
+// setHLSDefaults sets default HLS configuration values
+func setHLSDefaults(v *viper.Viper) {
+	// Set HLS parser defaults
+	if !v.IsSet("hls.parser.strict_mode") {
+		v.Set("hls.parser.strict_mode", false)
+	}
+	if !v.IsSet("hls.parser.max_segment_analysis") {
+		v.Set("hls.parser.max_segment_analysis", 10)
+	}
+	if !v.IsSet("hls.parser.ignore_unknown_tags") {
+		v.Set("hls.parser.ignore_unknown_tags", false)
+	}
+	if !v.IsSet("hls.parser.validate_uris") {
+		v.Set("hls.parser.validate_uris", false)
+	}
+	if !v.IsSet("hls.parser.custom_tag_handlers") {
+		v.Set("hls.parser.custom_tag_handlers", map[string]string{})
+	}
+
+	// Set HLS detection defaults
+	if !v.IsSet("hls.detection.url_patterns") {
+		v.Set("hls.detection.url_patterns", []string{
+			`\.m3u8$`,
+			`/playlist\.m3u8`,
+			`/master\.m3u8`,
+			`/index\.m3u8`,
+		})
+	}
+	if !v.IsSet("hls.detection.content_types") {
+		v.Set("hls.detection.content_types", []string{
+			"application/vnd.apple.mpegurl",
+			"application/x-mpegurl",
+			"vnd.apple.mpegurl",
+		})
+	}
+	if !v.IsSet("hls.detection.timeout_seconds") {
+		v.Set("hls.detection.timeout_seconds", 5)
+	}
+	if !v.IsSet("hls.detection.required_headers") {
+		v.Set("hls.detection.required_headers", []string{})
+	}
+
+	// Set HLS HTTP defaults
+	if !v.IsSet("hls.http.user_agent") {
+		v.Set("hls.http.user_agent", "TuneIn-CDN-Benchmark/1.0")
+	}
+	if !v.IsSet("hls.http.accept_header") {
+		v.Set("hls.http.accept_header", "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain")
+	}
+	if !v.IsSet("hls.http.connection_timeout") {
+		v.Set("hls.http.connection_timeout", "5s")
+	}
+	if !v.IsSet("hls.http.read_timeout") {
+		v.Set("hls.http.read_timeout", "15s")
+	}
+	if !v.IsSet("hls.http.max_redirects") {
+		v.Set("hls.http.max_redirects", 5)
+	}
+	if !v.IsSet("hls.http.buffer_size") {
+		v.Set("hls.http.buffer_size", 16384)
+	}
+	if !v.IsSet("hls.http.custom_headers") {
+		v.Set("hls.http.custom_headers", map[string]string{})
+	}
+
+	// Set HLS audio defaults
+	if !v.IsSet("hls.audio.sample_duration") {
+		v.Set("hls.audio.sample_duration", "30s")
+	}
+	if !v.IsSet("hls.audio.buffer_duration") {
+		v.Set("hls.audio.buffer_duration", "2s")
+	}
+	if !v.IsSet("hls.audio.max_segments") {
+		v.Set("hls.audio.max_segments", 10)
+	}
+	if !v.IsSet("hls.audio.follow_live") {
+		v.Set("hls.audio.follow_live", false)
+	}
+	if !v.IsSet("hls.audio.analyze_segments") {
+		v.Set("hls.audio.analyze_segments", false)
+	}
+
+	// Set HLS metadata extractor defaults
+	if !v.IsSet("hls.metadata_extractor.enable_url_patterns") {
+		v.Set("hls.metadata_extractor.enable_url_patterns", true)
+	}
+	if !v.IsSet("hls.metadata_extractor.enable_header_mappings") {
+		v.Set("hls.metadata_extractor.enable_header_mappings", true)
+	}
+	if !v.IsSet("hls.metadata_extractor.enable_segment_analysis") {
+		v.Set("hls.metadata_extractor.enable_segment_analysis", true)
+	}
+	if !v.IsSet("hls.metadata_extractor.default_values") {
+		v.Set("hls.metadata_extractor.default_values", map[string]interface{}{
+			"codec":       "aac",
+			"channels":    2,
+			"sample_rate": 44100,
+		})
+	}
+}
 
 // GetDefaultConfig returns a Config struct with all default values set
 func GetDefaultConfig() *Config {
@@ -60,7 +163,6 @@ func GetDefaultStreamConfig() StreamConfig {
 		BufferSize:        8192,
 		MaxRedirects:      3,
 		UserAgent:         "TuneIn-CDN-Benchmark/1.0",
-		AcceptHeader:      "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain",
 		Headers:           make(map[string]string),
 	}
 }

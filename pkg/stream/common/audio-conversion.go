@@ -1,3 +1,6 @@
+//go:build !noaudio
+// +build !noaudio
+
 package common
 
 import (

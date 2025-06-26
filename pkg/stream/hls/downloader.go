@@ -1,4 +1,6 @@
-// pkg/stream/hls/downloader.go
+//go:build !noaudio
+// +build !noaudio
+
 package hls
 
 import (
@@ -586,4 +588,3 @@ func abs(x int) int {
 	}
 	return x
 }
-
