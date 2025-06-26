@@ -163,9 +163,9 @@ func ConfigFromAppConfig(appConfig any) *Config {
 		}
 
 		// Apply audio config if available
-		if audioCfg, exists := appCfg["audio"].(map[string]interface{}); exists {
-			if bufferSize, ok := audioCfg["buffer_size"].(int); ok {
-				config.Audio.BufferSize = bufferSize
+		if audioCfg, exists := appCfg["audio"].(map[string]any); exists {
+			if bufferDuration, ok := audioCfg["buffer_duration"].(time.Duration); ok {
+				config.Audio.SampleDuration = bufferDuration
 			}
 			if sampleRate, ok := audioCfg["sample_rate"].(int); ok {
 				config.MetadataExtractor.DefaultValues["sample_rate"] = sampleRate
@@ -176,7 +176,7 @@ func ConfigFromAppConfig(appConfig any) *Config {
 		}
 
 		// Apply ICEcast-specific config if available
-		if icecastCfg, exists := appCfg["icecast"].(map[string]interface{}); exists {
+		if icecastCfg, exists := appCfg["icecast"].(map[string]any); exists {
 			applyICEcastSpecificConfig(config, icecastCfg)
 		}
 	}
@@ -185,14 +185,14 @@ func ConfigFromAppConfig(appConfig any) *Config {
 }
 
 // ConfigFromMap creates an ICEcast config from a map (useful for testing and flexibility)
-func ConfigFromMap(configMap map[string]interface{}) *Config {
+func ConfigFromMap(configMap map[string]any) *Config {
 	return ConfigFromAppConfig(configMap)
 }
 
 // applyICEcastSpecificConfig applies ICEcast-specific configuration overrides
-func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]interface{}) {
+func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]any) {
 	// Apply metadata extractor config
-	if metaCfg, exists := icecastCfg["metadata_extractor"].(map[string]interface{}); exists {
+	if metaCfg, exists := icecastCfg["metadata_extractor"].(map[string]any); exists {
 		if enableHeaders, ok := metaCfg["enable_header_mappings"].(bool); ok {
 			config.MetadataExtractor.EnableHeaderMappings = enableHeaders
 		}
@@ -202,10 +202,16 @@ func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]interface{
 		if timeout, ok := metaCfg["icy_metadata_timeout"].(time.Duration); ok {
 			config.MetadataExtractor.ICYMetadataTimeout = timeout
 		}
+		if defaultValues, ok := metaCfg["default_values"].(map[string]any); ok {
+			if config.MetadataExtractor.DefaultValues == nil {
+				config.MetadataExtractor.DefaultValues = make(map[string]any)
+			}
+			maps.Copy(config.MetadataExtractor.DefaultValues, defaultValues)
+		}
 	}
 
 	// Apply detection config
-	if detectionCfg, exists := icecastCfg["detection"].(map[string]interface{}); exists {
+	if detectionCfg, exists := icecastCfg["detection"].(map[string]any); exists {
 		if patterns, ok := detectionCfg["url_patterns"].([]string); ok {
 			config.Detection.URLPatterns = patterns
 		}
@@ -218,10 +224,13 @@ func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]interface{
 		if ports, ok := detectionCfg["common_ports"].([]string); ok {
 			config.Detection.CommonPorts = ports
 		}
+		if requiredHeaders, ok := detectionCfg["required_headers"].([]string); ok {
+			config.Detection.RequiredHeaders = requiredHeaders
+		}
 	}
 
 	// Apply HTTP config
-	if httpCfg, exists := icecastCfg["http"].(map[string]interface{}); exists {
+	if httpCfg, exists := icecastCfg["http"].(map[string]any); exists {
 		if userAgent, ok := httpCfg["user_agent"].(string); ok {
 			config.HTTP.UserAgent = userAgent
 		}
@@ -234,15 +243,27 @@ func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]interface{
 		if requestICY, ok := httpCfg["request_icy_meta"].(bool); ok {
 			config.HTTP.RequestICYMeta = requestICY
 		}
+		if connTimeout, ok := httpCfg["connection_timeout"].(time.Duration); ok {
+			config.HTTP.ConnectionTimeout = connTimeout
+		}
+		if readTimeout, ok := httpCfg["read_timeout"].(time.Duration); ok {
+			config.HTTP.ReadTimeout = readTimeout
+		}
+		if maxRedirects, ok := httpCfg["max_redirects"].(int); ok {
+			config.HTTP.MaxRedirects = maxRedirects
+		}
 	}
 
 	// Apply audio config
-	if audioCfg, exists := icecastCfg["audio"].(map[string]interface{}); exists {
+	if audioCfg, exists := icecastCfg["audio"].(map[string]any); exists {
 		if bufferSize, ok := audioCfg["buffer_size"].(int); ok {
 			config.Audio.BufferSize = bufferSize
 		}
 		if duration, ok := audioCfg["sample_duration"].(time.Duration); ok {
 			config.Audio.SampleDuration = duration
+		}
+		if bufferDuration, ok := audioCfg["buffer_duration"].(time.Duration); ok {
+			config.Audio.SampleDuration = bufferDuration
 		}
 		if maxAttempts, ok := audioCfg["max_read_attempts"].(int); ok {
 			config.Audio.MaxReadAttempts = maxAttempts
@@ -252,6 +273,9 @@ func applyICEcastSpecificConfig(config *Config, icecastCfg map[string]interface{
 		}
 		if interval, ok := audioCfg["metadata_interval"].(int); ok {
 			config.Audio.MetadataInterval = interval
+		}
+		if readTimeout, ok := audioCfg["read_timeout"].(time.Duration); ok {
+			config.Audio.ReadTimeout = readTimeout
 		}
 	}
 }
@@ -270,9 +294,7 @@ func (c *Config) GetHTTPHeaders() map[string]string {
 	}
 
 	// Add custom headers
-	for k, v := range c.HTTP.CustomHeaders {
-		headers[k] = v
-	}
+	maps.Copy(headers, c.HTTP.CustomHeaders)
 
 	return headers
 }
@@ -321,5 +343,155 @@ func (c *Config) Validate() error {
 			logging.Fields{"icy_timeout": c.MetadataExtractor.ICYMetadataTimeout})
 	}
 
+	if c.Detection.TimeoutSeconds <= 0 {
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "detection timeout must be positive", nil,
+			logging.Fields{"timeout_seconds": c.Detection.TimeoutSeconds})
+	}
+
+	if len(c.Detection.URLPatterns) == 0 {
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "at least one URL pattern must be configured", nil)
+	}
+
+	if len(c.Detection.ContentTypes) == 0 {
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "at least one content type must be configured", nil)
+	}
+
 	return nil
+}
+
+// Clone creates a deep copy of the configuration
+func (c *Config) Clone() *Config {
+	clone := &Config{
+		MetadataExtractor: &MetadataExtractorConfig{
+			EnableHeaderMappings: c.MetadataExtractor.EnableHeaderMappings,
+			EnableICYMetadata:    c.MetadataExtractor.EnableICYMetadata,
+			ICYMetadataTimeout:   c.MetadataExtractor.ICYMetadataTimeout,
+			DefaultValues:        make(map[string]any),
+			CustomHeaderMappings: make([]CustomHeaderMapping, len(c.MetadataExtractor.CustomHeaderMappings)),
+		},
+		Detection: &DetectionConfig{
+			URLPatterns:     make([]string, len(c.Detection.URLPatterns)),
+			ContentTypes:    make([]string, len(c.Detection.ContentTypes)),
+			RequiredHeaders: make([]string, len(c.Detection.RequiredHeaders)),
+			CommonPorts:     make([]string, len(c.Detection.CommonPorts)),
+			TimeoutSeconds:  c.Detection.TimeoutSeconds,
+		},
+		HTTP: &HTTPConfig{
+			UserAgent:         c.HTTP.UserAgent,
+			AcceptHeader:      c.HTTP.AcceptHeader,
+			ConnectionTimeout: c.HTTP.ConnectionTimeout,
+			ReadTimeout:       c.HTTP.ReadTimeout,
+			MaxRedirects:      c.HTTP.MaxRedirects,
+			RequestICYMeta:    c.HTTP.RequestICYMeta,
+			CustomHeaders:     make(map[string]string),
+		},
+		Audio: &AudioConfig{
+			BufferSize:       c.Audio.BufferSize,
+			SampleDuration:   c.Audio.SampleDuration,
+			MaxReadAttempts:  c.Audio.MaxReadAttempts,
+			ReadTimeout:      c.Audio.ReadTimeout,
+			HandleICYMeta:    c.Audio.HandleICYMeta,
+			MetadataInterval: c.Audio.MetadataInterval,
+		},
+	}
+
+	// Deep copy maps and slices
+	maps.Copy(clone.MetadataExtractor.DefaultValues, c.MetadataExtractor.DefaultValues)
+	copy(clone.MetadataExtractor.CustomHeaderMappings, c.MetadataExtractor.CustomHeaderMappings)
+	copy(clone.Detection.URLPatterns, c.Detection.URLPatterns)
+	copy(clone.Detection.ContentTypes, c.Detection.ContentTypes)
+	copy(clone.Detection.RequiredHeaders, c.Detection.RequiredHeaders)
+	copy(clone.Detection.CommonPorts, c.Detection.CommonPorts)
+	maps.Copy(clone.HTTP.CustomHeaders, c.HTTP.CustomHeaders)
+
+	return clone
+}
+
+// Merge merges another configuration into this one, with the other config taking precedence
+func (c *Config) Merge(other *Config) {
+	if other == nil {
+		return
+	}
+
+	// Merge metadata extractor config
+	if other.MetadataExtractor != nil {
+		if c.MetadataExtractor == nil {
+			c.MetadataExtractor = &MetadataExtractorConfig{}
+		}
+		c.MetadataExtractor.EnableHeaderMappings = other.MetadataExtractor.EnableHeaderMappings
+		c.MetadataExtractor.EnableICYMetadata = other.MetadataExtractor.EnableICYMetadata
+		c.MetadataExtractor.ICYMetadataTimeout = other.MetadataExtractor.ICYMetadataTimeout
+
+		if other.MetadataExtractor.DefaultValues != nil {
+			if c.MetadataExtractor.DefaultValues == nil {
+				c.MetadataExtractor.DefaultValues = make(map[string]any)
+			}
+			maps.Copy(c.MetadataExtractor.DefaultValues, other.MetadataExtractor.DefaultValues)
+		}
+
+		if len(other.MetadataExtractor.CustomHeaderMappings) > 0 {
+			c.MetadataExtractor.CustomHeaderMappings = make([]CustomHeaderMapping, len(other.MetadataExtractor.CustomHeaderMappings))
+			copy(c.MetadataExtractor.CustomHeaderMappings, other.MetadataExtractor.CustomHeaderMappings)
+		}
+	}
+
+	// Merge detection config
+	if other.Detection != nil {
+		if c.Detection == nil {
+			c.Detection = &DetectionConfig{}
+		}
+		c.Detection.TimeoutSeconds = other.Detection.TimeoutSeconds
+		if len(other.Detection.URLPatterns) > 0 {
+			c.Detection.URLPatterns = make([]string, len(other.Detection.URLPatterns))
+			copy(c.Detection.URLPatterns, other.Detection.URLPatterns)
+		}
+		if len(other.Detection.ContentTypes) > 0 {
+			c.Detection.ContentTypes = make([]string, len(other.Detection.ContentTypes))
+			copy(c.Detection.ContentTypes, other.Detection.ContentTypes)
+		}
+		if len(other.Detection.RequiredHeaders) > 0 {
+			c.Detection.RequiredHeaders = make([]string, len(other.Detection.RequiredHeaders))
+			copy(c.Detection.RequiredHeaders, other.Detection.RequiredHeaders)
+		}
+		if len(other.Detection.CommonPorts) > 0 {
+			c.Detection.CommonPorts = make([]string, len(other.Detection.CommonPorts))
+			copy(c.Detection.CommonPorts, other.Detection.CommonPorts)
+		}
+	}
+
+	// Merge HTTP config
+	if other.HTTP != nil {
+		if c.HTTP == nil {
+			c.HTTP = &HTTPConfig{}
+		}
+		c.HTTP.UserAgent = other.HTTP.UserAgent
+		c.HTTP.AcceptHeader = other.HTTP.AcceptHeader
+		c.HTTP.ConnectionTimeout = other.HTTP.ConnectionTimeout
+		c.HTTP.ReadTimeout = other.HTTP.ReadTimeout
+		c.HTTP.MaxRedirects = other.HTTP.MaxRedirects
+		c.HTTP.RequestICYMeta = other.HTTP.RequestICYMeta
+
+		if other.HTTP.CustomHeaders != nil {
+			if c.HTTP.CustomHeaders == nil {
+				c.HTTP.CustomHeaders = make(map[string]string)
+			}
+			maps.Copy(c.HTTP.CustomHeaders, other.HTTP.CustomHeaders)
+		}
+	}
+
+	// Merge audio config
+	if other.Audio != nil {
+		if c.Audio == nil {
+			c.Audio = &AudioConfig{}
+		}
+		c.Audio.BufferSize = other.Audio.BufferSize
+		c.Audio.SampleDuration = other.Audio.SampleDuration
+		c.Audio.MaxReadAttempts = other.Audio.MaxReadAttempts
+		c.Audio.ReadTimeout = other.Audio.ReadTimeout
+		c.Audio.HandleICYMeta = other.Audio.HandleICYMeta
+		c.Audio.MetadataInterval = other.Audio.MetadataInterval
+	}
 }

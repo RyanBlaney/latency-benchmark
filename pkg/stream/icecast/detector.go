@@ -3,6 +3,7 @@ package icecast
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,6 +35,11 @@ func NewDetectorWithConfig(config *DetectionConfig) *Detector {
 
 	client := &http.Client{
 		Timeout: time.Duration(config.TimeoutSeconds) * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: false,
+		},
 	}
 
 	return &Detector{
@@ -58,7 +64,6 @@ func DetectType(ctx context.Context, client *http.Client, streamURL string) (com
 	return common.StreamTypeUnsupported, nil
 }
 
-// DetectTypeWithConfig determines if the stream is ICEcast using full configuration
 // DetectTypeWithConfig determines if the stream is ICEcast using full configuration
 func DetectTypeWithConfig(ctx context.Context, streamURL string, config *Config) (common.StreamType, error) {
 	if config == nil {
@@ -86,6 +91,11 @@ func DetectTypeWithConfig(ctx context.Context, streamURL string, config *Config)
 
 	// Step 2: Header-based detection
 	if streamType := detector.DetectFromHeaders(detectCtx, streamURL, config.HTTP); streamType == common.StreamTypeICEcast {
+		return common.StreamTypeICEcast, nil
+	}
+
+	// Step 3: Content validation as last resort (check if audio stream is actually streaming)
+	if detector.IsValidICEcastContent(detectCtx, streamURL, config.HTTP) {
 		return common.StreamTypeICEcast, nil
 	}
 
@@ -145,6 +155,11 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 	if config.HTTP != nil {
 		client = &http.Client{
 			Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:       10,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
+			},
 		}
 	}
 
@@ -211,6 +226,7 @@ func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	}
 
 	path := strings.ToLower(u.Path)
+	query := strings.ToLower(u.RawQuery)
 	port := u.Port()
 
 	// Check port-based detection first
@@ -221,6 +237,10 @@ func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	// Check against configured URL patterns
 	for _, pattern := range d.config.URLPatterns {
 		if matched, err := regexp.MatchString(pattern, path); err == nil && matched {
+			return common.StreamTypeICEcast
+		}
+		// Also check query string for edge cases
+		if matched, err := regexp.MatchString(pattern, query); err == nil && matched {
 			return common.StreamTypeICEcast
 		}
 	}
@@ -235,6 +255,11 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 	if httpConfig != nil {
 		client = &http.Client{
 			Timeout: httpConfig.ConnectionTimeout + httpConfig.ReadTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:       10,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
+			},
 		}
 	}
 
@@ -249,7 +274,7 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	// Set headers from configuration
 	if httpConfig != nil {
-		headers := httpConfig.CustomHeaders
+		headers := httpConfig.GetHTTPHeaders()
 		for key, value := range headers {
 			req.Header.Set(key, value)
 		}
@@ -299,8 +324,95 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 	return common.StreamTypeUnsupported
 }
 
+// IsValidICEcastContent checks if the content appears to be valid ICEcast audio stream
+func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, httpConfig *HTTPConfig) bool {
+	// Use configured timeout for content validation
+	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(d.config.TimeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Use provided client or create one with timeout
+	client := d.client
+	if httpConfig != nil {
+		client = &http.Client{
+			Timeout: httpConfig.ConnectionTimeout + httpConfig.ReadTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:       10,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
+			},
+		}
+	}
+
+	req, err := http.NewRequestWithContext(detectCtx, "GET", streamURL, nil)
+	if err != nil {
+		return false
+	}
+
+	// Set headers from configuration
+	if httpConfig != nil {
+		headers := httpConfig.GetHTTPHeaders()
+		for key, value := range headers {
+			req.Header.Set(key, value)
+		}
+	} else {
+		// Fallback to default headers
+		req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
+		req.Header.Set("Accept", "audio/*")
+		req.Header.Set("Icy-MetaData", "1")
+	}
+
+	// Set range header to only read a small amount of data
+	req.Header.Set("Range", "bytes=0-1023")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Accept both 200 (full content) and 206 (partial content)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return false
+	}
+
+	// Verify content type indicates audio
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if contentType != "" && !strings.HasPrefix(contentType, "audio/") {
+		// Check if it's a known ICEcast content type
+		isValidContentType := false
+		for _, validType := range d.config.ContentTypes {
+			if strings.Contains(contentType, strings.ToLower(validType)) {
+				isValidContentType = true
+				break
+			}
+		}
+		if !isValidContentType {
+			return false
+		}
+	}
+
+	// Read a small amount of data to verify it's actually streaming
+	buffer := make([]byte, 1024)
+	n, err := resp.Body.Read(buffer)
+	if err != nil && n == 0 {
+		return false
+	}
+
+	// Very basic validation - ensure we got some data
+	return n > 0
+}
+
 // extractMetadataFromHeaders extracts ICEcast metadata from HTTP headers
 func extractMetadataFromHeaders(headers http.Header, metadata *common.StreamMetadata) {
+	// Store all headers in lowercase for reference using maps.Copy
+	headerMap := make(map[string]string)
+	for key, values := range headers {
+		if len(values) > 0 {
+			headerMap[strings.ToLower(key)] = values[0]
+		}
+	}
+	maps.Copy(metadata.Headers, headerMap)
+
 	// Extract ICEcast-specific headers
 	if name := headers.Get("icy-name"); name != "" {
 		metadata.Station = name
@@ -356,18 +468,32 @@ func extractMetadataFromHeaders(headers http.Header, metadata *common.StreamMeta
 		metadata.Format = "unknown"
 	}
 
-	// Store all relevant ICEcast headers
-	relevantHeaders := []string{
-		"content-type", "server", "icy-name", "icy-genre", "icy-description",
-		"icy-url", "icy-br", "icy-sr", "icy-channels", "icy-pub", "icy-notice1",
-		"icy-notice2", "icy-metaint", "icy-version",
+	// Store all relevant ICEcast headers efficiently
+	relevantHeaders := map[string]string{
+		"content-type":    headers.Get("content-type"),
+		"server":          headers.Get("server"),
+		"icy-name":        headers.Get("icy-name"),
+		"icy-genre":       headers.Get("icy-genre"),
+		"icy-description": headers.Get("icy-description"),
+		"icy-url":         headers.Get("icy-url"),
+		"icy-br":          headers.Get("icy-br"),
+		"icy-sr":          headers.Get("icy-sr"),
+		"icy-channels":    headers.Get("icy-channels"),
+		"icy-pub":         headers.Get("icy-pub"),
+		"icy-notice1":     headers.Get("icy-notice1"),
+		"icy-notice2":     headers.Get("icy-notice2"),
+		"icy-metaint":     headers.Get("icy-metaint"),
+		"icy-version":     headers.Get("icy-version"),
 	}
 
-	for _, header := range relevantHeaders {
-		if value := headers.Get(header); value != "" {
-			metadata.Headers[strings.ToLower(header)] = value
+	// Only add non-empty headers using maps.Copy
+	filteredHeaders := make(map[string]string)
+	for key, value := range relevantHeaders {
+		if value != "" {
+			filteredHeaders[key] = value
 		}
 	}
+	maps.Copy(metadata.Headers, filteredHeaders)
 }
 
 // applyDefaultValues applies default values from configuration
@@ -414,34 +540,6 @@ func applyDefaultValues(metadata *common.StreamMetadata, defaults map[string]any
 	}
 }
 
-// Package-level convenience functions that use default configuration
-// These maintain backward compatibility with existing code
-
-// DetectFromURL matches the URL with common ICEcast patterns (backward compatibility)
-func DetectFromURL(streamURL string) common.StreamType {
-	detector := NewDetector()
-	return detector.DetectFromURL(streamURL)
-}
-
-// DetectFromHeaders matches the HTTP headers with common ICEcast patterns (backward compatibility)
-func DetectFromHeaders(ctx context.Context, client *http.Client, streamURL string) common.StreamType {
-	detector := NewDetector()
-
-	// Create a temporary HTTP config from the client timeout
-	httpConfig := &HTTPConfig{
-		UserAgent:      "TuneIn-CDN-Benchmark/1.0",
-		AcceptHeader:   "audio/*",
-		RequestICYMeta: true,
-	}
-
-	if client.Timeout > 0 {
-		httpConfig.ConnectionTimeout = client.Timeout / 2
-		httpConfig.ReadTimeout = client.Timeout / 2
-	}
-
-	return detector.DetectFromHeaders(ctx, streamURL, httpConfig)
-}
-
 // ConfigurableDetection provides a complete detection suite with configuration
 func ConfigurableDetection(ctx context.Context, streamURL string, config *Config) (common.StreamType, error) {
 	if config == nil {
@@ -460,6 +558,60 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 		return common.StreamTypeICEcast, nil
 	}
 
+	// Step 3: Content validation as last resort
+	if detector.IsValidICEcastContent(ctx, streamURL, config.HTTP) {
+		return common.StreamTypeICEcast, nil
+	}
+
 	return common.StreamTypeUnsupported, common.NewStreamError(common.StreamTypeICEcast, streamURL,
 		common.ErrCodeUnsupported, "stream type not supported or invalid", nil)
 }
+
+// Package-level convenience functions that use default configuration
+// These maintain backward compatibility with existing code
+
+// DetectFromURL matches the URL with common ICEcast patterns (backward compatibility)
+func DetectFromURL(streamURL string) common.StreamType {
+	detector := NewDetector()
+	return detector.DetectFromURL(streamURL)
+}
+
+// DetectFromHeaders matches the HTTP headers with common ICEcast patterns (backward compatibility)
+func DetectFromHeaders(ctx context.Context, client *http.Client, streamURL string) common.StreamType {
+	detector := NewDetector()
+
+	// Create a temporary HTTP config from the client timeout
+	httpConfig := &HTTPConfig{
+		UserAgent:      "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader:   "audio/*",
+		RequestICYMeta: true,
+		CustomHeaders:  make(map[string]string),
+	}
+
+	if client != nil && client.Timeout > 0 {
+		httpConfig.ConnectionTimeout = client.Timeout / 2
+		httpConfig.ReadTimeout = client.Timeout / 2
+	}
+
+	return detector.DetectFromHeaders(ctx, streamURL, httpConfig)
+}
+
+// IsValidICEcastContent checks if the content appears to be valid ICEcast (backward compatibility)
+func IsValidICEcastContent(ctx context.Context, client *http.Client, streamURL string) bool {
+	detector := NewDetector()
+
+	// Create HTTP config from client
+	httpConfig := &HTTPConfig{
+		UserAgent:      "TuneIn-CDN-Benchmark/1.0",
+		AcceptHeader:   "audio/*",
+		RequestICYMeta: true,
+		CustomHeaders:  make(map[string]string),
+	}
+	if client != nil && client.Timeout > 0 {
+		httpConfig.ConnectionTimeout = client.Timeout / 2
+		httpConfig.ReadTimeout = client.Timeout / 2
+	}
+
+	return detector.IsValidICEcastContent(ctx, streamURL, httpConfig)
+}
+

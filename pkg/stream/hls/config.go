@@ -1,6 +1,7 @@
 package hls
 
 import (
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -455,9 +456,7 @@ func (c *Config) GetHTTPHeaders() map[string]string {
 	headers["Accept"] = c.HTTP.AcceptHeader
 
 	// Add custom headers
-	for k, v := range c.HTTP.CustomHeaders {
-		headers[k] = v
-	}
+	maps.Copy(headers, c.HTTP.CustomHeaders)
 
 	return headers
 }

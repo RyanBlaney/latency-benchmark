@@ -26,6 +26,7 @@ type Handler struct {
 	icyMetaInt        int    // ICY metadata interval
 	icyTitle          string // Current ICY title
 	bytesRead         int64  // Bytes read since last metadata
+	startTime         time.Time
 }
 
 // NewHandler creates a new ICEcast stream handler with default configuration
@@ -81,7 +82,8 @@ func (h *Handler) CanHandle(ctx context.Context, url string) bool {
 		return true
 	}
 
-	return false
+	// Content validation as final check
+	return detector.IsValidICEcastContent(ctx, url, h.config.HTTP)
 }
 
 // Connect establishes connection to the ICEcast stream
@@ -92,13 +94,13 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	}
 
 	h.url = url
-	startTime := time.Now()
+	h.startTime = time.Now()
 
 	// Create context with configured timeout
-	ctx, cancel := context.WithTimeout(ctx, h.config.HTTP.ConnectionTimeout)
+	connectCtx, cancel := context.WithTimeout(ctx, h.config.HTTP.ConnectionTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(connectCtx, "GET", url, nil)
 	if err != nil {
 		return common.NewStreamError(common.StreamTypeICEcast, url,
 			common.ErrCodeConnection, "failed to create request", err)
@@ -118,8 +120,12 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return common.NewStreamError(common.StreamTypeICEcast, url,
-			common.ErrCodeConnection, fmt.Sprintf("HTTP %d", resp.StatusCode), nil)
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, url,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+			logging.Fields{
+				"status_code": resp.StatusCode,
+				"status_text": resp.Status,
+			})
 	}
 
 	h.response = resp
@@ -134,7 +140,7 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	// Extract initial metadata using the configured extractor
 	h.metadata = h.metadataExtractor.ExtractMetadata(resp.Header, url)
 
-	h.stats.ConnectionTime = time.Since(startTime)
+	h.stats.ConnectionTime = time.Since(h.startTime)
 	h.stats.FirstByteTime = h.stats.ConnectionTime
 	h.connected = true
 
@@ -255,12 +261,10 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	// Update statistics
 	h.stats.BytesReceived += int64(len(audioBytes))
 
-	// Calculate average bitrate based on configured duration window
-	if h.stats.BytesReceived > 0 {
-		elapsed := time.Since(time.Now().Add(-h.config.Audio.SampleDuration))
-		if elapsed > 0 {
-			h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
-		}
+	// Calculate average bitrate based on elapsed time
+	elapsed := time.Since(h.startTime)
+	if elapsed > 0 {
+		h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
 	}
 
 	// Convert to PCM using configured audio parameters
@@ -281,11 +285,17 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	metadataCopy := *metadata
 	metadataCopy.Timestamp = time.Now()
 
+	// Calculate duration based on sample rate and channel count
+	sampleRate := metadataCopy.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 44100 // Default fallback
+	}
+
 	audioData := &common.AudioData{
 		PCM:        pcmSamples,
-		SampleRate: metadataCopy.SampleRate,
+		SampleRate: sampleRate,
 		Channels:   metadataCopy.Channels,
-		Duration:   time.Duration(len(pcmSamples)) * time.Second / time.Duration(metadataCopy.SampleRate),
+		Duration:   time.Duration(len(pcmSamples)) * time.Second / time.Duration(sampleRate),
 		Timestamp:  time.Now(),
 		Metadata:   &metadataCopy,
 	}
@@ -537,3 +547,62 @@ func (h *Handler) GetStreamInfo() map[string]any {
 
 	return info
 }
+
+// GetResponseHeaders returns the HTTP response headers from the stream connection
+func (h *Handler) GetResponseHeaders() map[string]string {
+	if h.response == nil {
+		return make(map[string]string)
+	}
+
+	headers := make(map[string]string)
+	for key, values := range h.response.Header {
+		if len(values) > 0 {
+			headers[strings.ToLower(key)] = values[0]
+		}
+	}
+
+	return headers
+}
+
+// GetConnectionTime returns the time elapsed since connection
+func (h *Handler) GetConnectionTime() time.Duration {
+	if !h.connected {
+		return 0
+	}
+	return time.Since(h.startTime)
+}
+
+// GetBytesPerSecond returns the current bytes per second rate
+func (h *Handler) GetBytesPerSecond() float64 {
+	if !h.connected || h.stats.BytesReceived == 0 {
+		return 0
+	}
+
+	elapsed := time.Since(h.startTime)
+	if elapsed <= 0 {
+		return 0
+	}
+
+	return float64(h.stats.BytesReceived) / elapsed.Seconds()
+}
+
+// IsLive returns whether this appears to be a live stream (always true for ICEcast)
+func (h *Handler) IsLive() bool {
+	return true // ICEcast streams are typically live
+}
+
+// GetAudioFormat returns the detected audio format information
+func (h *Handler) GetAudioFormat() map[string]any {
+	if h.metadata == nil {
+		return make(map[string]any)
+	}
+
+	return map[string]any{
+		"codec":       h.metadata.Codec,
+		"format":      h.metadata.Format,
+		"bitrate":     h.metadata.Bitrate,
+		"sample_rate": h.metadata.SampleRate,
+		"channels":    h.metadata.Channels,
+	}
+}
+

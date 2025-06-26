@@ -1,6 +1,7 @@
 package icecast
 
 import (
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ type HeaderMapping struct {
 // NewMetadataExtractor creates a new metadata extractor with default mappings
 func NewMetadataExtractor() *MetadataExtractor {
 	extractor := &MetadataExtractor{
-		headerMappings: make([]HeaderMapping, 0),
+		headerMappings: make([]HeaderMapping, 0, 16), // Pre-allocate for known mappings
 	}
 
 	// Register default header mappings
@@ -61,96 +62,83 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 		{
 			HeaderKey:   "icy-name",
 			MetadataKey: "station",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-genre",
 			MetadataKey: "genre",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-description",
 			MetadataKey: "title",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-url",
 			MetadataKey: "icy-url",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-br",
 			MetadataKey: "bitrate",
-			Transformer: func(value string) any {
-				if bitrate, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-					return bitrate
-				}
-				return nil
-			},
+			Transformer: me.integerParser,
 		},
 		{
 			HeaderKey:   "icy-sr",
 			MetadataKey: "sample_rate",
-			Transformer: func(value string) any {
-				if rate, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-					return rate
-				}
-				return nil
-			},
+			Transformer: me.integerParser,
 		},
 		{
 			HeaderKey:   "icy-channels",
 			MetadataKey: "channels",
-			Transformer: func(value string) any {
-				if channels, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-					return channels
-				}
-				return nil
-			},
+			Transformer: me.integerParser,
 		},
 		{
 			HeaderKey:   "content-type",
 			MetadataKey: "content_type",
-			Transformer: func(value string) any {
-				return strings.ToLower(strings.TrimSpace(value))
-			},
+			Transformer: me.contentTypeNormalizer,
 		},
 		{
 			HeaderKey:   "server",
 			MetadataKey: "server",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-metaint",
 			MetadataKey: "icy_metaint",
-			Transformer: func(value string) any {
-				if interval, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
-					return interval
-				}
-				return nil
-			},
+			Transformer: me.integerParser,
 		},
 		{
 			HeaderKey:   "icy-pub",
 			MetadataKey: "icy_public",
-			Transformer: func(value string) any {
-				return strings.TrimSpace(value) == "1"
-			},
+			Transformer: me.booleanParser,
 		},
 		{
 			HeaderKey:   "icy-notice1",
 			MetadataKey: "icy_notice1",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-notice2",
 			MetadataKey: "icy_notice2",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
 		},
 		{
 			HeaderKey:   "icy-version",
 			MetadataKey: "icy_version",
-			Transformer: func(value string) any { return strings.TrimSpace(value) },
+			Transformer: me.stringTrimmer,
+		},
+		// Additional useful headers
+		{
+			HeaderKey:   "icy-audio-info",
+			MetadataKey: "icy_audio_info",
+			Transformer: me.stringTrimmer,
+		},
+		{
+			HeaderKey:   "x-audiocast-name",
+			MetadataKey: "station", // Alternative header for station name
+			Transformer: me.stringTrimmer,
 		},
 	}
 
@@ -159,16 +147,42 @@ func (me *MetadataExtractor) registerDefaultHeaderMappings() {
 	}
 }
 
+// Pre-defined transformer functions for efficiency
+func (me *MetadataExtractor) stringTrimmer(value string) any {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
+func (me *MetadataExtractor) integerParser(value string) any {
+	if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+		return parsed
+	}
+	return nil
+}
+
+func (me *MetadataExtractor) booleanParser(value string) any {
+	return strings.TrimSpace(value) == "1"
+}
+
+func (me *MetadataExtractor) contentTypeNormalizer(value string) any {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
 // extractFromHeaders extracts metadata from HTTP headers using registered mappings
 func (me *MetadataExtractor) extractFromHeaders(headers http.Header, metadata *common.StreamMetadata) {
-	// Store all headers in lowercase for reference
+	// Store all headers in lowercase for reference using maps.Copy
+	headerMap := make(map[string]string)
 	for key, values := range headers {
 		if len(values) > 0 {
-			metadata.Headers[strings.ToLower(key)] = values[0]
+			headerMap[strings.ToLower(key)] = values[0]
 		}
 	}
+	maps.Copy(metadata.Headers, headerMap)
 
-	// Apply header mappings
+	// Apply header mappings efficiently
 	for _, mapping := range me.headerMappings {
 		if value := headers.Get(mapping.HeaderKey); value != "" {
 			if transformed := mapping.Transformer(value); transformed != nil {
@@ -213,6 +227,12 @@ func (me *MetadataExtractor) extractCodecFromContentType(metadata *common.Stream
 		case contentType == "audio/wav" || contentType == "audio/wave":
 			metadata.Codec = "pcm"
 			metadata.Format = "wav"
+		case strings.Contains(contentType, "opus"):
+			metadata.Codec = "opus"
+			metadata.Format = "opus"
+		case strings.Contains(contentType, "vorbis"):
+			metadata.Codec = "vorbis"
+			metadata.Format = "ogg"
 		default:
 			// Try to guess from common patterns
 			if strings.HasPrefix(contentType, "audio/") {
@@ -227,6 +247,8 @@ func (me *MetadataExtractor) extractCodecFromContentType(metadata *common.Stream
 					metadata.Codec = "aac"
 				case "ogg", "vorbis":
 					metadata.Codec = "ogg"
+				case "webm":
+					metadata.Codec = "opus"
 				default:
 					metadata.Codec = format
 				}
@@ -239,7 +261,7 @@ func (me *MetadataExtractor) extractCodecFromContentType(metadata *common.Stream
 func (me *MetadataExtractor) setMetadataField(metadata *common.StreamMetadata, field string, value any) {
 	switch field {
 	case "station":
-		if str, ok := value.(string); ok {
+		if str, ok := value.(string); ok && metadata.Station == "" { // Don't overwrite existing
 			metadata.Station = str
 		}
 	case "genre":
@@ -247,7 +269,7 @@ func (me *MetadataExtractor) setMetadataField(metadata *common.StreamMetadata, f
 			metadata.Genre = str
 		}
 	case "title":
-		if str, ok := value.(string); ok {
+		if str, ok := value.(string); ok && metadata.Title == "" { // Don't overwrite existing
 			metadata.Title = str
 		}
 	case "artist":
@@ -359,6 +381,10 @@ func (cme *ConfigurableMetadataExtractor) applyConfig() {
 func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform string) func(string) any {
 	return func(value string) any {
 		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil
+		}
+
 		switch transform {
 		case "int":
 			if i, err := strconv.Atoi(value); err == nil {
@@ -378,6 +404,8 @@ func (cme *ConfigurableMetadataExtractor) createCustomTransformer(transform stri
 			return strings.ToUpper(value)
 		case "title":
 			return titleCaser.String(strings.ToLower(value))
+		case "trim":
+			return value // Already trimmed above
 		default:
 			return value
 		}
@@ -397,6 +425,10 @@ func (cme *ConfigurableMetadataExtractor) ExtractMetadata(headers http.Header, s
 
 // applyDefaults applies default values from configuration
 func (cme *ConfigurableMetadataExtractor) applyDefaults(metadata *common.StreamMetadata) {
+	if cme.config.DefaultValues == nil {
+		return
+	}
+
 	for field, defaultValue := range cme.config.DefaultValues {
 		switch field {
 		case "codec":
@@ -438,6 +470,12 @@ func (cme *ConfigurableMetadataExtractor) applyDefaults(metadata *common.StreamM
 					metadata.Format = format
 				}
 			}
+		case "station":
+			if metadata.Station == "" {
+				if station, ok := defaultValue.(string); ok {
+					metadata.Station = station
+				}
+			}
 		}
 	}
 }
@@ -450,13 +488,17 @@ func ParseICYTitle(icyTitle string) (artist, title string) {
 	}
 
 	// Common patterns: "Artist - Title", "Artist: Title", "Artist | Title"
-	separators := []string{" - ", " – ", " — ", ": ", " | ", " / "}
+	separators := []string{" - ", " – ", " — ", ": ", " | ", " / ", " :: "}
 
 	for _, sep := range separators {
 		if strings.Contains(icyTitle, sep) {
 			parts := strings.SplitN(icyTitle, sep, 2)
 			if len(parts) == 2 {
-				return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+				artist := strings.TrimSpace(parts[0])
+				title := strings.TrimSpace(parts[1])
+				if artist != "" && title != "" {
+					return artist, title
+				}
 			}
 		}
 	}
@@ -481,7 +523,101 @@ func (me *MetadataExtractor) UpdateWithICYMetadata(metadata *common.StreamMetada
 		metadata.Title = title
 	}
 
-	// Store raw ICY title in headers
-	metadata.Headers["icy_current_title"] = icyTitle
+	// Store raw ICY title in headers using maps.Copy for efficiency
+	icyHeaders := map[string]string{
+		"icy_current_title": icyTitle,
+	}
+	if artist != "" {
+		icyHeaders["icy_current_artist"] = artist
+	}
+	if title != "" {
+		icyHeaders["icy_current_song"] = title
+	}
+
+	maps.Copy(metadata.Headers, icyHeaders)
 	metadata.Timestamp = time.Now()
 }
+
+// ExtractAudioInfo attempts to extract audio info from icy-audio-info header
+func (me *MetadataExtractor) ExtractAudioInfo(metadata *common.StreamMetadata) {
+	if audioInfo, exists := metadata.Headers["icy-audio-info"]; exists && audioInfo != "" {
+		// Parse icy-audio-info header (format: "ice-samplerate=44100;ice-bitrate=128;ice-channels=2")
+		parts := strings.Split(audioInfo, ";")
+		for _, part := range parts {
+			if kv := strings.SplitN(part, "=", 2); len(kv) == 2 {
+				key := strings.TrimSpace(kv[0])
+				value := strings.TrimSpace(kv[1])
+
+				switch key {
+				case "ice-samplerate":
+					if sr, err := strconv.Atoi(value); err == nil && metadata.SampleRate == 0 {
+						metadata.SampleRate = sr
+					}
+				case "ice-bitrate":
+					if br, err := strconv.Atoi(value); err == nil && metadata.Bitrate == 0 {
+						metadata.Bitrate = br
+					}
+				case "ice-channels":
+					if ch, err := strconv.Atoi(value); err == nil && metadata.Channels == 0 {
+						metadata.Channels = ch
+					}
+				}
+			}
+		}
+	}
+}
+
+// GetSupportedHeaders returns a list of all supported ICEcast headers
+func (me *MetadataExtractor) GetSupportedHeaders() []string {
+	headers := make([]string, 0, len(me.headerMappings))
+	for _, mapping := range me.headerMappings {
+		headers = append(headers, mapping.HeaderKey)
+	}
+	return headers
+}
+
+// GetHeaderMapping returns the mapping for a specific header key
+func (me *MetadataExtractor) GetHeaderMapping(headerKey string) (HeaderMapping, bool) {
+	for _, mapping := range me.headerMappings {
+		if strings.EqualFold(mapping.HeaderKey, headerKey) {
+			return mapping, true
+		}
+	}
+	return HeaderMapping{}, false
+}
+
+// RemoveHeaderMapping removes a header mapping by header key
+func (me *MetadataExtractor) RemoveHeaderMapping(headerKey string) bool {
+	for i, mapping := range me.headerMappings {
+		if strings.EqualFold(mapping.HeaderKey, headerKey) {
+			// Remove the mapping efficiently
+			me.headerMappings = append(me.headerMappings[:i], me.headerMappings[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateMetadata performs basic validation on extracted metadata
+func (me *MetadataExtractor) ValidateMetadata(metadata *common.StreamMetadata) []string {
+	var issues []string
+
+	if metadata.SampleRate > 0 && (metadata.SampleRate < 8000 || metadata.SampleRate > 192000) {
+		issues = append(issues, "unusual sample rate")
+	}
+
+	if metadata.Channels > 0 && metadata.Channels > 8 {
+		issues = append(issues, "unusual channel count")
+	}
+
+	if metadata.Bitrate > 0 && (metadata.Bitrate < 8 || metadata.Bitrate > 2000) {
+		issues = append(issues, "unusual bitrate")
+	}
+
+	if metadata.Codec == "" {
+		issues = append(issues, "missing codec information")
+	}
+
+	return issues
+}
+
