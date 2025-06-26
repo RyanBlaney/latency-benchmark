@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 	"github.com/tunein/go-transcoding/v10/transcode"
 )
 
@@ -127,7 +128,12 @@ func (ad *AudioDownloader) DownloadAudioSegment(ctx context.Context, segmentURL 
 	segmentData, err := ad.downloadSegmentWithRetries(ctx, segmentURL)
 	if err != nil {
 		ad.recordSegmentError(segmentURL, err, 0, "download")
-		return nil, fmt.Errorf("failed to download segment %s: %w", segmentURL, err)
+
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL, common.ErrCodeConnection,
+			"failed to download segment", err,
+			logging.Fields{
+				"segment_url": segmentURL,
+			})
 	}
 
 	// Cache if enabled
@@ -151,27 +157,34 @@ func (ad *AudioDownloader) processSegmentData(segmentData []byte, segmentURL str
 	tempFile := filepath.Join(ad.tempDir, fmt.Sprintf("segment_%d.tmp", time.Now().UnixNano()))
 	err := os.WriteFile(tempFile, segmentData, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write temp file: %w", err)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeDecoding, "failed to write temp file", err,
+			logging.Fields{"temp_file": tempFile})
+
 	}
 	defer os.Remove(tempFile)
 
 	// Open input format
-	inputFormat, err := transcode.OpenInput(tempFile, map[string]interface{}{})
+	inputFormat, err := transcode.OpenInput(tempFile, map[string]any{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to open input format: %w", err)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeDecoding, "failed to open input format", err,
+			logging.Fields{"temp_file": tempFile})
 	}
 	defer inputFormat.Close()
 
 	// Just get the first (and likely only) stream
 	stream := inputFormat.GetStream(0)
 	if stream == nil {
-		return nil, fmt.Errorf("no streams found in segment")
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeInvalidFormat, "no streams found in segment", nil)
 	}
 
 	// Open decoder directly - no need for "best" stream selection
 	decoder, err := transcode.OpenDecoder(stream)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open decoder: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeDecoding, "failed to open decoder", err)
 	}
 	defer decoder.Close()
 
@@ -182,7 +195,8 @@ func (ad *AudioDownloader) processSegmentData(segmentData []byte, segmentURL str
 	audioData, err := ad.decodeAllFrames(decoder, stream, segmentURL)
 	if err != nil {
 		ad.recordSegmentError(segmentURL, err, 0, "decode")
-		return nil, fmt.Errorf("failed to decode frames: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeDecoding, "failed to decode frames", err)
 	}
 
 	// Update decode stats
@@ -217,7 +231,11 @@ func (ad *AudioDownloader) decodeAllFrames(decoder *transcode.Decoder, stream *t
 	go func() {
 		for err := range decoder.Error() {
 			if err != nil && err != io.EOF {
-				fmt.Printf("Decoder error for %s: %v\n", segmentURL, err)
+				logging.Warn("Decoder error", logging.Fields{
+					"segment_url": segmentURL,
+					"error":       err.Error(),
+				})
+
 			}
 		}
 	}()
@@ -229,14 +247,19 @@ func (ad *AudioDownloader) decodeAllFrames(decoder *transcode.Decoder, stream *t
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("error reading frame %d: %w", frameCount, err)
+			return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL,
+				common.ErrCodeDecoding, "error reading frame", err,
+				logging.Fields{"frame_count": frameCount})
 		}
 
 		// Extract audio data from frame
 		frameSamples, frameDuration, err := common.ExtractAudioFromFrame(frame, sampleRate, channels)
 		if err != nil {
 			frame.Finalize()
-			return nil, fmt.Errorf("error extracting audio from frame %d: %w", frameCount, err)
+			return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL,
+				common.ErrCodeDecoding, "error extracting audio from frame", err,
+				logging.Fields{"frame_count": frameCount})
+
 		}
 
 		// Append samples
@@ -248,7 +271,8 @@ func (ad *AudioDownloader) decodeAllFrames(decoder *transcode.Decoder, stream *t
 	}
 
 	if len(allSamples) == 0 {
-		return nil, fmt.Errorf("no audio samples decoded")
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeDecoding, "no audio samples decoded", nil)
 	}
 
 	// Create AudioData
@@ -312,7 +336,7 @@ func (ad *AudioDownloader) convertSampleRate(audioData *common.AudioData, target
 	newLength := int(float64(len(audioData.PCM)) * ratio)
 	newSamples := make([]float64, newLength)
 
-	for i := 0; i < newLength; i++ {
+	for i := range newLength {
 		sourceIndex := float64(i) / ratio
 		sourceIndexInt := int(sourceIndex)
 
@@ -412,7 +436,8 @@ func (ad *AudioDownloader) createMetadata(segmentURL string, stream *transcode.S
 // DownloadAudioSample downloads multiple segments to create a sample of specified duration
 func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlist *M3U8Playlist, targetDuration time.Duration) (*common.AudioData, error) {
 	if playlist == nil || len(playlist.Segments) == 0 {
-		return nil, fmt.Errorf("empty playlist")
+		return nil, common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "empty playlist", nil)
 	}
 
 	var audioSamples []*common.AudioData
@@ -443,7 +468,8 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlist *M3
 	}
 
 	if len(audioSamples) == 0 {
-		return nil, fmt.Errorf("failed to download any audio segments")
+		return nil, common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeConnection, "failed to download any audio segments", nil)
 	}
 
 	return ad.combineAudioSamples(audioSamples)
@@ -478,7 +504,8 @@ func (ad *AudioDownloader) downloadSegmentWithRetries(ctx context.Context, segme
 func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", segmentURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeConnection, "failed to create request", err)
 	}
 
 	userAgent := "TuneIn-CDN-Benchmark/1.0" // Default fallback
@@ -491,12 +518,18 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 
 	resp, err := ad.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeConnection, "request failed", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+			logging.Fields{
+				"status_code": resp.StatusCode,
+				"status_text": resp.Status,
+			})
 	}
 
 	var reader io.Reader = resp.Body
@@ -506,7 +539,8 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeConnection, "failed to read response", err)
 	}
 
 	return data, nil
@@ -514,7 +548,9 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 
 func (ad *AudioDownloader) combineAudioSamples(samples []*common.AudioData) (*common.AudioData, error) {
 	if len(samples) == 0 {
-		return nil, fmt.Errorf("no audio samples to combine")
+		return nil, common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "no audio samples to combine", nil)
+
 	}
 
 	if len(samples) == 1 {
@@ -532,10 +568,20 @@ func (ad *AudioDownloader) combineAudioSamples(samples []*common.AudioData) (*co
 	totalSamples := 0
 	for _, sample := range samples {
 		if sample.SampleRate != combined.SampleRate {
-			return nil, fmt.Errorf("sample rate mismatch: %d vs %d", sample.SampleRate, combined.SampleRate)
+			return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, "",
+				common.ErrCodeInvalidFormat, "sample rate mismatch", nil,
+				logging.Fields{
+					"expected_rate": combined.SampleRate,
+					"actual_rate":   sample.SampleRate,
+				})
 		}
 		if sample.Channels != combined.Channels {
-			return nil, fmt.Errorf("channel count mismatch: %d vs %d", sample.Channels, combined.Channels)
+			return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, "",
+				common.ErrCodeInvalidFormat, "channel count mismatch", nil,
+				logging.Fields{
+					"expected_channels": combined.Channels,
+					"actual_channels":   sample.Channels,
+				})
 		}
 		totalSamples += len(sample.PCM)
 		combined.Duration += sample.Duration
