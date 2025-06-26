@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Detector handles ICEcast stream detection with configurable options
@@ -96,7 +98,8 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 	// Perform HEAD request to get metadata from headers
 	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, "failed to create request", err)
 	}
 
 	// Set headers for ICEcast compatibility
@@ -106,7 +109,8 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to probe ICEcast stream: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, "failed to probe ICEcast stream", err)
 	}
 	defer resp.Body.Close()
 
@@ -146,7 +150,8 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 
 	req, err := http.NewRequestWithContext(detectCtx, "HEAD", streamURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, "failed to create request", err)
 	}
 
 	// Set headers from configuration
@@ -164,12 +169,18 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to probe stream: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, "failed to probe stream", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+			logging.Fields{
+				"status_code": resp.StatusCode,
+				"status_text": resp.Status,
+			})
 	}
 
 	// Create metadata using configured extractor
@@ -195,7 +206,7 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	u, err := url.Parse(streamURL)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error in parsing URL: %v", err)
+		logging.Debug("Error parsing URL", logging.Fields{"url": streamURL, "error": err.Error()})
 		return common.StreamTypeUnsupported
 	}
 
@@ -203,10 +214,8 @@ func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	port := u.Port()
 
 	// Check port-based detection first
-	for _, commonPort := range d.config.CommonPorts {
-		if port == commonPort {
-			return common.StreamTypeICEcast
-		}
+	if slices.Contains(d.config.CommonPorts, port) {
+		return common.StreamTypeICEcast
 	}
 
 	// Check against configured URL patterns
@@ -231,7 +240,10 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error creating request for HTTP headers: %v", err)
+		logging.Debug("Error creating request for HTTP headers", logging.Fields{
+			"url":   streamURL,
+			"error": err.Error(),
+		})
 		return common.StreamTypeUnsupported
 	}
 
@@ -250,7 +262,10 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error getting response from client: %v", err)
+		logging.Debug("Error getting response from client", logging.Fields{
+			"url":   streamURL,
+			"error": err.Error(),
+		})
 		return common.StreamTypeUnsupported
 	}
 	defer resp.Body.Close()
@@ -356,7 +371,7 @@ func extractMetadataFromHeaders(headers http.Header, metadata *common.StreamMeta
 }
 
 // applyDefaultValues applies default values from configuration
-func applyDefaultValues(metadata *common.StreamMetadata, defaults map[string]interface{}) {
+func applyDefaultValues(metadata *common.StreamMetadata, defaults map[string]any) {
 	for field, defaultValue := range defaults {
 		switch field {
 		case "codec":
@@ -445,5 +460,6 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 		return common.StreamTypeICEcast, nil
 	}
 
-	return common.StreamTypeUnsupported, fmt.Errorf("stream type not supported or invalid")
+	return common.StreamTypeUnsupported, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+		common.ErrCodeUnsupported, "stream type not supported or invalid", nil)
 }

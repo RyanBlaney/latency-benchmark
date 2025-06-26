@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Handler implements StreamHandler for ICEcast streams with full configuration support
@@ -86,7 +87,8 @@ func (h *Handler) CanHandle(ctx context.Context, url string) bool {
 // Connect establishes connection to the ICEcast stream
 func (h *Handler) Connect(ctx context.Context, url string) error {
 	if h.connected {
-		return fmt.Errorf("already connected")
+		return common.NewStreamError(common.StreamTypeICEcast, url,
+			common.ErrCodeConnection, "already connected", nil)
 	}
 
 	h.url = url
@@ -142,7 +144,8 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 // GetMetadata retrieves stream metadata
 func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 	if !h.connected {
-		return nil, fmt.Errorf("not connected")
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	// Return the metadata extracted during connection or updated during streaming
@@ -198,7 +201,8 @@ func (h *Handler) applyDefaultMetadata() {
 // ReadAudio reads audio data from the ICEcast stream
 func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	if !h.connected || h.response == nil {
-		return nil, fmt.Errorf("not connected")
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	// Use configured buffer size for reading
@@ -269,7 +273,8 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	// Get current metadata
 	metadata, err := h.GetMetadata()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get metadata: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeMetadata, "failed to get metadata", err)
 	}
 
 	// Create a copy of metadata to avoid concurrent modification
@@ -296,9 +301,7 @@ func (h *Handler) readWithICYMetadata(buffer []byte) ([]byte, error) {
 	for len(audioData) < len(buffer) && maxRetries > 0 {
 		// Calculate how many audio bytes to read before next metadata block
 		audioToRead := h.icyMetaInt - int(h.bytesRead%int64(h.icyMetaInt))
-		if audioToRead > len(buffer)-len(audioData) {
-			audioToRead = len(buffer) - len(audioData)
-		}
+		audioToRead = min(audioToRead, len(buffer)-len(audioData))
 
 		// Read audio data
 		audioChunk := make([]byte, audioToRead)
@@ -320,8 +323,10 @@ func (h *Handler) readWithICYMetadata(buffer []byte) ([]byte, error) {
 		// Check if we need to read metadata
 		if h.bytesRead%int64(h.icyMetaInt) == 0 {
 			if err := h.readICYMetadata(); err != nil {
-				// Don't fail on metadata read errors, just log and continue
-				fmt.Printf("Warning: Failed to read ICY metadata: %v\n", err)
+				logging.Warn("Failed to read ICY metadata", logging.Fields{
+					"url":   h.url,
+					"error": err.Error(),
+				})
 			}
 		}
 
@@ -381,12 +386,14 @@ func (h *Handler) readICYMetadata() error {
 
 // convertToPCM converts raw audio bytes to PCM samples
 func (h *Handler) convertToPCM(audioBytes []byte) ([]float64, error) {
+	// TODO: decode ICEcast
 	// This is a placeholder implementation
 	// In a real implementation, you would use LibAV or similar to decode the audio
 	// For now, we'll simulate PCM conversion based on the assumed format
 
 	if h.metadata == nil || h.metadata.Codec == "" {
-		return nil, fmt.Errorf("no codec information available for PCM conversion")
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeDecoding, "no codec information available for PCM conversion", nil)
 	}
 
 	// For demonstration, assume 16-bit samples and convert to normalized float64
@@ -491,7 +498,8 @@ func (h *Handler) HasICYMetadata() bool {
 // RefreshMetadata manually refreshes metadata from headers (useful for live streams)
 func (h *Handler) RefreshMetadata() error {
 	if !h.connected || h.response == nil {
-		return fmt.Errorf("not connected")
+		return common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "not connected", nil)
 	}
 
 	// Re-extract metadata from current response headers
@@ -501,8 +509,8 @@ func (h *Handler) RefreshMetadata() error {
 }
 
 // GetStreamInfo returns detailed information about the current stream
-func (h *Handler) GetStreamInfo() map[string]interface{} {
-	info := make(map[string]interface{})
+func (h *Handler) GetStreamInfo() map[string]any {
+	info := make(map[string]any)
 
 	if h.metadata != nil {
 		info["station"] = h.metadata.Station
@@ -529,4 +537,3 @@ func (h *Handler) GetStreamInfo() map[string]interface{} {
 
 	return info
 }
-

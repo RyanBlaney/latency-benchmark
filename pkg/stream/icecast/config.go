@@ -1,8 +1,11 @@
 package icecast
 
 import (
-	"fmt"
+	"maps"
 	"time"
+
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Config holds configuration for ICEcast processing
@@ -15,11 +18,11 @@ type Config struct {
 
 // MetadataExtractorConfig holds configuration for metadata extraction
 type MetadataExtractorConfig struct {
-	EnableHeaderMappings bool                   `json:"enable_header_mappings"`
-	EnableICYMetadata    bool                   `json:"enable_icy_metadata"`
-	CustomHeaderMappings []CustomHeaderMapping  `json:"custom_header_mappings"`
-	DefaultValues        map[string]interface{} `json:"default_values"`
-	ICYMetadataTimeout   time.Duration          `json:"icy_metadata_timeout"`
+	EnableHeaderMappings bool                  `json:"enable_header_mappings"`
+	EnableICYMetadata    bool                  `json:"enable_icy_metadata"`
+	CustomHeaderMappings []CustomHeaderMapping `json:"custom_header_mappings"`
+	DefaultValues        map[string]any        `json:"default_values"`
+	ICYMetadataTimeout   time.Duration         `json:"icy_metadata_timeout"`
 }
 
 // DetectionConfig holds configuration for stream detection
@@ -64,9 +67,7 @@ func (httpConfig *HTTPConfig) GetHTTPHeaders() map[string]string {
 	}
 
 	// Add custom headers
-	for k, v := range httpConfig.CustomHeaders {
-		headers[k] = v
-	}
+	maps.Copy(headers, httpConfig.CustomHeaders)
 
 	return headers
 }
@@ -88,7 +89,7 @@ func DefaultConfig() *Config {
 			EnableHeaderMappings: true,
 			EnableICYMetadata:    true,
 			CustomHeaderMappings: []CustomHeaderMapping{},
-			DefaultValues: map[string]interface{}{
+			DefaultValues: map[string]any{
 				"codec":       "mp3",
 				"channels":    2,
 				"sample_rate": 44100,
@@ -139,11 +140,11 @@ func DefaultConfig() *Config {
 
 // ConfigFromAppConfig creates an ICEcast config from application config
 // This allows ICEcast library to remain a standalone library while integrating with the main app
-func ConfigFromAppConfig(appConfig interface{}) *Config {
+func ConfigFromAppConfig(appConfig any) *Config {
 	config := DefaultConfig()
 
-	if appCfg, ok := appConfig.(map[string]interface{}); ok {
-		if streamCfg, exists := appCfg["stream"].(map[string]interface{}); exists {
+	if appCfg, ok := appConfig.(map[string]any); ok {
+		if streamCfg, exists := appCfg["stream"].(map[string]any); exists {
 			if userAgent, ok := streamCfg["user_agent"].(string); ok && userAgent != "" {
 				config.HTTP.UserAgent = userAgent
 			}
@@ -279,31 +280,45 @@ func (c *Config) GetHTTPHeaders() map[string]string {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.HTTP.ConnectionTimeout <= 0 {
-		return fmt.Errorf("HTTP connection timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "HTTP connection timeout must be positive", nil,
+			logging.Fields{"timeout": c.HTTP.ConnectionTimeout})
 	}
 
 	if c.HTTP.ReadTimeout <= 0 {
-		return fmt.Errorf("HTTP read timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "HTTP read timeout must be positive", nil,
+			logging.Fields{"timeout": c.HTTP.ReadTimeout})
 	}
 
 	if c.HTTP.MaxRedirects < 0 {
-		return fmt.Errorf("max redirects cannot be negative")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "max redirects cannot be negative", nil,
+			logging.Fields{"max_redirects": c.HTTP.MaxRedirects})
 	}
 
 	if c.Audio.BufferSize <= 0 {
-		return fmt.Errorf("buffer size must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "buffer size must be positive", nil,
+			logging.Fields{"buffer_size": c.Audio.BufferSize})
 	}
 
 	if c.Audio.SampleDuration <= 0 {
-		return fmt.Errorf("sample duration must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "sample duration must be positive", nil,
+			logging.Fields{"sample_duration": c.Audio.SampleDuration})
 	}
 
 	if c.Audio.MaxReadAttempts <= 0 {
-		return fmt.Errorf("max read attempts must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "max read attempts must be positive", nil,
+			logging.Fields{"max_read_attempts": c.Audio.MaxReadAttempts})
 	}
 
 	if c.MetadataExtractor.ICYMetadataTimeout <= 0 {
-		return fmt.Errorf("ICY metadata timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "ICY metadata timeout must be positive", nil,
+			logging.Fields{"icy_timeout": c.MetadataExtractor.ICYMetadataTimeout})
 	}
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Validator implements StreamValidator interface for ICEcast streams
@@ -150,23 +151,31 @@ func (v *Validator) ValidateStream(ctx context.Context, handler common.StreamHan
 // ValidateAudio validates audio data quality for ICEcast
 func (v *Validator) ValidateAudio(data *common.AudioData) error {
 	if data == nil {
-		return fmt.Errorf("audio data is nil")
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "audio data is nil", nil)
 	}
 
 	if len(data.PCM) == 0 {
-		return fmt.Errorf("empty PCM data")
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "empty PCM data", nil)
 	}
 
 	if data.SampleRate <= 0 {
-		return fmt.Errorf("invalid sample rate: %d", data.SampleRate)
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "invalid sample rate", nil,
+			logging.Fields{"sample_rate": data.SampleRate})
 	}
 
 	if data.Channels <= 0 || data.Channels > 8 {
-		return fmt.Errorf("invalid channel count: %d", data.Channels)
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "invalid channel count", nil,
+			logging.Fields{"channels": data.Channels})
 	}
 
 	if data.Duration <= 0 {
-		return fmt.Errorf("invalid duration: %v", data.Duration)
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "invalid duration", nil,
+			logging.Fields{"duration": data.Duration.String()})
 	}
 
 	if data.Metadata != nil && data.Metadata.Type == common.StreamTypeICEcast {
@@ -182,19 +191,30 @@ func (v *Validator) ValidateAudio(data *common.AudioData) error {
 
 		validRate := slices.Contains(validSampleRates, data.SampleRate)
 		if !validRate {
-			return fmt.Errorf("unusual sample rate for ICEcast: %d", data.SampleRate)
+			return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+				common.ErrCodeInvalidFormat, "unusual sample rate for ICEcast", nil,
+				logging.Fields{
+					"sample_rate": data.SampleRate,
+					"valid_rates": validSampleRates,
+				})
 		}
 
 		// Check for reasonable audio levels (not all silence)
 		if v.isAllSilence(data.PCM) {
-			return fmt.Errorf("audio data contains only silence")
+			return common.NewStreamError(common.StreamTypeICEcast, "",
+				common.ErrCodeInvalidFormat, "audio data contains only silence", nil)
 		}
 
 		// Validate against configured minimum bitrate if available
 		if data.Metadata.Bitrate > 0 {
 			if minBitrate, ok := v.config.MetadataExtractor.DefaultValues["min_bitrate"]; ok {
 				if minRate, ok := minBitrate.(int); ok && data.Metadata.Bitrate < minRate {
-					return fmt.Errorf("bitrate %d is below minimum %d", data.Metadata.Bitrate, minRate)
+					return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+						common.ErrCodeInvalidFormat, "bitrate below minimum threshold", nil,
+						logging.Fields{
+							"actual_bitrate":  data.Metadata.Bitrate,
+							"minimum_bitrate": minRate,
+						})
 				}
 			}
 		}
@@ -202,7 +222,9 @@ func (v *Validator) ValidateAudio(data *common.AudioData) error {
 		// Validate codec is appropriate for ICEcast
 		if data.Metadata.Codec != "" {
 			if err := v.validateCodec(data.Metadata.Codec); err != nil {
-				return fmt.Errorf("codec validation failed: %w", err)
+				return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+					common.ErrCodeInvalidFormat, "codec validation failed", err,
+					logging.Fields{"codec": data.Metadata.Codec})
 			}
 		}
 	}
@@ -281,7 +303,12 @@ func (v *Validator) validateCodec(codec string) error {
 
 	codecLower := strings.ToLower(strings.TrimSpace(codec))
 	if !slices.Contains(validCodecs, codecLower) {
-		return fmt.Errorf("unsupported codec for ICEcast: %s", codec)
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "unsupported codec for ICEcast", nil,
+			logging.Fields{
+				"codec":        codec,
+				"valid_codecs": validCodecs,
+			})
 	}
 
 	return nil
@@ -444,35 +471,48 @@ func (v *Validator) UpdateConfig(config *Config) {
 // ValidateConfiguration validates the validator's own configuration
 func (v *Validator) ValidateConfiguration() error {
 	if v.config == nil {
-		return fmt.Errorf("validator configuration is nil")
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "validator configuration is nil", nil)
 	}
 
 	if v.config.HTTP.ConnectionTimeout <= 0 {
-		return fmt.Errorf("connection timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "connection timeout must be positive", nil,
+			logging.Fields{"connection_timeout": v.config.HTTP.ConnectionTimeout})
 	}
 
 	if v.config.HTTP.ReadTimeout <= 0 {
-		return fmt.Errorf("read timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "read timeout must be positive", nil,
+			logging.Fields{"read_timeout": v.config.HTTP.ReadTimeout})
 	}
 
 	if v.config.Detection.TimeoutSeconds <= 0 {
-		return fmt.Errorf("detection timeout must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "detection timeout must be positive", nil,
+			logging.Fields{"timeout_seconds": v.config.Detection.TimeoutSeconds})
 	}
 
 	if len(v.config.Detection.URLPatterns) == 0 {
-		return fmt.Errorf("at least one URL pattern must be configured")
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "at least one URL pattern must be configured", nil)
 	}
 
 	if len(v.config.Detection.ContentTypes) == 0 {
-		return fmt.Errorf("at least one content type must be configured")
+		return common.NewStreamError(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "at least one content type must be configured", nil)
 	}
 
 	if v.config.Audio.BufferSize <= 0 {
-		return fmt.Errorf("audio buffer size must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "audio buffer size must be positive", nil,
+			logging.Fields{"buffer_size": v.config.Audio.BufferSize})
 	}
 
 	if v.config.Audio.MaxReadAttempts <= 0 {
-		return fmt.Errorf("max read attempts must be positive")
+		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, "",
+			common.ErrCodeInvalidFormat, "max read attempts must be positive", nil,
+			logging.Fields{"max_read_attempts": v.config.Audio.MaxReadAttempts})
 	}
 
 	return nil
