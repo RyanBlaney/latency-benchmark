@@ -1,7 +1,6 @@
 package hls
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -466,24 +465,24 @@ func (c *Config) GetHTTPHeaders() map[string]string {
 // Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.HTTP.ConnectionTimeout <= 0 {
-		return fmt.Errorf("HTTP connection timeout must be positive")
+		return common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "HTTP connection timeout must be positive", nil)
 	}
-
 	if c.HTTP.ReadTimeout <= 0 {
-		return fmt.Errorf("HTTP read timeout must be positive")
+		return common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "HTTP read timeout must be positive", nil)
 	}
-
 	if c.HTTP.MaxRedirects < 0 {
-		return fmt.Errorf("max redirects cannot be negative")
+		return common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "max redirects cannot be negative", nil)
 	}
-
 	if c.HTTP.BufferSize <= 0 {
-		return fmt.Errorf("buffer size must be positive")
+		return common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "buffer size must be positive", nil)
 	}
-
 	if c.Audio.SampleDuration <= 0 {
-		return fmt.Errorf("sample duration must be positive")
+		return common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "sample duration must be positive", nil)
 	}
-
 	return nil
 }

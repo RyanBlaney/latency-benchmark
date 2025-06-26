@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Validator implements StreamValidator interface for HLS streams
 type Validator struct {
 	client *http.Client
 	config *Config
+	logger logging.Logger
 }
 
 // NewValidator creates a new HLS validator with default configuration
@@ -42,7 +44,14 @@ func NewValidatorWithConfig(config *Config) *Validator {
 	return &Validator{
 		client: client,
 		config: config,
+		logger: logging.GetGlobalLogger(),
 	}
+}
+
+// SetLogger sets a custom logger
+// Useful if you have different loggers for different components
+func (v *Validator) SetLogger(logger logging.Logger) {
+	v.logger = logger
 }
 
 // ValidateURL validates if URL is accessible and valid for HLS
@@ -286,8 +295,11 @@ func (v *Validator) validatePlaylist(playlist *M3U8Playlist, url string) error {
 			return common.NewStreamError(common.StreamTypeHLS, url,
 				common.ErrCodeInvalidFormat, fmt.Sprintf("too many segments: %d > %d", len(playlist.Segments), v.config.Parser.MaxSegmentAnalysis), nil)
 		}
-		// In non-strict mode, just log a warning (in a real implementation you'd use a logger)
-		fmt.Printf("Warning: Playlist has %d segments, more than configured maximum %d\n", len(playlist.Segments), v.config.Parser.MaxSegmentAnalysis)
+		v.logger.Warn("Playlist exceeds configured segment limit", logging.Fields{
+			"segment_count": len(playlist.Segments),
+			"max_allowed":   v.config.Parser.MaxSegmentAnalysis,
+			"url":           url,
+		})
 	}
 
 	return nil
@@ -403,8 +415,11 @@ func (v *Validator) validateBandwidthProgression(variants []M3U8Variant, url str
 				return common.NewStreamError(common.StreamTypeHLS, url,
 					common.ErrCodeInvalidFormat, errMsg, nil)
 			} else {
-				// Just log warning in non-strict mode
-				fmt.Printf("Warning: %s (ratio: %.2f)\n", errMsg, ratio)
+				v.logger.Warn(errMsg, logging.Fields{
+					"bandwidth_ratio":    ratio,
+					"previous_bandwidth": bandwidths[i-1],
+					"current_bandwidth":  bandwidths[i],
+				})
 			}
 		}
 	}
@@ -490,4 +505,3 @@ func (v *Validator) ValidateConfiguration() error {
 
 	return nil
 }
-

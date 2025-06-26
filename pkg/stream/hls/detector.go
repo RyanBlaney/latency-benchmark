@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Detector handles HLS stream detection with configurable options
@@ -63,7 +64,8 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 	// Use the existing DetectFromM3U8Content function which already extracts metadata
 	playlist, err := DetectFromM3U8Content(ctx, client, streamURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to probe HLS stream: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to probe HLS stream", err)
 	}
 
 	// Return the metadata that was extracted during parsing
@@ -131,7 +133,8 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 	// Try to get the playlist with full configuration
 	playlist, err := detector.DetectFromM3U8Content(ctx, streamURL, config.HTTP, config.Parser)
 	if err != nil {
-		return nil, fmt.Errorf("failed to probe HLS stream: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to probe HLS stream", err)
 	}
 
 	// If we have metadata from parsing, return it
@@ -184,7 +187,7 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	u, err := url.Parse(streamURL)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error in parsing URL: %v", err)
+		logging.Debug("Error parsing URL", logging.Fields{"url": streamURL, "error": err.Error()})
 		return common.StreamTypeUnsupported
 	}
 
@@ -216,7 +219,7 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error creating request for HTTP headers: %v", err)
+		logging.Debug("Error creating request for HTTP headers", logging.Fields{"url": streamURL, "error": err.Error()})
 		return common.StreamTypeUnsupported
 	}
 
@@ -234,7 +237,7 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("{DEBUG}: Error getting response from client: %v", err)
+		logging.Debug("Error getting response from client", logging.Fields{"url": streamURL, "error": err.Error()})
 		return common.StreamTypeUnsupported
 	}
 	defer resp.Body.Close()
@@ -273,7 +276,8 @@ func (d *Detector) DetectFromM3U8Content(ctx context.Context, streamURL string, 
 
 	req, err := http.NewRequestWithContext(detectCtx, "GET", streamURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to create request", err)
 	}
 
 	// Set headers from configuration
@@ -290,12 +294,18 @@ func (d *Detector) DetectFromM3U8Content(ctx context.Context, streamURL string, 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch playlist: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to fetch playlist", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+			logging.Fields{
+				"status_code": resp.StatusCode,
+				"status_text": resp.Status,
+			})
 	}
 
 	// Store response headers
@@ -321,7 +331,8 @@ func (d *Detector) DetectFromM3U8Content(ctx context.Context, streamURL string, 
 
 	playlist, err := parser.ParseM3U8Content(reader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse M3U8: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to parse M3U8", err)
 	}
 
 	// Merge HTTP headers with playlist headers
@@ -356,9 +367,7 @@ func (httpConfig *HTTPConfig) GetHTTPHeaders() map[string]string {
 	headers["Accept"] = httpConfig.AcceptHeader
 
 	// Add custom headers
-	for k, v := range httpConfig.CustomHeaders {
-		headers[k] = v
-	}
+	maps.Copy(headers, httpConfig.CustomHeaders)
 
 	return headers
 }
@@ -388,7 +397,9 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 			return common.StreamTypeHLS, playlist, nil
 		}
 		// Return HLS type even if parsing failed
-		return common.StreamTypeHLS, nil, fmt.Errorf("detected HLS from headers but failed to parse content: %w", err)
+
+		return common.StreamTypeHLS, nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+			common.ErrCodeConnection, "failed to parse M3U8", err)
 	}
 
 	// Step 4: Content detection as last resort
@@ -397,7 +408,8 @@ func ConfigurableDetection(ctx context.Context, streamURL string, config *Config
 		return common.StreamTypeHLS, playlist, nil
 	}
 
-	return common.StreamTypeUnsupported, nil, fmt.Errorf("stream type not supported or invalid")
+	return common.StreamTypeUnsupported, nil, common.NewStreamError(common.StreamTypeHLS, streamURL,
+		common.ErrCodeConnection, "stream type not supported or valid", err)
 }
 
 // DetectFromURL matches the URL with default HLS patterns (backward compatibility)
