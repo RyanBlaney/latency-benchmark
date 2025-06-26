@@ -38,7 +38,6 @@ func NewHandlerWithConfig(config *Config) *Handler {
 	if config == nil {
 		config = DefaultConfig()
 	}
-
 	// Create HTTP client with configured timeouts
 	client := &http.Client{
 		Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
@@ -229,7 +228,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 
 	// Initialize downloader if not exists
 	if h.downloader == nil {
-		h.downloader = NewAudioDownloader(h.client, nil, h.config) // Use default config
+		h.downloader = NewAudioDownloader(h.client, nil, h.config)
 	}
 
 	// Download audio sample using configured duration

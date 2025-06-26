@@ -1,6 +1,3 @@
-//go:build !noaudio
-// +build !noaudio
-
 package hls
 
 import (
@@ -14,7 +11,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/go-transcoding/transcode"
+	"github.com/tunein/go-transcoding/v10/transcode"
 )
 
 // AudioDownloader handles downloading and processing HLS audio segments

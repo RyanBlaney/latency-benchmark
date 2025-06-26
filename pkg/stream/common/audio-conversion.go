@@ -1,6 +1,3 @@
-//go:build !noaudio
-// +build !noaudio
-
 package common
 
 import (
@@ -9,7 +6,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/tunein/go-transcoding/transcode"
+	"github.com/tunein/go-transcoding/v10/transcode"
 )
 
 // extractAudioFromFrame extracts PCM data from a decoded frame using GetPlaneBuffer
