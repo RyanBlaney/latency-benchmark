@@ -6,6 +6,9 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Parser handles M3U8 playlist parsing
@@ -88,7 +91,8 @@ func (p *Parser) ParseM3U8Content(reader io.Reader) (*M3U8Playlist, error) {
 	}
 
 	if !scanner.Scan() {
-		return nil, fmt.Errorf("empty playlist")
+		return nil, common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "empty playlist", nil)
 	}
 
 	context.LineNumber++
@@ -96,7 +100,10 @@ func (p *Parser) ParseM3U8Content(reader io.Reader) (*M3U8Playlist, error) {
 	// First line must be #EXTM3U
 	firstLine := strings.TrimSpace(scanner.Text())
 	if firstLine != "#EXTM3U" {
-		return nil, fmt.Errorf("invalid M3U8 format: missing #EXTM3U header at line %d", context.LineNumber)
+		return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "invalid M3U8 format: missing #EXTM3U header", nil,
+			logging.Fields{"line_number": context.LineNumber})
+
 	}
 
 	playlist.IsValid = true
@@ -113,18 +120,23 @@ func (p *Parser) ParseM3U8Content(reader io.Reader) (*M3U8Playlist, error) {
 		// Parse M3U8 tags
 		if strings.HasPrefix(line, "#EXT") {
 			if err := p.parseTag(line, playlist, context); err != nil {
-				return nil, fmt.Errorf("failed to parse tag '%s' at line %d: %w", line, context.LineNumber, err)
+				return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, "",
+					common.ErrCodeInvalidFormat, "invalid M3U8 format: missing #EXTM3U header", nil,
+					logging.Fields{"line_number": context.LineNumber})
 			}
 		} else {
 			// This is a URI line
 			if err := p.handleURI(line, playlist, context); err != nil {
-				return nil, fmt.Errorf("failed to handle URI '%s' at line %d: %w", line, context.LineNumber, err)
+				return nil, common.NewStreamErrorWithFields(common.StreamTypeHLS, "",
+					common.ErrCodeInvalidFormat, "invalid M3U8 format: missing #EXTM3U header", nil,
+					logging.Fields{"line_number": context.LineNumber})
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading playlist: %w", err)
+		return nil, common.NewStreamError(common.StreamTypeHLS, "",
+			common.ErrCodeInvalidFormat, "error reading playlist", err)
 	}
 
 	// Post-processing
