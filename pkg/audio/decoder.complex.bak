@@ -1,0 +1,618 @@
+package audio
+
+import (
+	"io"
+	"os"
+	"time"
+	"unsafe"
+
+	"github.com/3d0c/gmf"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
+)
+
+// AudioData represents decoded audio data
+type AudioData struct {
+	PCM        []float64     `json:"-"`
+	SampleRate int           `json:"sample_rate"`
+	Channels   int           `json:"channels"`
+	Duration   time.Duration `json:"duration"`
+	Format     string        `json:"format"`
+}
+
+// DecoderConfig holds decoder configuration
+type DecoderConfig struct {
+	TargetSampleRate int           `json:"target_sample_rate"`
+	TargetChannels   int           `json:"target_channels"`
+	OutputFormat     string        `json:"output_format"`
+	MaxDuration      time.Duration `json:"max_duration"`
+}
+
+// DefaultDecoderConfig returns default decoder configuration
+func DefaultDecoderConfig() *DecoderConfig {
+	return &DecoderConfig{
+		TargetSampleRate: 44100,
+		TargetChannels:   1, // Mono for fingerprinting
+		OutputFormat:     "f32le",
+		MaxDuration:      0, // No limit
+	}
+}
+
+// Decoder handles audio decoding using gmf/ffmpeg
+type Decoder struct {
+	config *DecoderConfig
+}
+
+// Audio channel layout constants (since they don't exist in gmf)
+const (
+	AV_CH_LAYOUT_MONO   = 0x4
+	AV_CH_LAYOUT_STEREO = 0x3
+)
+
+// NewDecoder creates a new audio decoder
+func NewDecoder(config *DecoderConfig) *Decoder {
+	if config == nil {
+		config = DefaultDecoderConfig()
+	}
+	return &Decoder{config: config}
+}
+
+// DecodeFile decodes an audio file and returns PCM data
+func (d *Decoder) DecodeFile(filename string) (*AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_decoder",
+		"function":  "DecodeFile",
+		"filename":  filename,
+	})
+
+	logger.Info("Starting audio file decode")
+
+	// Create input context
+	inputCtx := gmf.NewCtx()
+	if inputCtx == nil {
+		logger.Error(nil, "Failed to create input context")
+		return nil, gmf.AvError(-12)
+	}
+	defer inputCtx.Free()
+
+	// Open input file
+	if err := inputCtx.OpenInput(filename); err != nil {
+		logger.Error(err, "Failed to open input file")
+		return nil, err
+	}
+
+	logger.Debug("Input context opened successfully")
+
+	// Find the best audio stream
+	audioStream, err := inputCtx.GetBestStream(gmf.AVMEDIA_TYPE_AUDIO)
+	if err != nil {
+		logger.Error(err, "No audio stream found in file")
+		return nil, err
+	}
+
+	// Get codec context from stream
+	codecCtx := audioStream.CodecCtx()
+	if codecCtx == nil {
+		logger.Error(nil, "Failed to get codec context from stream")
+		return nil, gmf.AvError(-1) // Generic error
+	}
+
+	// Get codec parameters
+	sampleRate := codecCtx.SampleRate()
+	channels := codecCtx.Channels()
+	bitRate := codecCtx.BitRate()
+
+	logger.Info("Audio stream detected", logging.Fields{
+		"input_sample_rate": sampleRate,
+		"input_channels":    channels,
+		"input_bitrate":     bitRate,
+		"stream_index":      audioStream.Index(),
+		"codec_name":        codecCtx.Codec().Name(),
+	})
+
+	// Determine if we need resampling
+	needsResampling := sampleRate != d.config.TargetSampleRate || channels != d.config.TargetChannels
+
+	var outputStream *gmf.Stream
+	var outputCodecCtx *gmf.CodecCtx
+
+	if needsResampling {
+		logger.Info("Resampling required", logging.Fields{
+			"from_sample_rate": sampleRate,
+			"to_sample_rate":   d.config.TargetSampleRate,
+			"from_channels":    channels,
+			"to_channels":      d.config.TargetChannels,
+		})
+
+		// Create a temporary output context for resampling
+		outputCtx := gmf.NewCtx()
+		if outputCtx == nil {
+			logger.Error(nil, "Failed to create output context for resampling")
+			return nil, gmf.AvError(-12) // ENOMEM equivalent
+		}
+		defer outputCtx.Free()
+
+		// Create output stream
+		outputStream = outputCtx.NewStream(nil)
+		if outputStream == nil {
+			logger.Error(nil, "Failed to create output stream")
+			return nil, gmf.AvError(-1) // Generic error
+		}
+		defer outputStream.Free()
+
+		// Configure output codec context
+		outputCodecCtx = outputStream.CodecCtx()
+		if outputCodecCtx == nil {
+			logger.Error(nil, "Failed to get output codec context")
+			return nil, gmf.AvError(-1) // Generic error
+		}
+
+		// Set target parameters
+		channelLayout := AV_CH_LAYOUT_MONO
+		if d.config.TargetChannels == 2 {
+			channelLayout = AV_CH_LAYOUT_STEREO
+		}
+
+		outputCodecCtx.SetSampleRate(d.config.TargetSampleRate).
+			SetChannels(d.config.TargetChannels).
+			SetSampleFmt(gmf.AV_SAMPLE_FMT_FLTP).
+			SetChannelLayout(int(channelLayout))
+
+		logger.Debug("Resampling context configured")
+	} else {
+		logger.Debug("No resampling needed")
+	}
+
+	// Decode audio
+	var allSamples []float64
+	packetsProcessed := 0
+	framesDecoded := 0
+	startTime := time.Now()
+
+	logger.Info("Starting audio decoding")
+
+	for packet := range inputCtx.GetNewPackets() {
+		if packet.StreamIndex() != audioStream.Index() {
+			packet.Free()
+			continue
+		}
+
+		packetsProcessed++
+
+		// Decode packet to frame
+		frame, ret := codecCtx.Decode2(packet)
+		if ret < 0 {
+			logger.Warn("Failed to decode packet", logging.Fields{
+				"packet_number": packetsProcessed,
+				"return_code":   ret,
+			})
+			packet.Free()
+			continue
+		}
+
+		if frame != nil {
+			framesDecoded++
+			var samples []float64
+
+			if needsResampling && outputStream != nil {
+				// Use SwrCtx from output stream for resampling
+				swrCtx := outputStream.SwrCtx
+				if swrCtx != nil {
+					// Convert frame using SwrCtx
+					samples = d.extractSamplesWithResampling(frame, swrCtx, d.config.TargetChannels)
+				} else {
+					logger.Warn("SwrCtx not available, extracting without resampling")
+					samples = d.extractSamplesFromFrame(frame, channels)
+				}
+			} else {
+				samples = d.extractSamplesFromFrame(frame, channels)
+			}
+
+			allSamples = append(allSamples, samples...)
+			frame.Free()
+
+			// Log progress every 100 frames
+			if framesDecoded%100 == 0 {
+				currentDuration := time.Duration(len(allSamples)) * time.Second / time.Duration(d.config.TargetSampleRate)
+				logger.Debug("Decoding progress", logging.Fields{
+					"frames_decoded":    framesDecoded,
+					"packets_processed": packetsProcessed,
+					"samples_collected": len(allSamples),
+					"duration_seconds":  currentDuration.Seconds(),
+				})
+			}
+		}
+
+		packet.Free()
+
+		// Check max duration
+		if d.config.MaxDuration > 0 {
+			currentDuration := time.Duration(len(allSamples)) * time.Second / time.Duration(d.config.TargetSampleRate)
+			if currentDuration >= d.config.MaxDuration {
+				logger.Info("Reached maximum duration limit", logging.Fields{
+					"max_duration":     d.config.MaxDuration.Seconds(),
+					"current_duration": currentDuration.Seconds(),
+				})
+				break
+			}
+		}
+	}
+
+	decodeTime := time.Since(startTime)
+
+	if len(allSamples) == 0 {
+		logger.Error(nil, "No audio data decoded", logging.Fields{
+			"packets_processed": packetsProcessed,
+			"frames_decoded":    framesDecoded,
+		})
+		return nil, gmf.AvError(-541478725) // AVERROR_EOF equivalent
+	}
+
+	// Calculate duration
+	totalDuration := time.Duration(len(allSamples)) * time.Second / time.Duration(d.config.TargetSampleRate)
+
+	logger.Info("Audio decoding completed successfully", logging.Fields{
+		"total_samples":      len(allSamples),
+		"duration_seconds":   totalDuration.Seconds(),
+		"packets_processed":  packetsProcessed,
+		"frames_decoded":     framesDecoded,
+		"decode_time_ms":     decodeTime.Milliseconds(),
+		"output_sample_rate": d.config.TargetSampleRate,
+		"output_channels":    d.config.TargetChannels,
+		"output_format":      d.config.OutputFormat,
+		"resampling_used":    needsResampling,
+	})
+
+	return &AudioData{
+		PCM:        allSamples,
+		SampleRate: d.config.TargetSampleRate,
+		Channels:   d.config.TargetChannels,
+		Duration:   totalDuration,
+		Format:     d.config.OutputFormat,
+	}, nil
+}
+
+// DecodeBytes decodes audio from byte slice (for stream segments)
+func (d *Decoder) DecodeBytes(data []byte) (*AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_decoder",
+		"function":  "DecodeBytes",
+		"data_size": len(data),
+	})
+
+	logger.Debug("Starting audio bytes decode")
+
+	// Write to temporary file
+	tempFile, err := os.CreateTemp("", "audio_segment_*.tmp")
+	if err != nil {
+		logger.Error(err, "Failed to create temporary file")
+		return nil, err
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	logger.Debug("Created temporary file", logging.Fields{
+		"temp_file": tempFile.Name(),
+	})
+
+	if _, err := tempFile.Write(data); err != nil {
+		logger.Error(err, "Failed to write data to temporary file")
+		return nil, err
+	}
+
+	tempFile.Close()
+	logger.Debug("Data written to temporary file successfully")
+
+	// Decode the temporary file
+	result, err := d.DecodeFile(tempFile.Name())
+	if err != nil {
+		logger.Error(err, "Failed to decode temporary file")
+		return nil, err
+	}
+
+	logger.Debug("Bytes decode completed successfully", logging.Fields{
+		"output_duration": result.Duration.Seconds(),
+		"output_samples":  len(result.PCM),
+	})
+
+	return result, nil
+}
+
+// DecodeReader decodes audio from an io.Reader
+func (d *Decoder) DecodeReader(reader io.Reader) (*AudioData, error) {
+	// Read all data from reader
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	return d.DecodeBytes(data)
+}
+
+func (d *Decoder) GetConfig() map[string]any {
+	return d.GetInfo()
+}
+
+// extractSamplesFromFrame extracts float64 samples from a frame
+func (d *Decoder) extractSamplesFromFrame(frame *gmf.Frame, channels int) []float64 {
+	// Get the sample format to determine how to extract data
+	sampleFormat := int32(frame.Format())
+
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_decoder",
+		"function":  "extractSamplesFromFrame",
+		"format":    sampleFormat,
+		"channels":  channels,
+	})
+
+	var samples []float64
+
+	switch sampleFormat {
+	case gmf.AV_SAMPLE_FMT_FLTP: // Float32 planar
+		samples = d.extractFloat32Planar(frame, channels)
+	case gmf.AV_SAMPLE_FMT_FLT: // Float32 interleaved
+		samples = d.extractFloat32Interleaved(frame, channels)
+	case gmf.AV_SAMPLE_FMT_S16P: // Int16 planar
+		samples = d.extractInt16Planar(frame, channels)
+	case gmf.AV_SAMPLE_FMT_S16: // Int16 interleaved
+		samples = d.extractInt16Interleaved(frame, channels)
+	case gmf.AV_SAMPLE_FMT_S32P: // Int32 planar
+		samples = d.extractInt32Planar(frame, channels)
+	case gmf.AV_SAMPLE_FMT_S32: // Int32 interleaved
+		samples = d.extractInt32Interleaved(frame, channels)
+	default:
+		logger.Warn("Unsupported sample format, attempting float32 conversion", logging.Fields{
+			"format": sampleFormat,
+		})
+		// Fallback to raw data extraction
+		audioData := frame.GetRawAudioData(0)
+		if len(audioData) > 0 {
+			samples = d.convertFloat32ToFloat64(audioData, channels)
+		}
+	}
+
+	// Convert to mono if needed
+	if len(samples) > 0 && channels > 1 && d.config.TargetChannels == 1 {
+		samples = d.convertToMono(samples, channels)
+	}
+
+	return samples
+}
+
+// extractFloat32Planar extracts float32 planar audio data
+func (d *Decoder) extractFloat32Planar(frame *gmf.Frame, channels int) []float64 {
+	numSamples := frame.NbSamples()
+	totalSamples := numSamples * channels
+	samples := make([]float64, totalSamples)
+
+	for ch := 0; ch < channels; ch++ {
+		channelData := frame.GetRawAudioData(ch)
+		if len(channelData) < numSamples*4 {
+			continue
+		}
+
+		for i := 0; i < numSamples; i++ {
+			// Convert bytes to float32 (little-endian)
+			bits := uint32(channelData[i*4]) | uint32(channelData[i*4+1])<<8 |
+				uint32(channelData[i*4+2])<<16 | uint32(channelData[i*4+3])<<24
+			float32Val := *(*float32)(unsafe.Pointer(&bits))
+
+			// Interleave channels
+			samples[i*channels+ch] = float64(float32Val)
+		}
+	}
+
+	return samples
+}
+
+// extractFloat32Interleaved extracts float32 interleaved audio data
+func (d *Decoder) extractFloat32Interleaved(frame *gmf.Frame, channels int) []float64 {
+	audioData := frame.GetRawAudioData(0)
+	return d.convertFloat32ToFloat64(audioData, channels)
+}
+
+// extractInt16Planar extracts int16 planar audio data
+func (d *Decoder) extractInt16Planar(frame *gmf.Frame, channels int) []float64 {
+	numSamples := frame.NbSamples()
+	totalSamples := numSamples * channels
+	samples := make([]float64, totalSamples)
+
+	for ch := 0; ch < channels; ch++ {
+		channelData := frame.GetRawAudioData(ch)
+		if len(channelData) < numSamples*2 {
+			continue
+		}
+
+		for i := 0; i < numSamples; i++ {
+			// Convert bytes to int16 (little-endian)
+			int16Val := int16(channelData[i*2]) | int16(channelData[i*2+1])<<8
+
+			// Convert to float64 and normalize (-32768 to 32767 -> -1.0 to 1.0)
+			samples[i*channels+ch] = float64(int16Val) / 32768.0
+		}
+	}
+
+	return samples
+}
+
+// extractInt16Interleaved extracts int16 interleaved audio data
+func (d *Decoder) extractInt16Interleaved(frame *gmf.Frame, channels int) []float64 {
+	audioData := frame.GetRawAudioData(0)
+	if len(audioData)%2 != 0 {
+		return nil
+	}
+
+	sampleCount := len(audioData) / 2
+	samples := make([]float64, sampleCount)
+
+	for i := 0; i < sampleCount; i++ {
+		// Convert bytes to int16 (little-endian)
+		int16Val := int16(audioData[i*2]) | int16(audioData[i*2+1])<<8
+
+		// Convert to float64 and normalize
+		samples[i] = float64(int16Val) / 32768.0
+	}
+
+	return samples
+}
+
+// extractInt32Planar extracts int32 planar audio data
+func (d *Decoder) extractInt32Planar(frame *gmf.Frame, channels int) []float64 {
+	numSamples := frame.NbSamples()
+	totalSamples := numSamples * channels
+	samples := make([]float64, totalSamples)
+
+	for ch := 0; ch < channels; ch++ {
+		channelData := frame.GetRawAudioData(ch)
+		if len(channelData) < numSamples*4 {
+			continue
+		}
+
+		for i := 0; i < numSamples; i++ {
+			// Convert bytes to int32 (little-endian)
+			int32Val := int32(channelData[i*4]) | int32(channelData[i*4+1])<<8 |
+				int32(channelData[i*4+2])<<16 | int32(channelData[i*4+3])<<24
+
+			// Convert to float64 and normalize (-2147483648 to 2147483647 -> -1.0 to 1.0)
+			samples[i*channels+ch] = float64(int32Val) / 2147483648.0
+		}
+	}
+
+	return samples
+}
+
+// extractInt32Interleaved extracts int32 interleaved audio data
+func (d *Decoder) extractInt32Interleaved(frame *gmf.Frame, channels int) []float64 {
+	audioData := frame.GetRawAudioData(0)
+	if len(audioData)%4 != 0 {
+		return nil
+	}
+
+	sampleCount := len(audioData) / 4
+	samples := make([]float64, sampleCount)
+
+	for i := 0; i < sampleCount; i++ {
+		// Convert bytes to int32 (little-endian)
+		int32Val := int32(audioData[i*4]) | int32(audioData[i*4+1])<<8 |
+			int32(audioData[i*4+2])<<16 | int32(audioData[i*4+3])<<24
+
+		// Convert to float64 and normalize
+		samples[i] = float64(int32Val) / 2147483648.0
+	}
+
+	return samples
+}
+
+// extractSamplesWithResampling extracts samples using SwrCtx for resampling
+func (d *Decoder) extractSamplesWithResampling(frame *gmf.Frame, swrCtx *gmf.SwrCtx, targetChannels int) []float64 {
+	logger := logging.WithFields(logging.Fields{
+		"component":       "audio_decoder",
+		"function":        "extractSamplesWithResampling",
+		"target_channels": targetChannels,
+	})
+
+	// For now, let's implement a fallback approach
+	// Extract samples normally first
+	samples := d.extractSamplesFromFrame(frame, frame.Channels())
+	if len(samples) == 0 {
+		return samples
+	}
+
+	// Apply basic resampling if needed
+	inputSampleRate := 44100 // Default assumption - TODO: try to get from frame
+	if inputSampleRate != d.config.TargetSampleRate {
+		samples = d.basicResample(samples, inputSampleRate, d.config.TargetSampleRate)
+	}
+
+	// Convert channels if needed
+	if frame.Channels() != targetChannels {
+		if targetChannels == 1 && frame.Channels() == 2 {
+			samples = d.convertToMono(samples, frame.Channels())
+		}
+		// Add more channel conversion logic as needed
+	}
+
+	logger.Debug("Basic resampling completed", logging.Fields{
+		"output_samples": len(samples),
+	})
+
+	return samples
+}
+
+// basicResample performs simple linear interpolation resampling
+func (d *Decoder) basicResample(samples []float64, inputRate, outputRate int) []float64 {
+	if inputRate == outputRate {
+		return samples
+	}
+
+	ratio := float64(outputRate) / float64(inputRate)
+	newLength := int(float64(len(samples)) * ratio)
+	resampled := make([]float64, newLength)
+
+	for i := 0; i < newLength; i++ {
+		sourceIndex := float64(i) / ratio
+		sourceIndexInt := int(sourceIndex)
+
+		if sourceIndexInt >= len(samples)-1 {
+			resampled[i] = samples[len(samples)-1]
+		} else {
+			fraction := sourceIndex - float64(sourceIndexInt)
+			resampled[i] = samples[sourceIndexInt]*(1-fraction) + samples[sourceIndexInt+1]*fraction
+		}
+	}
+
+	return resampled
+}
+
+// convertFloat32ToFloat64 converts raw float32 audio data to float64
+func (d *Decoder) convertFloat32ToFloat64(data []byte, channels int) []float64 {
+	if len(data)%4 != 0 {
+		return nil
+	}
+
+	sampleCount := len(data) / 4
+	samples := make([]float64, sampleCount)
+
+	for i := 0; i < sampleCount; i++ {
+		// Convert bytes to float32 (little-endian)
+		bits := uint32(data[i*4]) | uint32(data[i*4+1])<<8 | uint32(data[i*4+2])<<16 | uint32(data[i*4+3])<<24
+		float32Val := *(*float32)(unsafe.Pointer(&bits))
+		samples[i] = float64(float32Val)
+	}
+
+	// Convert to mono if needed
+	if channels > 1 && d.config.TargetChannels == 1 {
+		return d.convertToMono(samples, channels)
+	}
+
+	return samples
+}
+
+// convertToMono converts multi-channel audio to mono by averaging channels
+func (d *Decoder) convertToMono(samples []float64, inputChannels int) []float64 {
+	if inputChannels <= 1 {
+		return samples
+	}
+
+	monoSampleCount := len(samples) / inputChannels
+	monoSamples := make([]float64, monoSampleCount)
+
+	for i := 0; i < monoSampleCount; i++ {
+		var sum float64
+		for ch := 0; ch < inputChannels; ch++ {
+			sum += samples[i*inputChannels+ch]
+		}
+		monoSamples[i] = sum / float64(inputChannels)
+	}
+
+	return monoSamples
+}
+
+// GetInfo returns information about the audio decoder
+func (d *Decoder) GetInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"target_sample_rate": d.config.TargetSampleRate,
+		"target_channels":    d.config.TargetChannels,
+		"output_format":      d.config.OutputFormat,
+		"max_duration":       d.config.MaxDuration,
+	}
+}

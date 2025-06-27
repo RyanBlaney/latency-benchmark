@@ -1,5 +1,3 @@
-// Add this to your cmd/ directory as config_test.go
-
 package cmd
 
 import (

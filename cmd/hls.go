@@ -205,7 +205,7 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	// Show configuration if requested
 	if hlsShowConfig {
 		fmt.Printf("📊 Effective Configuration\n")
-		displayConfiguration(hlsConfig, verbose)
+		displayHLSConfiguration(hlsConfig, verbose)
 		fmt.Printf("\n")
 	}
 
@@ -465,7 +465,7 @@ func runHLSTest(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func displayConfiguration(config *hls.Config, verbose bool) {
+func displayHLSConfiguration(config *hls.Config, verbose bool) {
 	fmt.Printf("   📋 HLS Configuration:\n")
 
 	// HTTP Configuration

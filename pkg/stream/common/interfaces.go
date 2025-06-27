@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"time"
 )
@@ -116,4 +117,21 @@ type StreamValidator interface {
 
 	// ValidateAudio validates audio data quality
 	ValidateAudio(data *AudioData) error
+}
+
+// AudioDecoder defines the interface for audio decoding implementations
+// This allows the stream package to use different audio decoders (gmf, ffmpeg, etc.)
+// without depending on any specific implementation
+type AudioDecoder interface {
+	// DecodeBytes decodes audio data from a byte slice
+	// Returns decoded PCM audio data ready for processing
+	DecodeBytes(data []byte) (*AudioData, error)
+
+	// DecodeReader decodes audio data from an io.Reader
+	// Useful for streaming audio data
+	DecodeReader(reader io.Reader) (*AudioData, error)
+
+	// GetConfig returns decoder configuration information
+	// Useful for debugging and compatibility checks
+	GetConfig() map[string]any
 }

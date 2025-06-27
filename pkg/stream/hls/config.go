@@ -17,6 +17,7 @@ type Config struct {
 	Detection         *DetectionConfig         `json:"detection"`
 	HTTP              *HTTPConfig              `json:"http"`
 	Audio             *AudioConfig             `json:"audio"`
+	AudioDecoder      common.AudioDecoder      `json:"-"` // Nonserializable
 }
 
 // ParserConfig holds configuration for M3U8 parsing
