@@ -128,12 +128,8 @@ func (d *DefaultLogger) Fatal(err error, msg string, fields ...Fields) {
 
 func (d *DefaultLogger) WithFields(fields Fields) Logger {
 	newFields := make(Fields)
-	for k, v := range d.fields {
-		newFields[k] = v
-	}
-	for k, v := range fields {
-		newFields[k] = v
-	}
+	maps.Copy(newFields, d.fields)
+	maps.Copy(newFields, fields)
 
 	return &DefaultLogger{
 		stdoutLogger: d.stdoutLogger,

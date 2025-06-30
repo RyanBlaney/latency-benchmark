@@ -322,6 +322,8 @@ func displayDecoderConfiguration(decoder *audio.Decoder, verbose bool) {
 func testFormatSupport(decoder *audio.Decoder, formats []string, verbose bool) error {
 	printInfo("Testing format support for: %s", strings.Join(formats, ", "))
 
+	// TODO: Account for verbose
+
 	supportedFormats := decoder.GetSupportedFormats()
 	supportedMap := make(map[string]bool)
 	for _, format := range supportedFormats {
@@ -372,6 +374,8 @@ func testFileDecoding(decoder *audio.Decoder, filename string, verbose bool) err
 func testStreamDecoding(ctx context.Context, decoder *audio.Decoder, streamURL string, verbose bool) error {
 	printInfo("Testing stream decoding: %s", streamURL)
 
+	// TODO: unused decoder
+
 	// Create stream factory and detect stream type
 	factory := stream.NewFactory()
 	handler, err := factory.DetectAndCreate(ctx, streamURL)
@@ -419,6 +423,7 @@ func testStreamDecoding(ctx context.Context, decoder *audio.Decoder, streamURL s
 func runDecoderBenchmarks(decoder *audio.Decoder, verbose bool) error {
 	printInfo("Running decoder performance benchmarks...")
 
+	// TODO test various benchmarks
 	// This would ideally test with various sample files
 	// For now, we'll show what benchmarks would test
 
@@ -612,6 +617,7 @@ func logNatural(x float64) float64 {
 	if x == 1 {
 		return 0
 	}
+	// TODO: replace this placeholder
 	// This is a very basic approximation - in practice you'd use math.Log
-	return 0 // Placeholder - replace with proper implementation
+	return 0
 }
