@@ -1,20 +1,22 @@
-package audio
+package fingerprint
 
 import (
 	"math"
 	"strings"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 )
 
 // ContentDetector handles content type detection from metadata and audio analysis
 type ContentDetector struct {
-	config *ContentAwareConfig
+	config *config.ContentAwareConfig
 	logger logging.Logger
 }
 
 // NewContentDetector creates a new content detector
-func NewContentDetector(config *ContentAwareConfig) *ContentDetector {
+func NewContentDetector(config *config.ContentAwareConfig) *ContentDetector {
 	logger := logging.WithFields(logging.Fields{
 		"component": "content_detector",
 	})
@@ -26,7 +28,7 @@ func NewContentDetector(config *ContentAwareConfig) *ContentDetector {
 }
 
 // DetectedContentType detects content type from AudioData using metadata and optionally acoustic analysis
-func (cd *ContentDetector) DetectContentType(audioData *AudioData) ContentType {
+func (cd *ContentDetector) DetectContentType(audioData *transcode.AudioData) config.ContentType {
 	logger := cd.logger.WithFields(logging.Fields{
 		"function": "DetectContentType",
 		"url":      getURLFromAudioData(audioData),
@@ -35,7 +37,7 @@ func (cd *ContentDetector) DetectContentType(audioData *AudioData) ContentType {
 	// First try metadata-based detection
 	if audioData.Metadata != nil {
 		metadataType := detectContentTypeFromMetadata(audioData.Metadata)
-		if metadataType != ContentUnknown {
+		if metadataType != config.ContentUnknown {
 			logger.Info("Content type detected from metadata", logging.Fields{
 				"content_type":     metadataType,
 				"detection_method": "metadata",
@@ -48,7 +50,7 @@ func (cd *ContentDetector) DetectContentType(audioData *AudioData) ContentType {
 	// Fall back to acoustic analysis if enabled
 	if cd.config.EnableContentDetection && len(audioData.PCM) > 0 {
 		acousticType := cd.DetectFromAudio(audioData.PCM, audioData.SampleRate)
-		if acousticType != ContentUnknown {
+		if acousticType != config.ContentUnknown {
 			logger.Info("Content type detected from audio analysis", logging.Fields{
 				"content_type":     acousticType,
 				"detection_method": "acoustic",
@@ -67,9 +69,9 @@ func (cd *ContentDetector) DetectContentType(audioData *AudioData) ContentType {
 }
 
 // DetectFromAudio performs acoustic analysis to detect content type
-func (cd *ContentDetector) DetectFromAudio(pcm []float64, sampleRate int) ContentType {
+func (cd *ContentDetector) DetectFromAudio(pcm []float64, sampleRate int) config.ContentType {
 	if len(pcm) == 0 {
-		return ContentUnknown
+		return config.ContentUnknown
 	}
 
 	logger := cd.logger.WithFields(logging.Fields{
@@ -151,8 +153,8 @@ func (cd *ContentDetector) extractAcousticFeatures(pcm []float64, sampleRate int
 }
 
 // classifyFromFeatures classifies content type based on acoustic features
-func (cd *ContentDetector) classifyFromFeatures(features *AcousticFeatures) ContentType {
-	scores := make(map[ContentType]float64)
+func (cd *ContentDetector) classifyFromFeatures(features *AcousticFeatures) config.ContentType {
+	scores := make(map[config.ContentType]float64)
 
 	// Music characteristics: Low ZCR, high harmonic content, temporal stability
 	// TODO remove magic numbers
@@ -169,7 +171,7 @@ func (cd *ContentDetector) classifyFromFeatures(features *AcousticFeatures) Cont
 	if features.DynamicRange > 20 {
 		musicScore += 1.0
 	}
-	scores[ContentMusic] = musicScore
+	scores[config.ContentMusic] = musicScore
 
 	// Speech/News characteristics: Higher ZCR, spectral centroid in speech range, lower harmonic content
 	speechScore := 0.0
@@ -185,8 +187,8 @@ func (cd *ContentDetector) classifyFromFeatures(features *AcousticFeatures) Cont
 	if features.SilenceRatio > 0.1 && features.SilenceRatio < 0.4 {
 		speechScore += 1.0
 	}
-	scores[ContentNews] = speechScore
-	scores[ContentTalk] = speechScore * 0.9 // Slightly lower for talk
+	scores[config.ContentNews] = speechScore
+	scores[config.ContentTalk] = speechScore * 0.9 // Slightly lower for talk
 
 	// Sports characteristics: High energy variance, dynamic range, mixed content
 	sportsScore := 0.0
@@ -199,10 +201,10 @@ func (cd *ContentDetector) classifyFromFeatures(features *AcousticFeatures) Cont
 	if features.TemporalStability < 0.4 {
 		sportsScore += 1.0
 	}
-	scores[ContentSports] = sportsScore
+	scores[config.ContentSports] = sportsScore
 
 	// Find best match
-	bestType := ContentUnknown
+	bestType := config.ContentUnknown
 	bestScore := cd.config.AutoDetectThreshold
 
 	for contentType, score := range scores {
@@ -387,6 +389,7 @@ func (cd *ContentDetector) calculateHarmonicRatio(spectrum []float64) float64 {
 		return 0
 	}
 
+	// TODO: expand
 	// Check for harmonic relationships (simplified)
 	harmonicPeaks := 0
 	fundamentalBin := peaks[0]
@@ -465,14 +468,14 @@ func (cd *ContentDetector) computeBasicSpectrum(signal []float64) []float64 {
 
 // Helper functions for metadata analysis
 
-func getURLFromAudioData(audioData *AudioData) string {
+func getURLFromAudioData(audioData *transcode.AudioData) string {
 	if audioData.Metadata != nil {
 		return audioData.Metadata.URL
 	}
 	return "unknown"
 }
 
-func getMetadataSource(metadata *StreamMetadata) string {
+func getMetadataSource(metadata *transcode.StreamMetadata) string {
 	if metadata.ContentType != "" {
 		return "content_type"
 	}
@@ -486,7 +489,7 @@ func getMetadataSource(metadata *StreamMetadata) string {
 }
 
 // inferFromGenre infers content type from genre metadata
-func inferFromGenre(genre string) ContentType {
+func inferFromGenre(genre string) config.ContentType {
 	genre = strings.ToLower(strings.TrimSpace(genre))
 
 	// Music genres
@@ -513,32 +516,32 @@ func inferFromGenre(genre string) ContentType {
 
 	for _, music := range musicGenres {
 		if strings.Contains(genre, music) {
-			return ContentMusic
+			return config.ContentMusic
 		}
 	}
 
 	for _, news := range newsGenres {
 		if strings.Contains(genre, news) {
-			return ContentNews
+			return config.ContentNews
 		}
 	}
 
 	for _, sport := range sportsGenres {
 		if strings.Contains(genre, sport) {
-			return ContentSports
+			return config.ContentSports
 		}
 	}
 
 	// Check for talk radio patterns
 	if strings.Contains(genre, "talk") && !strings.Contains(genre, "sports") {
-		return ContentTalk
+		return config.ContentTalk
 	}
 
-	return ContentUnknown
+	return config.ContentUnknown
 }
 
 // inferFromStation infers content type from station name and URL patterns
-func inferFromStation(station, url string) ContentType {
+func inferFromStation(station, url string) config.ContentType {
 	station = strings.ToLower(strings.TrimSpace(station))
 	url = strings.ToLower(url)
 
@@ -565,26 +568,59 @@ func inferFromStation(station, url string) ContentType {
 
 	for _, indicator := range newsIndicators {
 		if strings.Contains(combined, indicator) {
-			return ContentNews
+			return config.ContentNews
 		}
 	}
 
 	for _, indicator := range sportsIndicators {
 		if strings.Contains(combined, indicator) {
-			return ContentSports
+			return config.ContentSports
 		}
 	}
 
 	for _, indicator := range musicIndicators {
 		if strings.Contains(combined, indicator) {
-			return ContentMusic
+			return config.ContentMusic
 		}
 	}
 
 	// Special cases for talk radio
 	if strings.Contains(combined, "talk") && !strings.Contains(combined, "sports") {
-		return ContentTalk
+		return config.ContentTalk
 	}
 
-	return ContentUnknown
+	return config.ContentUnknown
+}
+
+// Extract content type from existing StreamMetadata
+func detectContentTypeFromMetadata(metadata *transcode.StreamMetadata) config.ContentType {
+	if metadata == nil {
+		return config.ContentUnknown
+	}
+
+	// Check explicit content type first
+	if metadata.ContentType != "" {
+		return parseContentType(metadata.ContentType)
+	}
+
+	// Infer from genre
+	if metadata.Genre != "" {
+		return inferFromGenre(metadata.Genre)
+	}
+
+	// Infer from station name/URL patterns
+	return inferFromStation(metadata.Station, metadata.URL)
+}
+
+func parseContentType(contentType string) config.ContentType {
+	switch strings.ToLower(contentType) {
+	case "music", "audio/music":
+		return config.ContentMusic
+	case "news", "talk", "spoken":
+		return config.ContentNews
+	case "sports":
+		return config.ContentSports
+	default:
+		return config.ContentUnknown
+	}
 }

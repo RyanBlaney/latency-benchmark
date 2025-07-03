@@ -22,26 +22,3 @@ type AudioFingerprint struct {
 	Hash             string            `json:"hash"`
 	Metadata         map[string]any    `json:"metadata,omitempty"`
 }
-
-// SpectralFeatures contains frequency domain characteristics
-type SpectralFeatures struct {
-	SpectralCentroid  []float64   `json:"spectral_centroid"`
-	SpectralRolloff   []float64   `json:"spectral_rolloff"`
-	SpectralBandwidth []float64   `json:"spectral_bandwidth"`
-	SpectralFlatness  []float64   `json:"spectral_flatness"`
-	SpectralCrest     []float64   `json:"spectral_crest"`
-	MFCC              [][]float64 `json:"mfcc"`
-	ZeroCrossingRate  []float64   `json:"zero_crossing_rate"`
-	SpectralContrast  [][]float64 `json:"spectral_contrast"`
-}
-
-// TemporalFeatures contains time domain characteristics
-type TemporalFeatures struct {
-	RMSEnergy        []float64 `json:"rms_energy"`
-	DynamicRange     float64   `json:"dynamic_range"`
-	SilenceRatio     float64   `json:"silence_ratio"`
-	TempoVariation   float64   `json:"tempo_variation"`
-	OnsetDensity     float64   `json:"onset_density"`
-	PeakAmplitude    float64   `json:"peak_amplitude"`
-	AverageAmplitude float64   `json:"average_amplitude"`
-}

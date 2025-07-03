@@ -1,17 +1,4 @@
-package audio
-
-import "strings"
-
-type ContentType string
-
-const (
-	ContentMusic   ContentType = "music"
-	ContentNews    ContentType = "news"
-	ContentSports  ContentType = "sports"
-	ContentTalk    ContentType = "talk"
-	ContentMixed   ContentType = "mixed"
-	ContentUnknown ContentType = "unknown"
-)
+package config
 
 type ContentAwareConfig struct {
 	EnableContentDetection bool                           `json:"enable_content_detection"`
@@ -44,35 +31,13 @@ type FeatureConfig struct {
 	MatchThreshold    float64            `json:"match_threshold"`
 }
 
-// Extract content type from existing StreamMetadata
-func detectContentTypeFromMetadata(metadata *StreamMetadata) ContentType {
-	if metadata == nil {
-		return ContentUnknown
-	}
+type ContentType string
 
-	// Check explicit content type first
-	if metadata.ContentType != "" {
-		return parseContentType(metadata.ContentType)
-	}
-
-	// Infer from genre
-	if metadata.Genre != "" {
-		return inferFromGenre(metadata.Genre)
-	}
-
-	// Infer from station name/URL patterns
-	return inferFromStation(metadata.Station, metadata.URL)
-}
-
-func parseContentType(contentType string) ContentType {
-	switch strings.ToLower(contentType) {
-	case "music", "audio/music":
-		return ContentMusic
-	case "news", "talk", "spoken":
-		return ContentNews
-	case "sports":
-		return ContentSports
-	default:
-		return ContentUnknown
-	}
-}
+const (
+	ContentMusic   ContentType = "music"
+	ContentNews    ContentType = "news"
+	ContentSports  ContentType = "sports"
+	ContentTalk    ContentType = "talk"
+	ContentMixed   ContentType = "mixed"
+	ContentUnknown ContentType = "unknown"
+)

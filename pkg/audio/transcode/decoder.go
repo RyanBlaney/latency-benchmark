@@ -1,4 +1,4 @@
-package audio
+package transcode
 
 import (
 	"bytes"
@@ -346,11 +346,11 @@ func (d *Decoder) decodeFileWithFFmpeg(filename string, metadata *AudioMetadata)
 	output, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			logger.Error(err, "FFmpeg decode failed", logging.Fields{
+			logger.Error(err, "Ffmpeg decode failed", logging.Fields{
 				"stderr": string(exitError.Stderr),
 			})
 		}
-		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
+		return nil, fmt.Errorf("Ffmpeg decode failed: %w", err)
 	}
 
 	return d.processFFmpegOutput(output, metadata, filename, logger)
@@ -386,11 +386,11 @@ func (d *Decoder) decodeWithFFmpeg(data []byte, metadata *AudioMetadata) (*Audio
 	output, err := cmd.Output()
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
-			logger.Error(err, "FFmpeg decode failed", logging.Fields{
+			logger.Error(err, "Ffmpeg decode failed", logging.Fields{
 				"stderr": string(exitError.Stderr),
 			})
 		}
-		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
+		return nil, fmt.Errorf("Ffmpeg decode failed: %w", err)
 	}
 
 	return d.processFFmpegOutput(output, metadata, "", logger)
@@ -576,4 +576,3 @@ func (d *Decoder) Close() error {
 	// FFmpeg decoder doesn't maintain persistent resources
 	return nil
 }
-
