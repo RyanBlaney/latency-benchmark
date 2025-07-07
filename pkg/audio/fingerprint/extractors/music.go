@@ -197,7 +197,7 @@ func (m *MusicFeatureExtractor) extractChromaFeatures(spectrogram *analyzers.Spe
 	chroma := make([][]float64, spectrogram.TimeFrames)
 
 	// Generate frequency bins
-	freqs := make([]float64, spectrogram.TimeFrames)
+	freqs := make([]float64, spectrogram.FreqBins)
 	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
@@ -208,7 +208,7 @@ func (m *MusicFeatureExtractor) extractChromaFeatures(spectrogram *analyzers.Spe
 		magnitude := spectrogram.Magnitude[t]
 
 		// Map frequency bins to chroma classes
-		for f := 0; f < len(magnitude); f++ {
+		for f := range len(magnitude) {
 			freq := freqs[f]
 			if freq < 80 || freq > 8000 {
 				continue
@@ -362,12 +362,10 @@ func (m *MusicFeatureExtractor) extractTemporalFeatures(pcm []float64, sampleRat
 
 	// Calculate frame-based features
 	energies := make([]float64, numFrames)
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		// RMS Energy per frame
 		rms := 0.0
@@ -641,7 +639,7 @@ func (m *MusicFeatureExtractor) calculateSpectralContrast(magnitude []float64, n
 		copy(sorted, bandMag)
 
 		// May switch to bogosort tbh
-		for i := 0; i < len(sorted); i++ {
+		for i := range len(sorted) {
 			for j := i + 1; j < len(sorted); j++ {
 				if sorted[i] > sorted[j] {
 					sorted[i], sorted[j] = sorted[j], sorted[i]
@@ -799,14 +797,14 @@ func (m *MusicFeatureExtractor) createMelFilterBank(numFilters int, lowFreq, hig
 
 	// Create filter bank
 	filterBank := make([][]float64, numFilters)
-	for i := 0; i < numFilters; i++ {
+	for i := range numFilters {
 		filter := make([]float64, freqBins)
 
 		leftFreq := freqPoints[i]
 		centerFreq := freqPoints[i+1]
 		rightFreq := freqPoints[i+2]
 
-		for j := 0; j < freqBins; j++ {
+		for j := range freqBins {
 			freq := float64(j) * highFreq / float64(freqBins-1)
 
 			if freq >= leftFreq && freq <= rightFreq {
@@ -1052,9 +1050,7 @@ func (m *MusicFeatureExtractor) calculateFrameEnergyEntropy(frame []float64) flo
 	for i := range numSubFrames {
 		start := i * subFrameSize
 		end := start + subFrameSize
-		if end > len(frame) {
-			end = len(frame)
-		}
+		end = min(end, len(frame))
 
 		energy := 0.0
 		for j := start; j < end; j++ {
@@ -1106,7 +1102,7 @@ func (m *MusicFeatureExtractor) calculateLoudnessRange(energies []float64) float
 	copy(sorted, energies)
 
 	// Simple selection sort
-	for i := 0; i < len(sorted); i++ {
+	for i := range len(sorted) {
 		for j := i + 1; j < len(sorted); j++ {
 			if sorted[i] > sorted[j] {
 				sorted[i], sorted[j] = sorted[j], sorted[i]

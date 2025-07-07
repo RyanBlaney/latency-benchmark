@@ -16,15 +16,17 @@ import (
 type SpeechFeatureExtractor struct {
 	config *config.FeatureConfig
 	logger logging.Logger
+	isNews bool
 }
 
 // NewSpeechFeatureExtractor creates a speech-specific feature extractor
-func NewSpeechFeatureExtractor(config *config.FeatureConfig) *SpeechFeatureExtractor {
+func NewSpeechFeatureExtractor(config *config.FeatureConfig, isNews bool) *SpeechFeatureExtractor {
 	return &SpeechFeatureExtractor{
 		config: config,
 		logger: logging.WithFields(logging.Fields{
 			"component": "speech_feature_extractor",
 		}),
+		isNews: isNews,
 	}
 }
 
@@ -33,7 +35,11 @@ func (s *SpeechFeatureExtractor) GetName() string {
 }
 
 func (s *SpeechFeatureExtractor) GetContentType() config.ContentType {
-	return config.ContentNews
+	if s.isNews {
+		return config.ContentNews
+	} else {
+		return config.ContentTalk
+	}
 }
 
 func (s *SpeechFeatureExtractor) GetFeatureWeights() map[string]float64 {

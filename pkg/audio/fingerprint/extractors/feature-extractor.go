@@ -40,9 +40,13 @@ func (f *FeatureExtractorFactory) CreateExtractor(contentType config.ContentType
 		logger.Debug("Creating music feature extractor")
 		return NewMusicFeatureExtractor(&featureConfig), nil
 
-	case config.ContentNews, config.ContentTalk:
-		logger.Debug("Creating speech feature extractor")
-		return NewSpeechFeatureExtractor(&featureConfig), nil
+	case config.ContentNews:
+		logger.Debug("Creating news feature extractor")
+		return NewSpeechFeatureExtractor(&featureConfig, true), nil
+
+	case config.ContentTalk:
+		logger.Debug("Creating talk feature extractor")
+		return NewSpeechFeatureExtractor(&featureConfig, false), nil
 
 	case config.ContentSports:
 		logger.Debug("Creating sports feature extractor")
