@@ -10,8 +10,6 @@ import (
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/logging"
 )
 
-// TODO: make distinction between talk and news
-
 // SpeechFeatureExtractor extracts features optimized for speech/news content
 type SpeechFeatureExtractor struct {
 	config *config.FeatureConfig
@@ -57,6 +55,16 @@ func (s *SpeechFeatureExtractor) GetFeatureWeights() map[string]float64 {
 }
 
 func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*ExtractedFeatures, error) {
+	if spectrogram == nil {
+		return nil, fmt.Errorf("spectrogram cannot be nil")
+	}
+	if len(pcm) == 0 {
+		return nil, fmt.Errorf("PCM data cannot be empty")
+	}
+	if sampleRate <= 0 {
+		return nil, fmt.Errorf("sample rate must be positive")
+	}
+
 	logger := s.logger.WithFields(logging.Fields{
 		"function": "ExtractFeatures",
 		"frames":   spectrogram.TimeFrames,
@@ -72,28 +80,72 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 		speechFeatures, err := s.extractSpeechFeatures(spectrogram, pcm, sampleRate)
 		if err != nil {
 			logger.Error(err, "Failed to extract speech features")
-		} else {
-			features.SpeechFeatures = speechFeatures
+
+			// Create empty speech features instead of leaving nil
+			speechFeatures = &SpeechFeatures{
+				FormantFrequencies: make([][]float64, spectrogram.TimeFrames),
+				VoicingProbability: make([]float64, spectrogram.TimeFrames),
+				SpectralTilt:       make([]float64, spectrogram.TimeFrames),
+				PauseDuration:      make([]float64, 0),
+			}
 		}
+		features.SpeechFeatures = speechFeatures
 	}
 
 	// Extract basic spectral features (focused on speech range)
 	spectralFeatures, err := s.extractSpeechSpectralFeatures(spectrogram)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
-	} else {
-		features.SpectralFeatures = spectralFeatures
+
+		// Create empty spectral features instead of leaving nil
+		spectralFeatures = &SpectralFeatures{
+			SpectralCentroid:  make([]float64, spectrogram.TimeFrames),
+			SpectralRolloff:   make([]float64, spectrogram.TimeFrames),
+			SpectralBandwidth: make([]float64, spectrogram.TimeFrames),
+			SpectralFlatness:  make([]float64, spectrogram.TimeFrames),
+			SpectralCrest:     make([]float64, spectrogram.TimeFrames),
+			SpectralSlope:     make([]float64, spectrogram.TimeFrames),
+			ZeroCrossingRate:  make([]float64, spectrogram.TimeFrames),
+			SpectralFlux:      make([]float64, max(0, spectrogram.TimeFrames-1)),
+		}
 	}
+	features.SpectralFeatures = spectralFeatures
 
 	// Extract temporal features (pauses, speech rate)
 	if s.config.EnableTemporalFeatures {
 		temporalFeatures, err := s.extractSpeechTemporalFeatures(pcm, sampleRate)
 		if err != nil {
 			logger.Error(err, "Failed to extract temporal features")
-		} else {
-			features.TemporalFeatures = temporalFeatures
+
+			// Create empty temporal features instead of leaving nil
+			temporalFeatures = &TemporalFeatures{
+				RMSEnergy:        make([]float64, 0),
+				DynamicRange:     0.0,
+				SilenceRatio:     0.0,
+				PeakAmplitude:    0.0,
+				AverageAmplitude: 0.0,
+				OnsetDensity:     0.0,
+			}
+		}
+		features.TemporalFeatures = temporalFeatures
+	}
+
+	// Step 5: Extract energy features
+	logger.Info("Step 5: Extracting energy features...")
+	energyFeatures, err := s.extractSpeechEnergyFeatures(pcm, sampleRate)
+	if err != nil {
+		logger.Error(err, "Failed to extract energy features")
+		// Create empty energy features instead of leaving nil
+		energyFeatures = &EnergyFeatures{
+			ShortTimeEnergy: make([]float64, 0),
+			EnergyEntropy:   make([]float64, 0),
+			CrestFactor:     make([]float64, 0),
+			EnergyVariance:  0.0,
+			LoudnessRange:   0.0,
 		}
 	}
+	features.EnergyFeatures = energyFeatures
+	logger.Info("Energy features extraction completed")
 
 	// Add extraction metadata
 	features.ExtractionMetadata["extractor_type"] = "speech"
@@ -175,8 +227,8 @@ func (s *SpeechFeatureExtractor) extractSpeechFeatures(spectrogram *analyzers.Sp
 
 	// Generate frequency bins
 	freqs := make([]float64, spectrogram.FreqBins)
-	for i := 0; i < spectrogram.FreqBins; i++ {
-		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
+	for i := range spectrogram.FreqBins {
+		freqs[i] = float64(i) * float64(sampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
 
 	// Process each frame
@@ -270,6 +322,33 @@ func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *anal
 	return features, nil
 }
 
+// Helper functions for logging
+func (s *SpeechFeatureExtractor) findMin(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	for _, v := range values {
+		if v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+func (s *SpeechFeatureExtractor) findMax(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	max := values[0]
+	for _, v := range values {
+		if v > max {
+			max = v
+		}
+	}
+	return max
+}
+
 // extractSpeechTemporalFeatures extracts temporal features relevant to speech
 func (s *SpeechFeatureExtractor) extractSpeechTemporalFeatures(pcm []float64, sampleRate int) (*TemporalFeatures, error) {
 	logger := s.logger.WithFields(logging.Fields{
@@ -292,12 +371,10 @@ func (s *SpeechFeatureExtractor) extractSpeechTemporalFeatures(pcm []float64, sa
 	energies := make([]float64, numFrames)
 
 	// Calculate frame-based features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -355,12 +432,10 @@ func (s *SpeechFeatureExtractor) extractSpeechEnergyFeatures(pcm []float64, samp
 	energies := make([]float64, numFrames)
 
 	// Calculate frame-based energy features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -422,14 +497,14 @@ func (s *SpeechFeatureExtractor) createSpeechMelFilterBank(numFilters int, lowFr
 
 	// Create filter bank
 	filterBank := make([][]float64, numFilters)
-	for i := 0; i < numFilters; i++ {
+	for i := range numFilters {
 		filter := make([]float64, freqBins)
 
 		leftFreq := freqPoints[i]
 		centerFreq := freqPoints[i+1]
 		rightFreq := freqPoints[i+2]
 
-		for j := 0; j < freqBins; j++ {
+		for j := range freqBins {
 			freq := float64(j) * float64(sampleRate) / float64(freqBins*2)
 
 			if freq >= leftFreq && freq <= rightFreq {
@@ -830,12 +905,10 @@ func (s *SpeechFeatureExtractor) calculateSpeechEnergyEntropy(frame []float64) f
 	totalEnergy := 0.0
 
 	// Calculate energy for each sub-frame
-	for i := 0; i < numSubFrames; i++ {
+	for i := range numSubFrames {
 		start := i * subFrameSize
 		end := start + subFrameSize
-		if end > len(frame) {
-			end = len(frame)
-		}
+		end = min(end, len(frame))
 
 		energy := 0.0
 		for j := start; j < end; j++ {
@@ -894,9 +967,7 @@ func (s *SpeechFeatureExtractor) calculateSpeechSpectralFlux(speechMags [][]floa
 	for t := 1; t < len(speechMags); t++ {
 		sum := 0.0
 		minLen := len(speechMags[t])
-		if len(speechMags[t-1]) < minLen {
-			minLen = len(speechMags[t-1])
-		}
+		minLen = min(len(speechMags[t-1]), minLen)
 
 		for f := 0; f < minLen; f++ {
 			diff := speechMags[t][f] - speechMags[t-1][f]
@@ -948,9 +1019,9 @@ func (s *SpeechFeatureExtractor) applyDCT(logMelSpectrum []float64, numCoeffs in
 	mfcc := make([]float64, numCoeffs)
 	N := float64(len(logMelSpectrum))
 
-	for k := 0; k < numCoeffs; k++ {
+	for k := range numCoeffs {
 		sum := 0.0
-		for n := 0; n < len(logMelSpectrum); n++ {
+		for n := range len(logMelSpectrum) {
 			sum += logMelSpectrum[n] * math.Cos(math.Pi*float64(k)*(float64(n)+0.5)/N)
 		}
 		mfcc[k] = sum
@@ -1086,7 +1157,7 @@ func (s *SpeechFeatureExtractor) calculateSpectralSlope(magnitude, freqs []float
 	sumXY := 0.0
 	sumXX := 0.0
 
-	for i := 0; i < len(magnitude); i++ {
+	for i := range len(magnitude) {
 		if magnitude[i] > 1e-10 && freqs[i] > 0 {
 			x := math.Log10(freqs[i])
 			y := math.Log10(magnitude[i])

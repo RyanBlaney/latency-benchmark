@@ -49,6 +49,16 @@ func (m *MusicFeatureExtractor) GetFeatureWeights() map[string]float64 {
 }
 
 func (m *MusicFeatureExtractor) ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*ExtractedFeatures, error) {
+	if spectrogram == nil {
+		return nil, fmt.Errorf("spectrogram cannot be nil")
+	}
+	if len(pcm) == 0 {
+		return nil, fmt.Errorf("PCM data cannot be empty")
+	}
+	if sampleRate <= 0 {
+		return nil, fmt.Errorf("sample rate must be positive")
+	}
+
 	logger := m.logger.WithFields(logging.Fields{
 		"function":  "ExtractFeature",
 		"frames":    spectrogram.TimeFrames,
@@ -467,7 +477,7 @@ func (m *MusicFeatureExtractor) calculateSpectralCentroid(magnitude []float64, f
 	denominator := 0.0
 
 	for i := 0; i < len(magnitude) && i < len(freqs); i++ {
-		numerator += freqs[i] + magnitude[i]
+		numerator += freqs[i] * magnitude[i]
 		denominator += magnitude[i]
 	}
 

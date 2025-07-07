@@ -54,7 +54,7 @@ func (s *FeatureExtractorTestSuite) setupTestData() {
 	s.testPCM = make([]float64, samples)
 
 	// Create a complex test signal
-	for i := 0; i < samples; i++ {
+	for i := range samples {
 		t := float64(i) / float64(s.testSampleRate)
 
 		// Fundamental frequency (440 Hz - A4)
@@ -72,12 +72,35 @@ func (s *FeatureExtractorTestSuite) setupTestData() {
 		s.testPCM[i] = (fundamental + harmonic + noise) * envelope
 	}
 
-	// Create test spectrogram
+	// Create test spectrogram using the actual SpectralAnalyzer
+	analyzer := analyzers.NewSpectralAnalyzer(s.testSampleRate)
+	stftConfig := analyzers.DefaultSTFTConfig()
+
+	// Generate real spectrogram from the test PCM data
+	var err error
+	s.testSpectrogram, err = analyzer.STFT(s.testPCM, stftConfig)
+	if err != nil {
+		// If STFT fails, fall back to manual creation for testing
+		s.Suite.T().Logf("STFT failed, using manual spectrogram: %v", err)
+		s.createManualSpectrogram()
+		return
+	}
+
+	s.Suite.T().Logf("Created spectrogram with %d time frames, %d freq bins",
+		s.testSpectrogram.TimeFrames, s.testSpectrogram.FreqBins)
+}
+
+// createManualSpectrogram creates a manual spectrogram as fallback
+func (s *FeatureExtractorTestSuite) createManualSpectrogram() {
 	s.testSpectrogram = &analyzers.SpectrogramResult{
-		TimeFrames: 100,
-		FreqBins:   1024,
-		SampleRate: s.testSampleRate,
-		Magnitude:  make([][]float64, 100),
+		TimeFrames:     100,
+		FreqBins:       1025,
+		SampleRate:     s.testSampleRate,
+		Magnitude:      make([][]float64, 100),
+		WindowSize:     2048,
+		HopSize:        512,
+		FreqResolution: float64(s.testSampleRate) / float64(2048),
+		TimeResolution: float64(512) / float64(s.testSampleRate),
 	}
 
 	// Fill with realistic magnitude data
@@ -85,7 +108,7 @@ func (s *FeatureExtractorTestSuite) setupTestData() {
 		s.testSpectrogram.Magnitude[t] = make([]float64, s.testSpectrogram.FreqBins)
 
 		for f := 0; f < s.testSpectrogram.FreqBins; f++ {
-			freq := float64(f) * float64(s.testSampleRate) / float64(s.testSpectrogram.FreqBins*2)
+			freq := float64(f) * float64(s.testSampleRate) / float64((s.testSpectrogram.FreqBins-1)*2)
 
 			// Simulate realistic frequency response
 			if freq >= 440 && freq <= 450 { // Fundamental
@@ -385,9 +408,6 @@ func (s *FeatureExtractorTestSuite) TestAllContentTypes() {
 
 			// For talk content type, it maps to speech extractor which returns ContentNews
 			expectedContentType := contentType
-			if contentType == config.ContentTalk {
-				expectedContentType = config.ContentNews
-			}
 			s.Equal(expectedContentType, extractor.GetContentType())
 
 			// Test feature extraction
@@ -548,4 +568,3 @@ func TestFeatureWeightsValidation(t *testing.T) {
 		})
 	}
 }
-

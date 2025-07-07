@@ -50,6 +50,16 @@ func (m *MixedFeatureExtractor) GetFeatureWeights() map[string]float64 {
 }
 
 func (m *MixedFeatureExtractor) ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*ExtractedFeatures, error) {
+	if spectrogram == nil {
+		return nil, fmt.Errorf("spectrogram cannot be nil")
+	}
+	if len(pcm) == 0 {
+		return nil, fmt.Errorf("PCM data cannot be empty")
+	}
+	if sampleRate <= 0 {
+		return nil, fmt.Errorf("sample rate must be positive")
+	}
+
 	logger := m.logger.WithFields(logging.Fields{
 		"function":  "ExtractFeatures",
 		"frames":    spectrogram.TimeFrames,
@@ -1346,4 +1356,3 @@ func (m *MixedFeatureExtractor) calculateVariance(values []float64) float64 {
 
 	return variance / float64(len(values))
 }
-

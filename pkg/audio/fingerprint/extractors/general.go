@@ -50,6 +50,16 @@ func (g *GeneralFeatureExtractor) GetFeatureWeights() map[string]float64 {
 }
 
 func (g *GeneralFeatureExtractor) ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*ExtractedFeatures, error) {
+	if spectrogram == nil {
+		return nil, fmt.Errorf("spectrogram cannot be nil")
+	}
+	if len(pcm) == 0 {
+		return nil, fmt.Errorf("PCM data cannot be empty")
+	}
+	if sampleRate <= 0 {
+		return nil, fmt.Errorf("sample rate must be positive")
+	}
+
 	logger := g.logger.WithFields(logging.Fields{
 		"function": "ExtractFeatures",
 		"frames":   spectrogram.TimeFrames,
@@ -797,4 +807,3 @@ func (g *GeneralFeatureExtractor) calculateVariance(values []float64) float64 {
 	}
 	return variance / float64(len(values))
 }
-
