@@ -8,7 +8,7 @@ import (
 
 // FeatureExtractor defines the interface for content-specific feature extraction
 type FeatureExtractor interface {
-	ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm float64, sampleRate int) (*ExtractedFeatures, error)
+	ExtractFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*ExtractedFeatures, error)
 	GetFeatureWeights() map[string]float64
 	GetName() string
 	GetContentType() config.ContentType
@@ -38,22 +38,22 @@ func (f *FeatureExtractorFactory) CreateExtractor(contentType config.ContentType
 	switch contentType {
 	case config.ContentMusic:
 		logger.Debug("Creating music feature extractor")
-		return NewMusicFeatureExtractor(featureConfig), nil
+		return NewMusicFeatureExtractor(&featureConfig), nil
 
 	case config.ContentNews, config.ContentTalk:
 		logger.Debug("Creating speech feature extractor")
-		return NewSpeechFeatureExtractor(featureConfig), nil
+		return NewSpeechFeatureExtractor(&featureConfig), nil
 
 	case config.ContentSports:
 		logger.Debug("Creating sports feature extractor")
-		return NewSportsFeatureExtractor(featureConfig), nil
+		return NewSportsFeatureExtractor(&featureConfig), nil
 
 	case config.ContentMixed:
 		logger.Debug("Creating mixed content feature extractor")
-		return NewMixedFeatureExtractor(featureConfig), nil
+		return NewMixedFeatureExtractor(&featureConfig), nil
 
 	default:
 		logger.Debug("Creating general feature extractor for unknown content")
-		return NewGeneralFeatureExtractor(featureConfig), nil
+		return NewGeneralFeatureExtractor(&featureConfig), nil
 	}
 }
