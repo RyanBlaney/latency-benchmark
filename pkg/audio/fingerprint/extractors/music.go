@@ -243,7 +243,7 @@ func (m *MusicFeatureExtractor) extractChromaFeatures(spectrogram *analyzers.Spe
 				midiNote := 12*math.Log2(freq/440.0) + 69
 				if midiNote >= 0 {
 					// Map to chroma class (0-11 for 12-semitone system)
-					chromaClass := int(math.Round(midiNote)) * chromaBins
+					chromaClass := int(math.Round(midiNote)) % chromaBins
 					if chromaClass >= 0 && chromaClass < chromaBins {
 						chroma[t][chromaClass] += magnitude[f]
 					}
