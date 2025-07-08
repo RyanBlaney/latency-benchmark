@@ -343,26 +343,32 @@ func (ad *AudioDownloader) detectAudioFormat(data []byte) string {
 		return "unknown"
 	}
 
-	// Check for AAC ADTS header (0xFFF)
-	if len(data) >= 2 && (data[0] == 0xFF && (data[1]&0xF0) == 0xF0) {
-		return "aac"
+	// Check for ID3 tag first (MP3 with metadata) - most distinctive
+	if len(data) >= 3 && data[0] == 'I' && data[1] == 'D' && data[2] == '3' {
+		return "mp3"
 	}
 
-	// Check for MP3 header (0xFFE, 0xFFF, or ID3)
-	if len(data) >= 3 {
-		// MP3 sync word
-		if data[0] == 0xFF && (data[1]&0xE0) == 0xE0 {
-			return "mp3"
-		}
-		// ID3 tag
-		if data[0] == 'I' && data[1] == 'D' && data[2] == '3' {
-			return "mp3"
-		}
-	}
-
-	// Check for TS packet (0x47)
+	// Check for Transport Stream
 	if data[0] == 0x47 {
-		return "ts" // Transport Stream - contains AAC usually
+		return "ts"
+	}
+
+	// Check sync words - be more specific to avoid conflicts
+	if len(data) >= 2 && data[0] == 0xFF {
+		secondByte := data[1]
+
+		// More precise MP3 detection: check for specific MP3 patterns first
+		// MP3 sync words: 0xFFE, 0xFFB, 0xFFA, 0xFF3, 0xFF2
+		if secondByte == 0xFB || secondByte == 0xFA ||
+			secondByte == 0xF3 || secondByte == 0xF2 ||
+			secondByte == 0xEB || secondByte == 0xEA {
+			return "mp3"
+		}
+
+		// AAC ADTS detection: 0xFFF pattern (but not if it was MP3 above)
+		if (secondByte & 0xF0) == 0xF0 {
+			return "aac"
+		}
 	}
 
 	return "unknown"

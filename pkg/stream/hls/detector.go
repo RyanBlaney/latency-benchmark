@@ -70,6 +70,9 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 
 	// Return the metadata that was extracted during parsing
 	if playlist.Metadata != nil {
+		if playlist.Metadata.Format == "" {
+			playlist.Metadata.Format = "hls"
+		}
 		return playlist.Metadata, nil
 	}
 
