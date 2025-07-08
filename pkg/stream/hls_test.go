@@ -11,8 +11,8 @@ import (
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
-var testSRCStreamURL = "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
-var testCDNStreamURL = "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+var testHLSSRCStreamURL = "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
+var testHLSCDNStreamURL = "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
 
 func TestHLSDetection(t *testing.T) {
 	logger := logging.NewDefaultLogger().WithFields(logging.Fields{
@@ -31,14 +31,14 @@ func TestHLSDetection(t *testing.T) {
 	assert.NotNil(t, handler)
 
 	// Source Stream
-	srcStreamType, err := factory.detector.DetectType(ctx, testSRCStreamURL)
+	srcStreamType, err := factory.detector.DetectType(ctx, testHLSSRCStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to detect HLS SOURCE stream")
 	}
 	assert.NotNil(t, srcStreamType)
 	assert.Equal(t, common.StreamTypeHLS, srcStreamType)
 
-	srcStreamMetadata, err := factory.detector.ProbeStream(ctx, testSRCStreamURL)
+	srcStreamMetadata, err := factory.detector.ProbeStream(ctx, testHLSSRCStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to probe HLS SOURCE stream ")
 	}
@@ -51,23 +51,23 @@ func TestHLSDetection(t *testing.T) {
 	assert.NotNil(t, srcMetadataJSON)
 	logger.Info(string(srcMetadataJSON))
 
-	srcDetector, err := factory.DetectAndCreate(ctx, testSRCStreamURL)
+	srcDetector, err := factory.DetectAndCreate(ctx, testHLSSRCStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to detect and create HLS SOURCE stream")
 	}
 	assert.NotNil(t, srcDetector)
 
-	assert.True(t, srcDetector.CanHandle(ctx, testSRCStreamURL))
+	assert.True(t, srcDetector.CanHandle(ctx, testHLSSRCStreamURL))
 
 	// CDN Stream
-	cdnStreamType, err := factory.detector.DetectType(ctx, testCDNStreamURL)
+	cdnStreamType, err := factory.detector.DetectType(ctx, testHLSCDNStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to detect HLS CDN stream")
 	}
 	assert.NotNil(t, srcStreamType)
 	assert.Equal(t, common.StreamTypeHLS, cdnStreamType)
 
-	cdnStreamMetadata, err := factory.detector.ProbeStream(ctx, testCDNStreamURL)
+	cdnStreamMetadata, err := factory.detector.ProbeStream(ctx, testHLSCDNStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to probe HLS CDN stream ")
 	}
@@ -80,11 +80,11 @@ func TestHLSDetection(t *testing.T) {
 	assert.NotNil(t, cdnMetadataJSON)
 	logger.Info(string(cdnMetadataJSON))
 
-	cdnDetector, err := factory.DetectAndCreate(ctx, testCDNStreamURL)
+	cdnDetector, err := factory.DetectAndCreate(ctx, testHLSCDNStreamURL)
 	if err != nil {
 		logger.Error(err, "Failed to detect and create HLS CDN stream")
 	}
 	assert.NotNil(t, cdnDetector)
 
-	assert.True(t, cdnDetector.CanHandle(ctx, testCDNStreamURL))
+	assert.True(t, cdnDetector.CanHandle(ctx, testHLSCDNStreamURL))
 }
