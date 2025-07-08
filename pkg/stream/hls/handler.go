@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -417,7 +418,11 @@ func (h *Handler) resolveURL(uri string) string {
 
 // IsConfigured returns true if the handler has a non-default configuration
 func (h *Handler) IsConfigured() bool {
-	return h.config != nil && h.config != DefaultConfig()
+	if h.config == nil {
+		return false
+	}
+	defaultConfig := DefaultConfig()
+	return !reflect.DeepEqual(h.config, defaultConfig)
 }
 
 // GetConfiguredUserAgent returns the configured user agent

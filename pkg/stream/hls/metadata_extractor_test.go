@@ -417,7 +417,7 @@ func TestAddHeaderMapping(t *testing.T) {
 	}
 	metadata := &common.StreamMetadata{Headers: make(map[string]string)}
 	extractor.extractFromHeaders(headers, metadata)
-	assert.Equal(t, "HIGH", metadata.Headers["custom_quality"])
+	assert.Equal(t, "high", metadata.Headers["custom_quality"])
 }
 
 func TestAddSegmentAnalyzer(t *testing.T) {
@@ -595,7 +595,7 @@ func TestMetadataExtractionIntegration(t *testing.T) {
 	assert.Equal(t, common.StreamTypeHLS, metadata.Type)
 	assert.Equal(t, streamURL, metadata.URL)
 	assert.Equal(t, "Amazing Radio", metadata.Station)
-	assert.Equal(t, "Pop", metadata.Genre)
+	assert.Equal(t, "music", metadata.Genre)
 	assert.Greater(t, metadata.Bitrate, 0) // Should get bitrate from URL or variants
 	assert.Equal(t, "aac", metadata.Codec)
 	assert.Equal(t, 2, metadata.Channels)

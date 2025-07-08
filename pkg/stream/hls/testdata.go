@@ -10,11 +10,15 @@ var (
 
 	// Additional test URLs for various scenarios
 	TestValidHLSURLs = []string{
-		"https://example.com/playlist.m3u8",
-		"https://example.com/master.m3u8",
-		"https://example.com/index.m3u8",
-		"https://example.com/stream/96k/playlist.m3u8",
-		"https://example.com/aac/128.m3u8",
+		"https://tunein.cdnstream1.com/3511_128.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3511_64.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3511_32.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3511_192.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3512_96.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3513_96.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3514_96.aac/playlist.m3u8",
+		"https://tunein.cdnstream1.com/3511_96.mp3/playlist.m3u8",
+		"https://tunein.cdnstream1.com/stream/3511_96.aac/playlist.m3u8",
 	}
 
 	// Invalid URLs for negative testing
@@ -62,13 +66,13 @@ segment123458.ts`
 #EXT-X-VERSION:3
 #EXT-X-TARGETDURATION:10
 #EXT-X-MEDIA-SEQUENCE:0
-#EXTINF:9.009,
+#EXTINF:9.009,Regular Content
 segment0.ts
 #EXT-X-CUE-OUT:30.0
-#EXTINF:9.009,
+#EXTINF:9.009,Ad Content
 ad_segment1.ts
 #EXT-X-CUE-IN
-#EXTINF:9.009,
+#EXTINF:9.009,Back to Content
 segment1.ts
 #EXT-X-ENDLIST`
 
@@ -84,4 +88,3 @@ audio_segment1.aac
 audio_segment2.aac
 #EXT-X-ENDLIST`
 )
-

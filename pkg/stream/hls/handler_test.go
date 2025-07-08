@@ -59,9 +59,8 @@ func TestCanHandle(t *testing.T) {
 
 	t.Run("valid HLS URLs", func(t *testing.T) {
 		validURLs := []string{
-			"https://example.com/playlist.m3u8",
-			"https://example.com/master.m3u8",
-			"https://example.com/index.m3u8",
+			TestCDNStreamURL,
+			TestSRCStreamURL,
 		}
 
 		for _, url := range validURLs {
@@ -683,4 +682,3 @@ func TestHandlerWithRealStreams(t *testing.T) {
 		}
 	})
 }
-
