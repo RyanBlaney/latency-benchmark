@@ -483,6 +483,12 @@ func (s *FeatureExtractorTestSuite) validateExtractedFeatures(features *Extracte
 		s.GreaterOrEqual(features.TemporalFeatures.PeakAmplitude, 0.0)
 		s.GreaterOrEqual(features.TemporalFeatures.AverageAmplitude, 0.0)
 	}
+
+	/* featuresJSON, err := json.Marshal(features.SpectralFeatures.ZeroCrossingRate)
+	if err != nil {
+		s.Errorf(err, "Failed to marshal ZeroCrossingRate features")
+	}
+	log.Printf("Extracted Features: %v", string(featuresJSON)) */
 }
 
 // Benchmark tests for performance

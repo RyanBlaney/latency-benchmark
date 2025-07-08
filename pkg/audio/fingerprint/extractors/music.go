@@ -72,7 +72,7 @@ func (m *MusicFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrogr
 	}
 
 	// Extract spectral features (always included)
-	spectralFeatures, err := m.extractSpectralFeatures(spectrogram)
+	spectralFeatures, err := m.extractSpectralFeatures(spectrogram, pcm)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
 		return nil, err
@@ -135,7 +135,7 @@ func (m *MusicFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrogr
 	return features, nil
 }
 
-func (m *MusicFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.SpectrogramResult) (*SpectralFeatures, error) {
+func (m *MusicFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64) (*SpectralFeatures, error) {
 	logger := m.logger.WithFields(logging.Fields{
 		"function": "extractSpectralFeatures",
 		"frames":   spectrogram.TimeFrames,
@@ -157,6 +157,9 @@ func (m *MusicFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.S
 	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
+
+	hopSize := spectrogram.HopSize
+	frameSize := hopSize * 2
 
 	// Extract features for each time frame
 	for t := range spectrogram.TimeFrames {
@@ -182,6 +185,16 @@ func (m *MusicFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.S
 
 		// Calculate spectral flux (onset detection)
 		features.SpectralFlux = m.calculateSpectralContrast(magnitude, m.config.ContrastBands)
+
+		// Calculate zero crossing rate
+		start := t * hopSize
+		end := start * frameSize
+		end = min(end, len(pcm))
+
+		if start < len(pcm) {
+			pcmFrame := pcm[start:end]
+			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
+		}
 	}
 
 	logger.Debug("Spectral features extracted", logging.Fields{

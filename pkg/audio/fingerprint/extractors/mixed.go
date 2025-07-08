@@ -77,7 +77,7 @@ func (m *MixedFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrogr
 	features.ExtractionMetadata["content_analysis"] = contentAnalysis
 
 	// Extract robust spectral features (highest priority)
-	spectralFeatures, err := m.extractRobustSpectralFeatures(spectrogram)
+	spectralFeatures, err := m.extractRobustSpectralFeatures(spectrogram, pcm)
 	if err != nil {
 		logger.Error(err, "Failed to extract robust spectral features")
 		return nil, err
@@ -238,11 +238,11 @@ func (m *MixedFeatureExtractor) analyzeSpectralContent(spectrogram *analyzers.Sp
 	spectralVariances := make([]float64, 0)
 
 	freqs := make([]float64, spectrogram.FreqBins)
-	for i := 0; i < spectrogram.FreqBins; i++ {
+	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(sampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
 
-	for t := 0; t < spectrogram.TimeFrames; t++ {
+	for t := range spectrogram.TimeFrames {
 		magnitude := spectrogram.Magnitude[t]
 
 		centroid := m.calculateSpectralCentroid(magnitude, freqs)
@@ -390,7 +390,7 @@ func (m *MixedFeatureExtractor) analyzeEnergyContent(pcm []float64, sampleRate i
 }
 
 // extractRobustSpectralFeatures extracts spectral features optimized for mixed content
-func (m *MixedFeatureExtractor) extractRobustSpectralFeatures(spectrogram *analyzers.SpectrogramResult) (*SpectralFeatures, error) {
+func (m *MixedFeatureExtractor) extractRobustSpectralFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64) (*SpectralFeatures, error) {
 	logger := m.logger.WithFields(logging.Fields{
 		"function": "extractRobustSpectralFeatures",
 	})
@@ -408,12 +408,15 @@ func (m *MixedFeatureExtractor) extractRobustSpectralFeatures(spectrogram *analy
 
 	// Generate frequency bins
 	freqs := make([]float64, spectrogram.FreqBins)
-	for i := 0; i < spectrogram.FreqBins; i++ {
+	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
 
+	hopSize := spectrogram.HopSize
+	frameSize := hopSize * 2
+
 	// Extract robust spectral features for each frame
-	for t := 0; t < spectrogram.TimeFrames; t++ {
+	for t := range spectrogram.TimeFrames {
 		magnitude := spectrogram.Magnitude[t]
 
 		// Standard spectral features with robust calculations
@@ -427,6 +430,16 @@ func (m *MixedFeatureExtractor) extractRobustSpectralFeatures(spectrogram *analy
 		// Conservative spectral contrast (fewer bands, more stable)
 		contrastBands := 4 // Conservative for mixed content
 		features.SpectralContrast[t] = m.calculateRobustSpectralContrast(magnitude, contrastBands)
+
+		// Calculate zero crossing rate
+		start := t * hopSize
+		end := start + frameSize
+		end = min(end, len(pcm))
+
+		if start < len(pcm) {
+			pcmFrame := pcm[start:end]
+			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
+		}
 	}
 
 	// Calculate robust spectral flux
@@ -465,12 +478,10 @@ func (m *MixedFeatureExtractor) extractRobustEnergyFeatures(pcm []float64, sampl
 	energies := make([]float64, numFrames)
 
 	// Calculate robust frame-based energy features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -543,7 +554,7 @@ func (m *MixedFeatureExtractor) extractAdaptiveMFCC(spectrogram *analyzers.Spect
 	melFilters := m.createAdaptiveMelFilterBank(numMelFilters, lowFreq, highFreq, spectrogram.FreqBins, sampleRate)
 
 	// Process each time frame
-	for t := 0; t < spectrogram.TimeFrames; t++ {
+	for t := range spectrogram.TimeFrames {
 		magnitude := spectrogram.Magnitude[t]
 
 		// Apply mel filter bank
@@ -596,12 +607,10 @@ func (m *MixedFeatureExtractor) extractRobustTemporalFeatures(pcm []float64, sam
 	energies := make([]float64, numFrames)
 
 	// Calculate frame-based features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -651,17 +660,17 @@ func (m *MixedFeatureExtractor) extractConservativeChromaFeatures(spectrogram *a
 
 	// Generate frequency bins
 	freqs := make([]float64, spectrogram.FreqBins)
-	for i := 0; i < spectrogram.FreqBins; i++ {
+	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(sampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
 
 	// Process each time frame with conservative approach
-	for t := 0; t < spectrogram.TimeFrames; t++ {
+	for t := range spectrogram.TimeFrames {
 		chroma[t] = make([]float64, chromaBins)
 		magnitude := spectrogram.Magnitude[t]
 
 		// Conservative frequency range (avoid very low and very high frequencies)
-		for f := 0; f < len(magnitude); f++ {
+		for f := range len(magnitude) {
 			freq := freqs[f]
 			if freq < 100 || freq > 4000 {
 				continue // Skip frequencies outside conservative range
@@ -729,12 +738,10 @@ func (m *MixedFeatureExtractor) calculateRobustSpectralContrast(magnitude []floa
 	contrast := make([]float64, numBands)
 	bandSize := len(magnitude) / numBands
 
-	for band := 0; band < numBands; band++ {
+	for band := range numBands {
 		start := band * bandSize
 		end := start + bandSize
-		if end > len(magnitude) {
-			end = len(magnitude)
-		}
+		end = min(end, len(magnitude))
 
 		if start >= end {
 			continue
@@ -772,7 +779,7 @@ func (m *MixedFeatureExtractor) calculateRobustSpectralFlux(spectrogram *analyze
 
 	for t := 1; t < spectrogram.TimeFrames; t++ {
 		sum := 0.0
-		for f := 0; f < spectrogram.FreqBins; f++ {
+		for f := range spectrogram.FreqBins {
 			diff := spectrogram.Magnitude[t][f] - spectrogram.Magnitude[t-1][f]
 			// Conservative approach: only consider positive changes
 			if diff > 0 {
@@ -802,12 +809,10 @@ func (m *MixedFeatureExtractor) calculateRobustEnergyEntropy(frame []float64) fl
 	subFrameEnergies := make([]float64, numSubFrames)
 	totalEnergy := 0.0
 
-	for i := 0; i < numSubFrames; i++ {
+	for i := range numSubFrames {
 		start := i * subFrameSize
 		end := start + subFrameSize
-		if end > len(frame) {
-			end = len(frame)
-		}
+		end = min(end, len(frame))
 
 		energy := 0.0
 		for j := start; j < end; j++ {
@@ -1096,14 +1101,14 @@ func (m *MixedFeatureExtractor) createAdaptiveMelFilterBank(numFilters int, lowF
 	}
 
 	filterBank := make([][]float64, numFilters)
-	for i := 0; i < numFilters; i++ {
+	for i := range numFilters {
 		filter := make([]float64, freqBins)
 
 		leftFreq := freqPoints[i]
 		centerFreq := freqPoints[i+1]
 		rightFreq := freqPoints[i+2]
 
-		for j := 0; j < freqBins; j++ {
+		for j := range freqBins {
 			freq := float64(j) * float64(sampleRate) / float64(freqBins*2)
 
 			if freq >= leftFreq && freq <= rightFreq {
@@ -1147,9 +1152,9 @@ func (m *MixedFeatureExtractor) applyDCT(logMelSpectrum []float64, numCoeffs int
 	mfcc := make([]float64, numCoeffs)
 	N := float64(len(logMelSpectrum))
 
-	for k := 0; k < numCoeffs; k++ {
+	for k := range numCoeffs {
 		sum := 0.0
-		for n := 0; n < len(logMelSpectrum); n++ {
+		for n := range len(logMelSpectrum) {
 			sum += logMelSpectrum[n] * math.Cos(math.Pi*float64(k)*(float64(n)+0.5)/N)
 		}
 		mfcc[k] = sum
@@ -1282,7 +1287,7 @@ func (m *MixedFeatureExtractor) calculateSpectralSlope(magnitude, freqs []float6
 	sumXY := 0.0
 	sumXX := 0.0
 
-	for i := 0; i < len(magnitude); i++ {
+	for i := range len(magnitude) {
 		if magnitude[i] > 1e-10 && freqs[i] > 0 {
 			x := math.Log10(freqs[i])
 			y := math.Log10(magnitude[i])

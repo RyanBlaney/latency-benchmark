@@ -82,7 +82,7 @@ func (sp *SportsFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectro
 
 	// Extract spectral contrast (crowd vs commentary)
 	if sp.config.EnableSpectralContrast {
-		spectralFeatures, err := sp.extractSportsSpectralFeatures(spectrogram)
+		spectralFeatures, err := sp.extractSportsSpectralFeatures(spectrogram, pcm)
 		if err != nil {
 			logger.Error(err, "Failed to extract spectral features")
 		} else {
@@ -166,12 +166,10 @@ func (sp *SportsFeatureExtractor) extractSportsEnergyFeatures(pcm []float64, sam
 	instantaneousPeaks := make([]float64, numFrames)
 
 	// Calculate frame-based energy features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -216,7 +214,7 @@ func (sp *SportsFeatureExtractor) extractSportsEnergyFeatures(pcm []float64, sam
 }
 
 // extractSportsSpectralFeatures extracts spectral features for sports analysis
-func (sp *SportsFeatureExtractor) extractSportsSpectralFeatures(spectrogram *analyzers.SpectrogramResult) (*SpectralFeatures, error) {
+func (sp *SportsFeatureExtractor) extractSportsSpectralFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64) (*SpectralFeatures, error) {
 	logger := sp.logger.WithFields(logging.Fields{
 		"function": "extractSportsSpectralFeatures",
 	})
@@ -234,9 +232,12 @@ func (sp *SportsFeatureExtractor) extractSportsSpectralFeatures(spectrogram *ana
 
 	// Generate frequency bins
 	freqs := make([]float64, spectrogram.FreqBins)
-	for i := 0; i < spectrogram.FreqBins; i++ {
+	for i := range spectrogram.FreqBins {
 		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
+
+	hopSize := spectrogram.HopSize
+	frameSize := hopSize * 2
 
 	// Extract features for each time frame
 	var contrastBands int
@@ -257,6 +258,16 @@ func (sp *SportsFeatureExtractor) extractSportsSpectralFeatures(spectrogram *ana
 			contrastBands = 8 // More bands for sports (vs 6 for music)
 		}
 		features.SpectralContrast[t] = sp.calculateSportsSpectralContrast(magnitude, contrastBands)
+
+		// Calculate zero crossing rate
+		start := t * hopSize
+		end := start + frameSize
+		end = min(end, len(pcm))
+
+		if start < len(pcm) {
+			pcmFrame := pcm[start:end]
+			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
+		}
 	}
 
 	// Calculate spectral flux for event detection
@@ -296,12 +307,10 @@ func (sp *SportsFeatureExtractor) extractSportsTemporalFeatures(pcm []float64, s
 	energies := make([]float64, numFrames)
 
 	// Calculate frame-based features
-	for i := 0; i < numFrames; i++ {
+	for i := range numFrames {
 		start := i * hopSize
 		end := start + frameSize
-		if end > len(pcm) {
-			end = len(pcm)
-		}
+		end = min(end, len(pcm))
 
 		frame := pcm[start:end]
 
@@ -474,9 +483,7 @@ func (sp *SportsFeatureExtractor) calculateSportsEnergyVariance(energies []float
 
 	// Use rolling variance to capture dynamics
 	windowSize := 20 // Approximately 1 second at 25fps
-	if windowSize > len(energies) {
-		windowSize = len(energies)
-	}
+	windowSize = min(windowSize, len(energies))
 
 	maxVariance := 0.0
 	for i := 0; i <= len(energies)-windowSize; i++ {
@@ -528,12 +535,10 @@ func (sp *SportsFeatureExtractor) calculateSportsEnergyEntropy(frame []float64) 
 	subFrameEnergies := make([]float64, numSubFrames)
 	totalEnergy := 0.0
 
-	for i := 0; i < numSubFrames; i++ {
+	for i := range numSubFrames {
 		start := i * subFrameSize
 		end := start + subFrameSize
-		if end > len(frame) {
-			end = len(frame)
-		}
+		end = min(end, len(frame))
 
 		energy := 0.0
 		for j := start; j < end; j++ {
@@ -563,12 +568,10 @@ func (sp *SportsFeatureExtractor) calculateSportsSpectralContrast(magnitude []fl
 	contrast := make([]float64, numBands)
 	bandSize := len(magnitude) / numBands
 
-	for band := 0; band < numBands; band++ {
+	for band := range numBands {
 		start := band * bandSize
 		end := start + bandSize
-		if end > len(magnitude) {
-			end = len(magnitude)
-		}
+		end = min(end, len(magnitude))
 
 		if start >= end {
 			continue
@@ -899,7 +902,7 @@ func (sp *SportsFeatureExtractor) calculateReactionIntensity(prevMagnitude, curr
 	}
 
 	totalChange := 0.0
-	for i := 0; i < len(currMagnitude); i++ {
+	for i := range len(currMagnitude) {
 		diff := currMagnitude[i] - prevMagnitude[i]
 		if diff > 0 { // Only positive changes (energy increases)
 			totalChange += diff * diff
@@ -1028,14 +1031,14 @@ func (sp *SportsFeatureExtractor) createSportsMelFilterBank(numFilters int, lowF
 	}
 
 	filterBank := make([][]float64, numFilters)
-	for i := 0; i < numFilters; i++ {
+	for i := range numFilters {
 		filter := make([]float64, freqBins)
 
 		leftFreq := freqPoints[i]
 		centerFreq := freqPoints[i+1]
 		rightFreq := freqPoints[i+2]
 
-		for j := 0; j < freqBins; j++ {
+		for j := range freqBins {
 			freq := float64(j) * float64(sampleRate) / float64(freqBins*2)
 
 			if freq >= leftFreq && freq <= rightFreq {
@@ -1079,9 +1082,9 @@ func (sp *SportsFeatureExtractor) applyDCT(logMelSpectrum []float64, numCoeffs i
 	mfcc := make([]float64, numCoeffs)
 	N := float64(len(logMelSpectrum))
 
-	for k := 0; k < numCoeffs; k++ {
+	for k := range numCoeffs {
 		sum := 0.0
-		for n := 0; n < len(logMelSpectrum); n++ {
+		for n := range len(logMelSpectrum) {
 			sum += logMelSpectrum[n] * math.Cos(math.Pi*float64(k)*(float64(n)+0.5)/N)
 		}
 		mfcc[k] = sum
@@ -1214,7 +1217,7 @@ func (sp *SportsFeatureExtractor) calculateSpectralSlope(magnitude, freqs []floa
 	sumXY := 0.0
 	sumXX := 0.0
 
-	for i := 0; i < len(magnitude); i++ {
+	for i := range len(magnitude) {
 		if magnitude[i] > 1e-10 && freqs[i] > 0 {
 			x := math.Log10(freqs[i])
 			y := math.Log10(magnitude[i])

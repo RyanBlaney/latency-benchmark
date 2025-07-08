@@ -65,3 +65,19 @@ type EnergyFeatures struct {
 	LoudnessRange   float64   `json:"loudness_range"`
 	CrestFactor     []float64 `json:"crest_factor"`
 }
+
+// calculateZeroCrossingRate computes zero crossing rate
+func calculateZeroCrossingRate(pcm []float64) float64 {
+	if len(pcm) <= 1 {
+		return 0
+	}
+
+	crossings := 0
+	for i := 1; i < len(pcm); i++ {
+		if (pcm[i-1] >= 0 && pcm[i] < 0) || (pcm[i-1] < 0 && pcm[i] >= 0) {
+			crossings++
+		}
+	}
+
+	return float64(crossings) / float64(len(pcm)-1)
+}

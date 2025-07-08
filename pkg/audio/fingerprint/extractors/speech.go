@@ -93,7 +93,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 	}
 
 	// Extract basic spectral features (focused on speech range)
-	spectralFeatures, err := s.extractSpeechSpectralFeatures(spectrogram)
+	spectralFeatures, err := s.extractSpeechSpectralFeatures(spectrogram, pcm)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
 
@@ -261,7 +261,7 @@ func (s *SpeechFeatureExtractor) extractSpeechFeatures(spectrogram *analyzers.Sp
 }
 
 // extractSpeechSpectralFeatures extracts spectral features focused on speech range
-func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *analyzers.SpectrogramResult) (*SpectralFeatures, error) {
+func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64) (*SpectralFeatures, error) {
 	logger := s.logger.WithFields(logging.Fields{
 		"function": "extractSpeechSpectralFeatures",
 	})
@@ -291,6 +291,9 @@ func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *anal
 		}
 	}
 
+	hopSize := spectrogram.HopSize
+	frameSize := hopSize * 2
+
 	// Extract speech-band magnitude for each frame
 	for t := 0; t < spectrogram.TimeFrames; t++ {
 		speechMag := make([]float64, 0)
@@ -308,6 +311,16 @@ func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *anal
 		features.SpectralFlatness[t] = s.calculateSpectralFlatness(speechMag)
 		features.SpectralCrest[t] = s.calculateSpectralCrest(speechMag)
 		features.SpectralSlope[t] = s.calculateSpectralSlope(speechMag, speechFreqs)
+
+		// Calculate zero crossing rate
+		start := t * hopSize
+		end := start + frameSize
+		end = min(end, len(pcm))
+
+		if start < len(pcm) {
+			pcmFrame := pcm[start:end]
+			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
+		}
 	}
 
 	// Calculate spectral flux for speech activity detection

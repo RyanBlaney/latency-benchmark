@@ -72,7 +72,7 @@ func (g *GeneralFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectro
 	}
 
 	// Extract spectral features (always enabled)
-	spectralFeatures, err := g.extractSpectralFeatures(spectrogram)
+	spectralFeatures, err := g.extractSpectralFeatures(spectrogram, pcm)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
 		return nil, err
@@ -127,7 +127,7 @@ func (g *GeneralFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectro
 }
 
 // extractSpectralFeatures extracts balanced spectral features
-func (g *GeneralFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.SpectrogramResult) (*SpectralFeatures, error) {
+func (g *GeneralFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64) (*SpectralFeatures, error) {
 	features := &SpectralFeatures{
 		SpectralCentroid:  make([]float64, spectrogram.TimeFrames),
 		SpectralRolloff:   make([]float64, spectrogram.TimeFrames),
@@ -143,6 +143,9 @@ func (g *GeneralFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers
 	for i := 0; i < spectrogram.FreqBins; i++ {
 		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
 	}
+
+	hopSize := spectrogram.HopSize
+	frameSize := hopSize * 2
 
 	for t := 0; t < spectrogram.TimeFrames; t++ {
 		magnitude := spectrogram.Magnitude[t]
@@ -160,6 +163,16 @@ func (g *GeneralFeatureExtractor) extractSpectralFeatures(spectrogram *analyzers
 			contrastBands = 6
 		}
 		features.SpectralContrast[t] = g.calculateSpectralContrast(magnitude, contrastBands)
+
+		// Calculate zero crossing rate
+		start := t * hopSize
+		end := start + frameSize
+		end = min(end, len(pcm))
+
+		if start < len(pcm) {
+			pcmFrame := pcm[start:end]
+			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
+		}
 	}
 
 	features.SpectralFlux = g.calculateSpectralFlux(spectrogram)
