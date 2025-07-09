@@ -245,6 +245,11 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logging.Debug("HTTP error response", logging.Fields{"url": streamURL, "status": resp.StatusCode})
+		return common.StreamTypeUnsupported
+	}
+
 	// Check required headers if configured
 	for _, requiredHeader := range d.config.RequiredHeaders {
 		if resp.Header.Get(requiredHeader) == "" {

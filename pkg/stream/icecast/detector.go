@@ -124,6 +124,12 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 	}
 	defer resp.Body.Close()
 
+	// Check if the response status indicates success
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP error: %d %s", resp.StatusCode, resp.Status), nil)
+	}
+
 	// Create metadata from response headers
 	metadata := &common.StreamMetadata{
 		URL:       streamURL,
@@ -222,6 +228,11 @@ func (d *Detector) DetectFromURL(streamURL string) common.StreamType {
 	u, err := url.Parse(streamURL)
 	if err != nil {
 		logging.Debug("Error parsing URL", logging.Fields{"url": streamURL, "error": err.Error()})
+		return common.StreamTypeUnsupported
+	}
+
+	// ICEcast streams must use HTTP or HTTPS
+	if u.Scheme != "http" && u.Scheme != "https" {
 		return common.StreamTypeUnsupported
 	}
 
@@ -398,8 +409,69 @@ func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, 
 		return false
 	}
 
-	// Very basic validation - ensure we got some data
-	return n > 0
+	if n > 0 {
+		return isValidMP3Data(buffer[:n])
+	}
+	return false
+}
+
+func isValidMP3Data(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+
+	// Look for MP3 frame sync
+	// MP3 frames start with 11 bits set (0xFFE)
+	for i := 0; i < len(data)-1; i++ {
+		if data[i] == 0xFF && (data[i+1]&0xE0) == 0xE0 {
+			// Found potential MP3 frame header
+			if i+3 < len(data) {
+				// Additional validation of the MP3 frame header
+				if isValidMP3FrameHeader(data[i : i+4]) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func isValidMP3FrameHeader(header []byte) bool {
+	if len(header) < 4 {
+		return false
+	}
+
+	// First 11 bits should be 1 (frame sync)
+	if header[0] != 0xFF || (header[1]&0xE0) != 0xE0 {
+		return false
+	}
+
+	// MPEG version (bits 19-20)
+	version := (header[1] >> 3) & 0x03
+	if version == 0x01 { // Reserved version
+		return false
+	}
+
+	// Layer (bits 17-18)
+	layer := (header[1] >> 1) & 0x03
+	if layer == 0x00 { // Reserved layer
+		return false
+	}
+
+	// Bitrate (bits 12-15)
+	bitrate := (header[2] >> 4) & 0x0F
+	if bitrate == 0x00 || bitrate == 0x0F { // Free or reserved bitrate
+		return false
+	}
+
+	// Sample rate (bits 10-11)
+	sampleRate := (header[2] >> 2) & 0x03
+	if sampleRate == 0x03 { // Reserved sample rate
+		return false
+	}
+
+	return true
 }
 
 // extractMetadataFromHeaders extracts ICEcast metadata from HTTP headers
@@ -614,4 +686,3 @@ func IsValidICEcastContent(ctx context.Context, client *http.Client, streamURL s
 
 	return detector.IsValidICEcastContent(ctx, streamURL, httpConfig)
 }
-

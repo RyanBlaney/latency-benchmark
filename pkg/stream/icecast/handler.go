@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -479,7 +480,11 @@ func (h *Handler) UpdateConfig(config *Config) {
 
 // IsConfigured returns true if the handler has a non-default configuration
 func (h *Handler) IsConfigured() bool {
-	return h.config != nil && h.config != DefaultConfig()
+	if h.config == nil {
+		return false
+	}
+	defaultConfig := DefaultConfig()
+	return !reflect.DeepEqual(h.config, defaultConfig)
 }
 
 // GetConfiguredUserAgent returns the configured user agent
@@ -605,4 +610,3 @@ func (h *Handler) GetAudioFormat() map[string]any {
 		"channels":    h.metadata.Channels,
 	}
 }
-
