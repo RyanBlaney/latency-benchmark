@@ -20,6 +20,7 @@ type FeatureConfig struct {
 	EnableSpectralContrast bool `json:"enable_spectral_contrast"`
 	EnableTemporalFeatures bool `json:"enable_temporal_features"`
 	EnableSpeechFeatures   bool `json:"enable_speech_features"`
+	EnableHarmonicFeatures bool `json:"enable_harmonic_features"`
 
 	// Content-specific parameters
 	MFCCCoefficients int `json:"mfcc_coefficients"`

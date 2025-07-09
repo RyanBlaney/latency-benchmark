@@ -10,7 +10,7 @@ import (
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/logging"
 )
 
-// SpeechFeatureExtractor extracts features optimized for speech/news content
+// SpeechFeatureExtractor extracts features optimized for talk/news content
 type SpeechFeatureExtractor struct {
 	config *config.FeatureConfig
 	logger logging.Logger

@@ -90,11 +90,13 @@ func (m *MusicFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrogr
 	}
 
 	// Extract harmonic features
-	harmonicFeatures, err := m.extractHarmonicFeatures(spectrogram, pcm, sampleRate)
-	if err != nil {
-		logger.Error(err, "Failed to extract harmonic features")
-	} else {
-		features.HarmonicFeatures = harmonicFeatures
+	if m.config.EnableHarmonicFeatures {
+		harmonicFeatures, err := m.extractHarmonicFeatures(spectrogram, sampleRate)
+		if err != nil {
+			logger.Error(err, "Failed to extract harmonic features")
+		} else {
+			features.HarmonicFeatures = harmonicFeatures
+		}
 	}
 
 	// Extract MFCC (lower priority for music)
@@ -273,7 +275,7 @@ func (m *MusicFeatureExtractor) extractChromaFeatures(spectrogram *analyzers.Spe
 	return chroma, nil
 }
 
-func (m *MusicFeatureExtractor) extractHarmonicFeatures(spectrogram *analyzers.SpectrogramResult, pcm []float64, sampleRate int) (*HarmonicFeatures, error) {
+func (m *MusicFeatureExtractor) extractHarmonicFeatures(spectrogram *analyzers.SpectrogramResult, sampleRate int) (*HarmonicFeatures, error) {
 	logger := m.logger.WithFields(logging.Fields{
 		"function": "extractHarmonicFeatures",
 	})

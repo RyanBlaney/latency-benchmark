@@ -537,14 +537,14 @@ func (m *MixedFeatureExtractor) extractAdaptiveMFCC(spectrogram *analyzers.Spect
 
 	// Adaptive frequency range based on content analysis
 	var lowFreq, highFreq float64
-	if contentAnalysis.PredominantType == "speech" {
+	switch contentAnalysis.PredominantType {
+	case "speech":
 		lowFreq = 300.0
 		highFreq = 4000.0
-	} else if contentAnalysis.PredominantType == "music" {
+	case "music":
 		lowFreq = 80.0
 		highFreq = 8000.0
-	} else {
-		// Conservative range for mixed/unknown content
+	default:
 		lowFreq = 200.0
 		highFreq = 6000.0
 	}
