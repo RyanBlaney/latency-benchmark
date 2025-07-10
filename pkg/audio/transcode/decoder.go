@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,20 +55,63 @@ type DecoderConfig struct {
 	FFmpegPath       string        `json:"ffmpeg_path"`      // Path to ffmpeg binary
 	FFprobePath      string        `json:"ffprobe_path"`     // Path to ffprobe binary
 	Timeout          time.Duration `json:"timeout"`          // Timeout for ffmpeg operations
+	// Normalization options
+	EnableNormalization bool    `json:"enable_normalization"`
+	NormalizationMethod string  `json:"normalization_method"` // "loudnorm", "dynaudnorm", "compand"
+	TargetLUFS          float64 `json:"target_lufs"`          // -23.0 for broadcast, -16.0 for streaming
+	TargetPeak          float64 `json:"target_peak"`          // -2.0
+	LoudnessRange       float64 `json:"loudness_range"`       // 7.0 typical
 }
 
 // DefaultDecoderConfig returns default decoder configuration
 func DefaultDecoderConfig() *DecoderConfig {
 	return &DecoderConfig{
-		TargetSampleRate: 44100,
-		TargetChannels:   1, // Mono for fingerprinting
-		OutputFormat:     "f64le",
-		MaxDuration:      0, // No limit
-		ResampleQuality:  "medium",
-		FFmpegPath:       "ffmpeg",  // Assume in PATH
-		FFprobePath:      "ffprobe", // Assume in PATH
-		Timeout:          30 * time.Second,
+		TargetSampleRate:    44100,
+		TargetChannels:      1, // Mono for fingerprinting
+		OutputFormat:        "f64le",
+		MaxDuration:         0, // No limit
+		ResampleQuality:     "medium",
+		FFmpegPath:          "ffmpeg",  // Assume in PATH
+		FFprobePath:         "ffprobe", // Assume in PATH
+		Timeout:             30 * time.Second,
+		EnableNormalization: true,
+		NormalizationMethod: "loudnorm",
+		TargetLUFS:          -23.0, // EBU R128 standard
+		TargetPeak:          -2.0,  // True peak limit
+		LoudnessRange:       7.0,   // Loudness range
 	}
+}
+
+// ContentOptimizedDecoderConfig returns a decoder configuration based on the content type.
+//
+// The main difference is in the normalization method:
+func ContentOptimizedDecoderConfig(contentType string) *DecoderConfig {
+	config := DefaultDecoderConfig()
+
+	switch contentType {
+	case "music":
+		config.NormalizationMethod = "loudnorm"
+		config.TargetLUFS = -16.0 // Streaming standard
+		config.TargetPeak = -1.0
+		config.LoudnessRange = 8.0
+
+	case "speech", "news", "talk":
+		config.NormalizationMethod = "dynaudnorm"
+		config.TargetLUFS = -20.0
+		config.TargetPeak = -3.0
+		config.LoudnessRange = 5.0
+
+	case "sports":
+		config.NormalizationMethod = "compand"
+		config.TargetLUFS = -18.0
+		config.TargetPeak = -2.0
+		config.LoudnessRange = 10.0
+
+	default:
+		// Use defaults
+	}
+
+	return config
 }
 
 // Decoder handles audio decoding using FFmpeg
@@ -91,6 +135,12 @@ func NewDecoder(config *DecoderConfig) *Decoder {
 		config = DefaultDecoderConfig()
 	}
 	return &Decoder{config: config}
+}
+
+// Simple factory method for easy usage
+func NewNormalizingDecoder(contentType string) *Decoder {
+	config := ContentOptimizedDecoderConfig(contentType)
+	return NewDecoder(config)
 }
 
 // DecodeFile decodes an audio file and returns PCM data
@@ -153,7 +203,23 @@ func (d *Decoder) DecodeBytes(data []byte) (*AudioData, error) {
 	})
 
 	// Decode with proper parameters
-	return d.decodeWithFFmpeg(data, metadata)
+	audioData, err := d.decodeWithFFmpeg(data, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add normalization metadata if it was applied
+	if d.config.EnableNormalization && audioData.Metadata != nil {
+		if audioData.Metadata.Headers == nil {
+			audioData.Metadata.Headers = make(map[string]string)
+		}
+		audioData.Metadata.Headers["normalization_applied"] = "true"
+		audioData.Metadata.Headers["normalization_method"] = d.config.NormalizationMethod
+		audioData.Metadata.Headers["target_lufs"] = fmt.Sprintf("%.1f", d.config.TargetLUFS)
+		audioData.Metadata.Headers["target_peak"] = fmt.Sprintf("%.1f", d.config.TargetPeak)
+	}
+
+	return audioData, nil
 }
 
 // DecodeReader decodes audio from an io.Reader
@@ -421,10 +487,53 @@ func (d *Decoder) buildFFmpegArgs(metadata *AudioMetadata) []string {
 		args = append(args, "-t", fmt.Sprintf("%.2f", d.config.MaxDuration.Seconds()))
 	}
 
+	if d.config.EnableNormalization {
+		normFilter := d.buildNormalizationFilter()
+		if normFilter != "" {
+			// Combine with existing filters or add new filter chain
+			if slices.Contains(args, "-af") {
+				// Append to existing -af
+				for i, arg := range args {
+					if arg == "-af" && i+1 < len(args) {
+						args[i+1] = args[i+1] + "," + normFilter
+						break
+					}
+				}
+			} else {
+				args = append(args, "-af", normFilter)
+			}
+		}
+	}
+
 	// Suppress ffmpeg output
 	args = append(args, "-v", "error")
 
 	return args
+}
+
+// buildNormalizationFilter builds the arguments based on the `DecoderConfig` for a normalization filter
+func (d *Decoder) buildNormalizationFilter() string {
+	switch d.config.NormalizationMethod {
+	case "loudnorm":
+		// EBU R128 loudness normalization
+		return fmt.Sprintf("loudnorm=I=%.1f:TP=%.1f:LRA=%.1f",
+			d.config.TargetLUFS,
+			d.config.TargetPeak,
+			d.config.LoudnessRange)
+
+	case "dynaudnorm":
+		// Dynamic audio normalization
+		return "dynaudnorm=p=0.95:m=10;s=12"
+
+	case "compand":
+		// Compressor/limiter
+		return fmt.Sprintf("compand=0.1,0.3:-90/-90,-%.1f/-%.1f,0/0:6:0:-90:0.1",
+			math.Abs(d.config.TargetPeak),
+			math.Abs(d.config.TargetPeak))
+
+	default:
+		return ""
+	}
 }
 
 // processFFmpegOutput processes the raw output from ffmpeg
