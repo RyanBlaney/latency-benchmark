@@ -67,8 +67,8 @@ const (
 type FingerprintGenerator struct {
 	config           *FingerprintConfig
 	extractorFactory *extractors.FeatureExtractorFactory
-	spectralAnalyzer *analyzers.SpectralAnalyzer
 	ContentDetector  *ContentDetector
+	spectralAnalyzer *analyzers.SpectralAnalyzer
 	logger           logging.Logger
 }
 
@@ -85,7 +85,7 @@ func NewFingerprintGenerator(config *FingerprintConfig) *FingerprintGenerator {
 	return &FingerprintGenerator{
 		config:           config,
 		extractorFactory: extractors.NewFeatureExtractorFactory(),
-		spectralAnalyzer: analyzers.NewSpectralAnalyzer(44100), // Will be updated with actual sample rate. TODO: verify this
+		spectralAnalyzer: analyzers.NewSpectralAnalyzer(44100), // Will be updated with actual sample rate
 		ContentDetector:  NewContentDetector(config.ContentConfig),
 		logger:           logger,
 	}
@@ -129,6 +129,7 @@ func DefaultFingerprintConfig() *FingerprintConfig {
 }
 
 // GenerateFingerprint generates a complete audio fingerprint from audio data
+// TODO: signature with content type
 func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioData) (*AudioFingerprint, error) {
 	if audioData == nil {
 		return nil, fmt.Errorf("audio data cannot be nil")
@@ -158,15 +159,9 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 	// Update feature config based on content type
 	adaptedConfig := fg.adaptConfigForContent(contentType)
 
-	// Generate spectrogram
-	stftConfig := analyzers.ContentOptimizedSTFTConfig(contentType)
-	stftConfig.WindowSize = fg.config.WindowSize
-	stftConfig.HopSize = fg.config.HopSize
-
-	spectrogram, err := fg.spectralAnalyzer.STFT(audioData.PCM, stftConfig)
+	spectrogram, err := fg.spectralAnalyzer.ComputeFFT(audioData.PCM)
 	if err != nil {
-		logger.Error(err, "Failed to generate spectrogram")
-		return nil, err
+		logger.Error(err, "Failed to compute FFT")
 	}
 
 	logger.Debug("Spectrogram generated", logging.Fields{

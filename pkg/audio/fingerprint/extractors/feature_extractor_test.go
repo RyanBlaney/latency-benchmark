@@ -74,11 +74,10 @@ func (s *FeatureExtractorTestSuite) setupTestData() {
 
 	// Create test spectrogram using the actual SpectralAnalyzer
 	analyzer := analyzers.NewSpectralAnalyzer(s.testSampleRate)
-	stftConfig := analyzers.DefaultSTFTConfig()
 
 	// Generate real spectrogram from the test PCM data
 	var err error
-	s.testSpectrogram, err = analyzer.STFT(s.testPCM, stftConfig)
+	s.testSpectrogram, err = analyzer.ComputeFFT(s.testPCM)
 	if err != nil {
 		// If STFT fails, fall back to manual creation for testing
 		s.Suite.T().Logf("STFT failed, using manual spectrogram: %v", err)
@@ -154,7 +153,7 @@ func (s *FeatureExtractorTestSuite) TestMusicFeatureExtractor() {
 	s.Require().NotNil(features)
 
 	// Verify extracted features
-	s.validateExtractedFeatures(features, "music")
+	s.validateExtractedFeatures(features)
 
 	// Music-specific validations
 	s.NotNil(features.SpectralFeatures)
@@ -194,7 +193,7 @@ func (s *FeatureExtractorTestSuite) TestSpeechFeatureExtractor() {
 	s.Require().NotNil(features)
 
 	// Verify extracted features
-	s.validateExtractedFeatures(features, "speech")
+	s.validateExtractedFeatures(features)
 
 	// Speech-specific validations
 	s.NotNil(features.SpeechFeatures)
@@ -231,7 +230,7 @@ func (s *FeatureExtractorTestSuite) TestSportsFeatureExtractor() {
 	s.Require().NotNil(features)
 
 	// Verify extracted features
-	s.validateExtractedFeatures(features, "sports")
+	s.validateExtractedFeatures(features)
 
 	// Sports-specific validations
 	s.NotNil(features.EnergyFeatures)
@@ -267,7 +266,7 @@ func (s *FeatureExtractorTestSuite) TestMixedFeatureExtractor() {
 	s.Require().NotNil(features)
 
 	// Verify extracted features
-	s.validateExtractedFeatures(features, "mixed")
+	s.validateExtractedFeatures(features)
 
 	// Mixed-specific validations
 	s.Contains(features.ExtractionMetadata, "content_analysis")
@@ -308,7 +307,7 @@ func (s *FeatureExtractorTestSuite) TestGeneralFeatureExtractor() {
 	s.Require().NotNil(features)
 
 	// Verify extracted features
-	s.validateExtractedFeatures(features, "general")
+	s.validateExtractedFeatures(features)
 
 	// General-specific validations
 	s.Equal(true, features.ExtractionMetadata["balanced_approach"])
@@ -415,13 +414,13 @@ func (s *FeatureExtractorTestSuite) TestAllContentTypes() {
 			s.Require().NoError(err, "Failed to extract features for %s", contentType)
 			s.Require().NotNil(features)
 
-			s.validateExtractedFeatures(features, string(contentType))
+			s.validateExtractedFeatures(features)
 		})
 	}
 }
 
 // validateExtractedFeatures performs common validations on extracted features
-func (s *FeatureExtractorTestSuite) validateExtractedFeatures(features *ExtractedFeatures, extractorType string) {
+func (s *FeatureExtractorTestSuite) validateExtractedFeatures(features *ExtractedFeatures) {
 	// Basic structure validation
 	s.NotNil(features.ExtractionMetadata)
 

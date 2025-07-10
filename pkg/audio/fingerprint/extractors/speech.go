@@ -157,6 +157,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 }
 
 // extractMFCC computes MFCC optimized for speech (300-4000Hz range)
+// TODO: this isn't called anywhere
 func (s *SpeechFeatureExtractor) extractMFCC(spectrogram *analyzers.SpectrogramResult) ([][]float64, error) {
 	logger := s.logger.WithFields(logging.Fields{
 		"function":          "extractMFCC",

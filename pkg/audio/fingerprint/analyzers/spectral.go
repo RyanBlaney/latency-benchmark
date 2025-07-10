@@ -5,7 +5,7 @@ import (
 	"math"
 	"math/cmplx"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
+	"github.com/mjibson/go-dsp/fft"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
@@ -14,16 +14,6 @@ type SpectralAnalyzer struct {
 	windowGenerator *WindowGenerator
 	sampleRate      int
 	logger          logging.Logger
-}
-
-// STFTConfig holds configuration for Short-Time Fourier Transform
-type STFTConfig struct {
-	WindowSize   int           `json:"window_size"`
-	HopSize      int           `json:"hop_size"`
-	WindowType   WindowType    `json:"window_type"`
-	WindowConfig *WindowConfig `json:"window_config,omitempty"`
-	OverlapRatio float64       `json:"overlap_ratio"` // Alternative to HopSize
-	ZeroPadding  int           `json:"zero_padding"`  // Additional zero padding
 }
 
 // SpectrogramResult holds the result of STFT analysis
@@ -66,240 +56,74 @@ func NewSpectralAnalyzer(sampleRate int) *SpectralAnalyzer {
 	}
 }
 
-// DefaultSTFTConfig returns default STFT configuration
-func DefaultSTFTConfig() *STFTConfig {
-	return &STFTConfig{
-		WindowSize:   2048,
-		HopSize:      512, // 75% overlap
-		WindowType:   WindowHann,
-		OverlapRatio: 0.75,
-		ZeroPadding:  0,
-	}
-}
-
-// ContentOptimizedSTFTConfig returns STFT config optimized for content type
-func ContentOptimizedSTFTConfig(contentType config.ContentType) *STFTConfig {
-	stftConfig := DefaultSTFTConfig()
-
-	switch contentType {
-	case config.ContentMusic:
-		stftConfig.WindowSize = 2048
-		stftConfig.HopSize = 512
-		stftConfig.WindowType = WindowBlackman // Better for harmonic content
-
-	case config.ContentNews, config.ContentTalk:
-		stftConfig.WindowSize = 1024 // Shorter window for speech
-		stftConfig.HopSize = 256
-		stftConfig.WindowType = WindowHamming // Standard for speech
-
-	case config.ContentSports:
-		stftConfig.WindowSize = 1024 // Shorter for dynamic content
-		stftConfig.HopSize = 256
-		stftConfig.WindowType = WindowHann // General purpose
-
-	case config.ContentMixed, config.ContentUnknown:
-		// Use defaults - balanced approach
-		stftConfig.WindowType = WindowHann
-	}
-
-	return stftConfig
-}
-
-// STFT computes Short-Time Fourier Transform
-func (sa *SpectralAnalyzer) STFT(signal []float64, config *STFTConfig) (*SpectrogramResult, error) {
-	if config == nil {
-		config = DefaultSTFTConfig()
+// ComputeFFT computes FFT and returns a SpectrogramResult with both complex and magnitude/phase data
+// This is a single-frame "spectrogram" - useful for simple FFT analysis
+func (sa *SpectralAnalyzer) ComputeFFT(signal []float64) (*SpectrogramResult, error) {
+	if len(signal) == 0 {
+		return nil, fmt.Errorf("empty signal")
 	}
 
 	logger := sa.logger.WithFields(logging.Fields{
-		"function":      "STFT",
+		"function":      "ComputeFFT",
 		"signal_length": len(signal),
-		"window_size":   config.WindowSize,
-		"hop_size":      config.HopSize,
-		"window_type":   config.WindowType,
 	})
 
-	logger.Debug("Starting STFT computation")
+	logger.Debug("Computing FFT")
 
-	if len(signal) < config.WindowSize {
-		return nil, fmt.Errorf("signal length (%d) is shorter than window size (%d)",
-			len(signal), config.WindowSize)
-	}
+	// Compute FFT
+	fftResult := sa.FFT(signal)
 
-	// Generate window function
-	windowConfig := &WindowConfig{
-		Type:      config.WindowType,
-		Size:      config.WindowSize,
-		Normalize: true,
-		Symmetric: true,
-	}
-	if config.WindowConfig != nil {
-		windowConfig = config.WindowConfig
-	}
+	// Only keep positive frequencies (including DC and Nyquist)
+	freqBins := len(fftResult)/2 + 1
+	freqBins = min(len(fftResult), freqBins)
 
-	window, err := sa.windowGenerator.Generate(windowConfig)
-	if err != nil {
-		logger.Error(err, "Failed to generate window function")
-		return nil, fmt.Errorf("failed to generate window: %w", err)
-	}
+	// Create single-frame result matrices
+	magnitude := make([][]float64, 1)
+	phase := make([][]float64, 1)
+	complexSpectrum := make([][]complex128, 1)
 
-	// Calculate number of frames
-	hopSize := config.HopSize
-	if hopSize == 0 {
-		hopSize = int(float64(config.WindowSize) * (1.0 - config.OverlapRatio))
-	}
+	magnitude[0] = make([]float64, freqBins)
+	phase[0] = make([]float64, freqBins)
+	complexSpectrum[0] = make([]complex128, freqBins)
 
-	numFrames := (len(signal)-config.WindowSize)/hopSize + 1
-	if numFrames <= 0 {
-		return nil, fmt.Errorf("insufficient signal length for given hop size")
-	}
-
-	logger.Debug("STFT parameters calculated", logging.Fields{
-		"num_frames":         numFrames,
-		"effective_hop_size": hopSize,
-		"overlap_ratio":      1.0 - float64(hopSize)/float64(config.WindowSize),
-	})
-
-	// Prepare FFT size (with zero padding)
-	fftSize := config.WindowSize + config.ZeroPadding
-	if fftSize&(fftSize-1) != 0 {
-		// Round up to next power of 2 for efficient FFT
-		nextPow2 := 1
-		for nextPow2 < fftSize {
-			nextPow2 <<= 1
-		}
-		fftSize = nextPow2
-	}
-
-	freqBins := fftSize/2 + 1 // Only positive frequencies
-
-	// Allocate result matrices
-	magnitude := make([][]float64, numFrames)
-	phase := make([][]float64, numFrames)
-	complex_spectrogram := make([][]complex128, numFrames)
-
-	// Process each frame
-	for frame := range numFrames {
-		start := frame * hopSize
-		end := start + config.WindowSize
-
-		if end > len(signal) {
-			break
-		}
-
-		// Extract and window signal frame
-		frameSignal := signal[start:end]
-		windowedFrame, err := window.Apply(frameSignal)
-		if err != nil {
-			return nil, fmt.Errorf("failed to apply window to frame %d: %w", frame, err)
-		}
-
-		// Zero-pad if necessary
-		if fftSize > config.WindowSize {
-			paddedFrame := make([]float64, fftSize)
-			copy(paddedFrame, windowedFrame)
-			windowedFrame = paddedFrame
-		}
-
-		// Convert to complex for FFT
-		complexFrame := make([]complex128, len(windowedFrame))
-		for i, val := range windowedFrame {
-			complexFrame[i] = complex(val, 0)
-		}
-
-		// Compute FFT
-		fft := sa.FFT(complexFrame)
-
-		// Store results (only positive frequencies)
-		magnitude[frame] = make([]float64, freqBins)
-		phase[frame] = make([]float64, freqBins)
-		complex_spectrogram[frame] = make([]complex128, freqBins)
-
-		for i := range freqBins {
-			complex_spectrogram[frame][i] = fft[i]
-			magnitude[frame][i] = cmplx.Abs(fft[i])
-			phase[frame][i] = cmplx.Phase(fft[i])
-		}
+	// Extract magnitude and phase for positive frequencies
+	for i := 0; i < freqBins; i++ {
+		complexSpectrum[0][i] = fftResult[i]
+		magnitude[0][i] = cmplx.Abs(fftResult[i])
+		phase[0][i] = cmplx.Phase(fftResult[i])
 	}
 
 	result := &SpectrogramResult{
 		Magnitude:      magnitude,
 		Phase:          phase,
-		Complex:        complex_spectrogram,
-		TimeFrames:     numFrames,
+		Complex:        complexSpectrum,
+		TimeFrames:     1, // Single frame
 		FreqBins:       freqBins,
 		SampleRate:     sa.sampleRate,
-		WindowSize:     config.WindowSize,
-		HopSize:        hopSize,
-		FreqResolution: float64(sa.sampleRate) / float64(fftSize),
-		TimeResolution: float64(hopSize) / float64(sa.sampleRate),
+		WindowSize:     len(signal),                                   // Original signal length
+		HopSize:        len(signal),                                   // No overlap for single frame
+		FreqResolution: float64(sa.sampleRate) / float64(len(signal)), // Frequency resolution
+		TimeResolution: float64(len(signal)) / float64(sa.sampleRate), // Duration of the signal
 	}
 
-	logger.Info("STFT computation completed", logging.Fields{
-		"time_frames":     result.TimeFrames,
+	logger.Debug("FFT computation completed", logging.Fields{
 		"freq_bins":       result.FreqBins,
 		"freq_resolution": result.FreqResolution,
-		"time_resolution": result.TimeResolution,
+		"signal_duration": result.TimeResolution,
 	})
 
 	return result, nil
 }
 
-// FFT computes Fast Fourier Transform using Cooley-Tukey algorithm
-func (sa *SpectralAnalyzer) FFT(x []complex128) []complex128 {
-	N := len(x)
-
-	// Base case
-	if N <= 1 {
-		return x
+// FFT computes Fast Fourier Transform using mjibson/go-dsp
+// Takes []float64 input and returns []complex128 output - perfect for your fingerprinting library!
+func (sa *SpectralAnalyzer) FFT(x []float64) []complex128 {
+	if len(x) == 0 {
+		return []complex128{}
 	}
 
-	// Ensure N is power of 2 by zero-padding
-	if N&(N-1) != 0 {
-		nextPow2 := 1
-		for nextPow2 < N {
-			nextPow2 <<= 1
-		}
-		padded := make([]complex128, nextPow2)
-		copy(padded, x)
-		x = padded
-		N = nextPow2
-	}
-
-	return sa.fftRecursive(x)
-}
-
-// fftRecursive performs recursive FFT implementation
-func (sa *SpectralAnalyzer) fftRecursive(x []complex128) []complex128 {
-	N := len(x)
-
-	if N <= 1 {
-		return x
-	}
-
-	// Divide
-	even := make([]complex128, N/2)
-	odd := make([]complex128, N/2)
-
-	for i := 0; i < N/2; i++ {
-		even[i] = x[2*i]
-		odd[i] = x[2*i+1]
-	}
-
-	// Conquer
-	evenFFT := sa.fftRecursive(even)
-	oddFFT := sa.fftRecursive(odd)
-
-	// Combine
-	result := make([]complex128, N)
-
-	for k := 0; k < N/2; k++ {
-		t := cmplx.Exp(complex(0, -2*math.Pi*float64(k)/float64(N))) * oddFFT[k]
-		result[k] = evenFFT[k] + t
-		result[k+N/2] = evenFFT[k] - t
-	}
-
-	return result
+	// mjibson/go-dsp handles all sizes efficiently, including non-power-of-2
+	return fft.FFTReal(x)
 }
 
 // ComputePowerSpectrum computes power spectral density
@@ -680,3 +504,4 @@ func (sa *SpectralAnalyzer) ComputeSpectralFlux(spectrogram *SpectrogramResult) 
 
 	return flux
 }
+

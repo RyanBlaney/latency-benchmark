@@ -42,3 +42,52 @@ const (
 	ContentMixed   ContentType = "mixed"
 	ContentUnknown ContentType = "unknown"
 )
+
+// ComparisonConfig configures fingerprint comparison (simplified for users)
+type ComparisonConfig struct {
+	// Basic settings
+	SimilarityThreshold float64 `json:"similarity_threshold"` // 0.0-1.0, main threshold users care about
+	Method              string  `json:"method"`               // "auto", "precise", "fast"
+
+	// Advanced settings (optional)
+	EnableContentFilter   bool `json:"enable_content_filter"`   // Filter by content type
+	MaxCandidates         int  `json:"max_candidates"`          // Limit results
+	EnableDetailedMetrics bool `json:"enable_detailed_metrics"` // Calculate extra metrics
+}
+
+// DefaultComparisonConfig returns sensible defaults for comparison
+func DefaultComparisonConfig() *ComparisonConfig {
+	return &ComparisonConfig{
+		SimilarityThreshold:   0.75,   // 75% similarity required
+		Method:                "auto", // Let system choose best method
+		EnableContentFilter:   true,
+		MaxCandidates:         50,
+		EnableDetailedMetrics: false, // Keep it simple by default
+	}
+}
+
+// GetContentOptimizedComparisonConfig returns optimized comparison config for content type
+func GetContentOptimizedComparisonConfig(contentType ContentType) *ComparisonConfig {
+	config := DefaultComparisonConfig()
+
+	switch contentType {
+	case ContentMusic:
+		config.SimilarityThreshold = 0.80 // Higher threshold for music
+		config.Method = "precise"
+
+	case ContentNews, ContentTalk:
+		config.SimilarityThreshold = 0.70 // Lower threshold for speech
+		config.Method = "fast"
+
+	case ContentSports:
+		config.SimilarityThreshold = 0.75
+		config.Method = "auto"
+
+	case ContentMixed:
+		config.SimilarityThreshold = 0.72
+		config.Method = "auto"
+		config.EnableDetailedMetrics = true // More analysis for mixed content
+	}
+
+	return config
+}
