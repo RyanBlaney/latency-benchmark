@@ -26,7 +26,7 @@ type AudioFingerprint struct {
 	SampleRate       int                           `json:"sample_rate"`
 	Channels         int                           `json:"channels"`
 	Features         *extractors.ExtractedFeatures `json:"features"`
-	CompactHash      string                        `json:"compact_hash"`
+	CompactHash      string                        `json:"compact_hash"` // shortened and quantized
 	DetailedHash     string                        `json:"detailed_hash"`
 	PerceptualHashes map[string]string             `json:"perceptual_hash"`
 	Metadata         map[string]any                `json:"metadata,omitempty"`
@@ -41,6 +41,7 @@ type FingerprintConfig struct {
 	PerceptualHashTypes []PerceptualHashType       `json:"perceptual_hash_types"`
 	FeatureConfig       *config.FeatureConfig      `json:"feature_config"`
 	ContentConfig       *config.ContentAwareConfig `json:"content_config"`
+	Quantization        int                        `json:"quantization"` // How many decimals to quantize features (only affects compact hash)
 }
 
 // HashResolution defines the resolution of the hash
@@ -125,6 +126,7 @@ func DefaultFingerprintConfig() *FingerprintConfig {
 			DefaultContentType:     config.ContentUnknown,
 			AutoDetectThreshold:    2.0,
 		},
+		Quantization: 3,
 	}
 }
 
@@ -325,26 +327,26 @@ func (fg *FingerprintGenerator) extractCompactFeatures(features *extractors.Extr
 	// MFCC (most important for audio similarity)
 	if len(features.MFCC) > 0 {
 		// Use mean and std of first few MFCC coefficients
-		compactFeatures["mfcc_mean"] = calculateMFCCStats(features.MFCC, "mean")
-		compactFeatures["mfcc_std"] = calculateMFCCStats(features.MFCC, "std")
+		compactFeatures["mfcc_mean"] = quantizeSlice(calculateMFCCStats(features.MFCC, "mean"), fg.config.Quantization)
+		compactFeatures["mfcc_std"] = quantizeSlice(calculateMFCCStats(features.MFCC, "std"), fg.config.Quantization)
 	}
 
 	// Spectral features summary
 	if features.SpectralFeatures != nil {
-		compactFeatures["spectral_centroid_mean"] = calculateMean(features.SpectralFeatures.SpectralCentroid)
-		compactFeatures["spectral_rolloff_mean"] = calculateMean(features.SpectralFeatures.SpectralRolloff)
-		compactFeatures["spectral_flatness_mean"] = calculateMean(features.SpectralFeatures.SpectralFlatness)
+		compactFeatures["spectral_centroid_mean"] = quantizeFloat(calculateMean(features.SpectralFeatures.SpectralCentroid), fg.config.Quantization)
+		compactFeatures["spectral_rolloff_mean"] = quantizeFloat(calculateMean(features.SpectralFeatures.SpectralRolloff), fg.config.Quantization)
+		compactFeatures["spectral_flatness_mean"] = quantizeFloat(calculateMean(features.SpectralFeatures.SpectralFlatness), fg.config.Quantization)
 	}
 
 	// Chroma features (for harmonic content)
 	if len(features.ChromaFeatures) > 0 {
-		compactFeatures["chroma_mean"] = calculateChromaStats(features.ChromaFeatures, "mean")
+		compactFeatures["chroma_mean"] = quantizeSlice(calculateChromaStats(features.ChromaFeatures, "mean"), fg.config.Quantization)
 	}
 
 	// Temporal features summary
 	if features.TemporalFeatures != nil {
-		compactFeatures["dynamic_range"] = features.TemporalFeatures.DynamicRange
-		compactFeatures["silence_ratio"] = features.TemporalFeatures.SilenceRatio
+		compactFeatures["dynamic_range"] = quantizeFloat(features.TemporalFeatures.DynamicRange, fg.config.Quantization)
+		compactFeatures["silence_ratio"] = quantizeFloat(features.TemporalFeatures.SilenceRatio, fg.config.Quantization)
 	}
 
 	// Convert to JSON for consistent hashing

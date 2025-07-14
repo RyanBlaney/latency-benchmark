@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// StreamType represents the type of an audio stream
+// StreamType represents the type of an audio stream ('hls', 'icecast', 'unsupported')
 type StreamType string
 
 const (
@@ -73,6 +73,9 @@ type StreamHandler interface {
 	// ReadAudio reads audio data from the stream
 	ReadAudio(ctx context.Context) (*AudioData, error)
 
+	// ReadAudio reads a fixed length of audio data from the stream
+	ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*AudioData, error)
+
 	// GetStats returns current streaming statistics
 	GetStats() *StreamStats
 
@@ -85,10 +88,10 @@ type StreamHandler interface {
 
 // StreamDetector defines the interface for detecting stream types
 type StreamDetector interface {
-	// DetectType determines the stream type for URL and headers
+	// DetectType determines the stream type for URL, headers, and stream parsing
 	DetectType(ctx context.Context, url string) (StreamType, error)
 
-	// ProbeStream performs a lightweight probe to gather basic info
+	// ProbeStream performs a lightweight probe to gather basic info. Requires the stream to support HTTP headers
 	ProbeStream(ctx context.Context, url string) (*StreamMetadata, error)
 }
 

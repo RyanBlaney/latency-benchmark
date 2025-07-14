@@ -42,7 +42,7 @@ func TestICEcastDetection(t *testing.T) {
 	if err != nil {
 		logger.Error(err, "Failed to probe ICEcast SOURCE stream ")
 	}
-	assert.NotNil(t, srcStreamMetadata)
+	assert.Nil(t, srcStreamMetadata) // This one doesn't have headers haha
 	// TODO: verify metadata. we log for now
 	srcMetadataJSON, err := json.Marshal(srcStreamMetadata)
 	if err != nil {

@@ -50,13 +50,20 @@ func NewDetectorWithConfig(config *DetectionConfig) *Detector {
 
 // DetectType determines if the stream is ICEcast using URL patterns and headers
 func DetectType(ctx context.Context, client *http.Client, streamURL string) (common.StreamType, error) {
+	detector := NewDetector()
+	config := DefaultConfig()
+
 	// First try URL-based detection (fastest)
-	if DetectFromURL(streamURL) == common.StreamTypeICEcast {
+	if detector.DetectFromURL(streamURL) == common.StreamTypeICEcast {
 		return common.StreamTypeICEcast, nil
 	}
 
 	// Fall back to header-based detection
-	if DetectFromHeaders(ctx, client, streamURL) == common.StreamTypeICEcast {
+	if detector.DetectFromHeaders(ctx, streamURL, config.HTTP) == common.StreamTypeICEcast {
+		return common.StreamTypeICEcast, nil
+	}
+
+	if detector.IsValidICEcastContent(ctx, streamURL, config.HTTP) {
 		return common.StreamTypeICEcast, nil
 	}
 
@@ -273,16 +280,14 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 			},
 		}
 	}
-
 	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
 	if err != nil {
-		logging.Debug("Error creating request for HTTP headers", logging.Fields{
+		logging.Error(err, "Error creating request for HTTP headers", logging.Fields{
 			"url":   streamURL,
 			"error": err.Error(),
 		})
 		return common.StreamTypeUnsupported
 	}
-
 	// Set headers from configuration
 	if httpConfig != nil {
 		headers := httpConfig.GetHTTPHeaders()
@@ -295,10 +300,9 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 		req.Header.Set("Accept", "audio/*")
 		req.Header.Set("Icy-MetaData", "1")
 	}
-
 	resp, err := client.Do(req)
 	if err != nil {
-		logging.Debug("Error getting response from client", logging.Fields{
+		logging.Error(err, "Error getting response from client", logging.Fields{
 			"url":   streamURL,
 			"error": err.Error(),
 		})
@@ -306,13 +310,32 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 	}
 	defer resp.Body.Close()
 
+	// Check for ICEcast-specific headers FIRST, regardless of status code
+	server := resp.Header.Get("Server")
+	serverLower := strings.ToLower(server)
+	logging.Debug("Checking for ICEcast", logging.Fields{
+		"server_lower":     serverLower,
+		"contains_icecast": strings.Contains(serverLower, "icecast"),
+	})
+
+	if strings.Contains(serverLower, "icecast") ||
+		resp.Header.Get("icy-name") != "" ||
+		resp.Header.Get("icy-description") != "" ||
+		resp.Header.Get("icy-genre") != "" ||
+		resp.Header.Get("icy-br") != "" ||
+		resp.Header.Get("icy-metaint") != "" {
+		logging.Debug("Detected ICEcast stream", logging.Fields{
+			"url": streamURL,
+		})
+		return common.StreamTypeICEcast
+	}
+
 	// Check required headers if configured
 	for _, requiredHeader := range d.config.RequiredHeaders {
 		if resp.Header.Get(requiredHeader) == "" {
 			return common.StreamTypeUnsupported
 		}
 	}
-
 	// Check content type against configured patterns
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	for _, pattern := range d.config.ContentTypes {
@@ -321,17 +344,9 @@ func (d *Detector) DetectFromHeaders(ctx context.Context, streamURL string, http
 		}
 	}
 
-	// Check for ICEcast-specific headers
-	server := strings.ToLower(resp.Header.Get("Server"))
-	if strings.Contains(server, "icecast") ||
-		resp.Header.Get("icy-name") != "" ||
-		resp.Header.Get("icy-description") != "" ||
-		resp.Header.Get("icy-genre") != "" ||
-		resp.Header.Get("icy-br") != "" ||
-		resp.Header.Get("icy-metaint") != "" {
-		return common.StreamTypeICEcast
-	}
-
+	logging.Debug("No ICEcast detection criteria met", logging.Fields{
+		"url": streamURL,
+	})
 	return common.StreamTypeUnsupported
 }
 
@@ -372,8 +387,8 @@ func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, 
 		req.Header.Set("Icy-MetaData", "1")
 	}
 
-	// Set range header to only read a small amount of data
-	req.Header.Set("Range", "bytes=0-1023")
+	// Don't use Range header - ICEcast streams don't support it
+	// req.Header.Set("Range", "bytes=0-1023")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -381,25 +396,9 @@ func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, 
 	}
 	defer resp.Body.Close()
 
-	// Accept both 200 (full content) and 206 (partial content)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+	// Accept 200 status (ICEcast streams return 200, not 206)
+	if resp.StatusCode != http.StatusOK {
 		return false
-	}
-
-	// Verify content type indicates audio
-	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if contentType != "" && !strings.HasPrefix(contentType, "audio/") {
-		// Check if it's a known ICEcast content type
-		isValidContentType := false
-		for _, validType := range d.config.ContentTypes {
-			if strings.Contains(contentType, strings.ToLower(validType)) {
-				isValidContentType = true
-				break
-			}
-		}
-		if !isValidContentType {
-			return false
-		}
 	}
 
 	// Read a small amount of data to verify it's actually streaming
@@ -412,6 +411,7 @@ func (d *Detector) IsValidICEcastContent(ctx context.Context, streamURL string, 
 	if n > 0 {
 		return isValidMP3Data(buffer[:n])
 	}
+
 	return false
 }
 

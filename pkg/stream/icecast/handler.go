@@ -304,6 +304,210 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	return audioData, nil
 }
 
+// ReadAudioWithDuration reads audio data with a specified duration
+// For ICEcast streams, this accumulates audio data over time until target duration is reached
+func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
+	if !h.connected || h.response == nil {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "not connected", nil)
+	}
+
+	logger := logging.WithFields(logging.Fields{
+		"component":       "icecast_handler",
+		"function":        "ReadAudioWithDuration",
+		"target_duration": duration.Seconds(),
+	})
+
+	// Get metadata to determine sample rate and channels
+	metadata, err := h.GetMetadata()
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeMetadata, "failed to get metadata", err)
+	}
+
+	sampleRate := metadata.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 44100 // Default fallback
+	}
+
+	channels := metadata.Channels
+	if channels <= 0 {
+		channels = 2 // Default to stereo
+	}
+
+	// Calculate target samples needed for the duration
+	targetSamples := int(float64(sampleRate) * duration.Seconds())
+	if channels > 1 {
+		targetSamples *= channels // Adjust for multiple channels
+	}
+
+	logger.Debug("Starting duration-based audio reading", logging.Fields{
+		"sample_rate":     sampleRate,
+		"channels":        channels,
+		"target_samples":  targetSamples,
+		"target_duration": duration.Seconds(),
+	})
+
+	// Create context with timeout slightly longer than target duration
+	readTimeout := duration + (5 * time.Second)
+	readCtx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+
+	// Accumulate audio data
+	var allPCMSamples []float64
+	var totalDuration time.Duration
+	startTime := time.Now()
+	readAttempts := 0
+	maxAttempts := int(duration.Seconds()) * 10 // Allow up to 10 attempts per second
+
+	for len(allPCMSamples) < targetSamples && readAttempts < maxAttempts {
+		select {
+		case <-readCtx.Done():
+			logger.Warn("Duration-based read timed out", logging.Fields{
+				"collected_samples": len(allPCMSamples),
+				"target_samples":    targetSamples,
+				"elapsed_time":      time.Since(startTime).Seconds(),
+			})
+			if len(allPCMSamples) == 0 {
+				return nil, readCtx.Err()
+			}
+			break // Use what we have
+		default:
+		}
+
+		readAttempts++
+
+		// Use configured buffer size for reading
+		bufferSize := h.config.Audio.BufferSize
+		if bufferSize <= 0 {
+			bufferSize = 4096 // Fallback default
+		}
+
+		buffer := make([]byte, bufferSize)
+
+		// Handle ICY metadata if present and configured
+		var audioBytes []byte
+		if h.icyMetaInt > 0 && h.config.Audio.HandleICYMeta {
+			audioBytes, err = h.readWithICYMetadata(buffer)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				logger.Warn("Error reading with ICY metadata", logging.Fields{
+					"error": err.Error(),
+				})
+				continue
+			}
+		} else {
+			// Simple read without ICY metadata handling
+			n, err := h.response.Body.Read(buffer)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				if err == context.DeadlineExceeded || err == context.Canceled {
+					break
+				}
+				logger.Warn("Error reading audio data", logging.Fields{
+					"error": err.Error(),
+				})
+				continue
+			}
+			if n == 0 {
+				break
+			}
+			audioBytes = buffer[:n]
+		}
+
+		if len(audioBytes) == 0 {
+			continue
+		}
+
+		// Convert to PCM
+		pcmSamples, err := h.convertToPCM(audioBytes)
+		if err != nil {
+			logger.Warn("Failed to convert audio to PCM", logging.Fields{
+				"error": err.Error(),
+			})
+			continue
+		}
+
+		// Accumulate samples
+		allPCMSamples = append(allPCMSamples, pcmSamples...)
+
+		// Update statistics
+		h.stats.BytesReceived += int64(len(audioBytes))
+
+		// Calculate current duration
+		currentSamples := len(allPCMSamples)
+		if channels > 1 {
+			currentSamples = currentSamples / channels
+		}
+		totalDuration = time.Duration(currentSamples) * time.Second / time.Duration(sampleRate)
+
+		logger.Debug("Accumulated audio data", logging.Fields{
+			"current_samples":  len(allPCMSamples),
+			"target_samples":   targetSamples,
+			"current_duration": totalDuration.Seconds(),
+			"target_duration":  duration.Seconds(),
+			"read_attempts":    readAttempts,
+		})
+
+		// Check if we've reached the target duration
+		if totalDuration >= duration {
+			break
+		}
+
+		// Small delay to avoid busy waiting
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Trim to exact target duration if we have more than needed
+	if len(allPCMSamples) > targetSamples {
+		allPCMSamples = allPCMSamples[:targetSamples]
+		totalDuration = duration
+	}
+
+	// Calculate final duration based on actual samples
+	if totalDuration == 0 {
+		actualSamples := len(allPCMSamples)
+		if channels > 1 {
+			actualSamples = actualSamples / channels
+		}
+		totalDuration = time.Duration(actualSamples) * time.Second / time.Duration(sampleRate)
+	}
+
+	// Calculate average bitrate
+	elapsed := time.Since(startTime)
+	if elapsed > 0 {
+		h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
+	}
+
+	// Create a copy of metadata to avoid concurrent modification
+	metadataCopy := *metadata
+	metadataCopy.Timestamp = time.Now()
+
+	audioData := &common.AudioData{
+		PCM:        allPCMSamples,
+		SampleRate: sampleRate,
+		Channels:   channels,
+		Duration:   totalDuration,
+		Timestamp:  time.Now(),
+		Metadata:   &metadataCopy,
+	}
+
+	logger.Info("ICEcast duration-based audio extraction completed", logging.Fields{
+		"actual_duration": audioData.Duration.Seconds(),
+		"samples":         len(audioData.PCM),
+		"sample_rate":     audioData.SampleRate,
+		"channels":        audioData.Channels,
+		"read_attempts":   readAttempts,
+		"extraction_time": time.Since(startTime).Seconds(),
+	})
+
+	return audioData, nil
+}
+
 // readWithICYMetadata handles reading audio data with embedded ICY metadata
 func (h *Handler) readWithICYMetadata(buffer []byte) ([]byte, error) {
 	var audioData []byte

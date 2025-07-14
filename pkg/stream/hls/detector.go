@@ -45,13 +45,21 @@ func NewDetectorWithConfig(config *DetectionConfig) *Detector {
 
 // DetectType determines if the stream is HLS using URL patterns and headers
 func DetectType(ctx context.Context, client *http.Client, streamURL string) (common.StreamType, error) {
+	detector := NewDetector()
+	config := DefaultConfig()
+
 	// First try URL-based detection (fastest)
-	if DetectFromURL(streamURL) == common.StreamTypeHLS {
+	if detector.DetectFromURL(streamURL) == common.StreamTypeHLS {
 		return common.StreamTypeHLS, nil
 	}
 
 	// Fall back to header-based detection
-	if DetectFromHeaders(ctx, client, streamURL) == common.StreamTypeHLS {
+	if detector.DetectFromHeaders(ctx, streamURL, config.HTTP) == common.StreamTypeHLS {
+		return common.StreamTypeHLS, nil
+	}
+
+	// Content validation as last resort (most expensive)
+	if detector.IsValidHLSContent(ctx, streamURL, config.HTTP, config.Parser) {
 		return common.StreamTypeHLS, nil
 	}
 

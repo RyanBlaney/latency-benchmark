@@ -230,7 +230,204 @@ func (h *Handler) GetMetadata() (*common.StreamMetadata, error) {
 	return h.metadata, nil
 }
 
-// ReadAudio reads audio data from the HLS stream
+// ResolveMasterPlaylist resolves a master playlist to a media playlist
+func (h *Handler) ResolveMasterPlaylist(ctx context.Context, masterPlaylist *M3U8Playlist) (*M3U8Playlist, error) {
+	if !masterPlaylist.IsMaster || len(masterPlaylist.Variants) == 0 {
+		return masterPlaylist, nil // Already a media playlist or no variants
+	}
+
+	logger := logging.WithFields(logging.Fields{
+		"component": "hls_handler",
+		"function":  "ResolveMasterPlaylist",
+		"variants":  len(masterPlaylist.Variants),
+	})
+
+	// Select the best variant based on configuration
+	selectedVariant := h.selectBestVariant(masterPlaylist.Variants)
+	if selectedVariant == nil {
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeInvalidFormat, "no suitable variant found", nil)
+	}
+
+	logger.Debug("Selected variant", logging.Fields{
+		"variant_uri": selectedVariant.URI,
+		"bandwidth":   selectedVariant.Bandwidth,
+		"resolution":  selectedVariant.Resolution,
+		"codecs":      selectedVariant.Codecs,
+	})
+
+	// Resolve the variant URL
+	variantURL := h.resolveURL(selectedVariant.URI)
+
+	// Parse the variant playlist (should be a media playlist)
+	mediaPlaylist, err := h.parsePlaylist(ctx, variantURL)
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeHLS, variantURL,
+			common.ErrCodeConnection, "failed to parse variant playlist", err)
+	}
+
+	if mediaPlaylist.IsMaster {
+		return nil, common.NewStreamError(common.StreamTypeHLS, variantURL,
+			common.ErrCodeInvalidFormat, "variant playlist is still a master playlist", nil)
+	}
+
+	logger.Info("Master playlist resolved to media playlist", logging.Fields{
+		"segments": len(mediaPlaylist.Segments),
+		"is_live":  mediaPlaylist.IsLive,
+	})
+
+	return mediaPlaylist, nil
+}
+
+// ReadAudioWithDuration reads audio data with a specified duration
+func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
+	if !h.connected {
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "not connected", nil)
+	}
+
+	if h.playlist == nil {
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeInvalidFormat, "no playlist available", nil)
+	}
+
+	logger := logging.WithFields(logging.Fields{
+		"component":       "hls_handler",
+		"function":        "ReadAudioWithDuration",
+		"target_duration": duration.Seconds(),
+	})
+
+	// Resolve master playlist to media playlist if needed
+	mediaPlaylist := h.playlist
+	if h.playlist.IsMaster {
+		resolvedPlaylist, err := h.ResolveMasterPlaylist(ctx, h.playlist)
+		if err != nil {
+			return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+				common.ErrCodeInvalidFormat, "failed to resolve master playlist", err)
+		}
+		mediaPlaylist = resolvedPlaylist
+	}
+
+	// Create downloader with custom duration configuration
+	downloadConfig := &DownloadConfig{
+		MaxSegments:      10,
+		SegmentTimeout:   10 * time.Second,
+		MaxRetries:       3,
+		CacheSegments:    true,
+		TargetDuration:   duration, // Use the specified duration
+		PreferredBitrate: 128,
+		OutputSampleRate: 44100,
+		OutputChannels:   1,
+		NormalizePCM:     true,
+		ResampleQuality:  "medium",
+		CleanupTempFiles: true,
+	}
+
+	// Override with existing config values if available
+	if h.config != nil && h.config.Audio != nil {
+		if h.config.Audio.MaxSegments > 0 {
+			downloadConfig.MaxSegments = h.config.Audio.MaxSegments
+		}
+		// Always use the specified duration, not config duration
+		downloadConfig.TargetDuration = duration
+	}
+
+	downloader := NewAudioDownloader(h.client, downloadConfig, h.config)
+
+	// Set the base URL for resolving relative segment URLs
+	downloader.SetBaseURL(h.url)
+
+	defer downloader.Close()
+
+	logger.Debug("Starting audio download with custom duration", logging.Fields{
+		"playlist_segments": len(mediaPlaylist.Segments),
+		"is_live":           mediaPlaylist.IsLive,
+		"target_duration":   duration.Seconds(),
+	})
+
+	audioData, err := downloader.DownloadAudioSample(ctx, mediaPlaylist, duration)
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeDecoding, "failed to download audio sample", err)
+	}
+
+	// Enrich metadata from playlist/stream info
+	h.enrichAudioMetadata(audioData)
+
+	// Update stats
+	h.stats.SegmentsReceived = downloader.GetDownloadStats().SegmentsDownloaded
+	h.stats.BytesReceived = downloader.GetDownloadStats().BytesDownloaded
+
+	logger.Info("Audio download completed", logging.Fields{
+		"actual_duration": audioData.Duration.Seconds(),
+		"samples":         len(audioData.PCM),
+		"sample_rate":     audioData.SampleRate,
+		"channels":        audioData.Channels,
+	})
+
+	return audioData, nil
+}
+
+// selectBestVariant selects the best variant based on configuration
+func (h *Handler) selectBestVariant(variants []M3U8Variant) *M3U8Variant {
+	if len(variants) == 0 {
+		return nil
+	}
+
+	// If only one variant, use it
+	if len(variants) == 1 {
+		return &variants[0]
+	}
+
+	// Get preferred bitrate from config
+	preferredBitrate := 128000 // Default 128kbps
+	if h.config != nil && h.downloader != nil && h.downloader.config != nil {
+		preferredBitrate = h.downloader.config.PreferredBitrate * 1000 // Convert kbps to bps
+	}
+
+	var bestVariant *M3U8Variant
+	var bestScore int
+
+	for i := range variants {
+		variant := &variants[i]
+		score := h.calculateVariantScore(variant, preferredBitrate)
+
+		if bestVariant == nil || score > bestScore {
+			bestVariant = variant
+			bestScore = score
+		}
+	}
+
+	return bestVariant
+}
+
+// calculateVariantScore calculates a score for variant selection
+func (h *Handler) calculateVariantScore(variant *M3U8Variant, preferredBitrate int) int {
+	score := 0
+
+	// Prefer variants closer to preferred bitrate
+	bitrateDiff := variant.Bandwidth - preferredBitrate
+	if bitrateDiff < 0 {
+		bitrateDiff = -bitrateDiff
+	}
+
+	// Lower difference = higher score
+	score += 1000000 - bitrateDiff
+
+	// Prefer audio-only variants (no resolution)
+	if variant.Resolution == "" {
+		score += 10000
+	}
+
+	// Prefer AAC codec
+	if strings.Contains(strings.ToLower(variant.Codecs), "mp4a") {
+		score += 1000
+	}
+
+	return score
+}
+
+// ReadAudio reads the audio stream and returns the resulting `AudioData`
 func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	if !h.connected {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
@@ -242,15 +439,28 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 			common.ErrCodeInvalidFormat, "no playlist available", nil)
 	}
 
+	// Resolve master playlist to media playlist if needed
+	mediaPlaylist := h.playlist
+	if h.playlist.IsMaster {
+		resolvedPlaylist, err := h.ResolveMasterPlaylist(ctx, h.playlist)
+		if err != nil {
+			return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+				common.ErrCodeInvalidFormat, "failed to resolve master playlist", err)
+		}
+		mediaPlaylist = resolvedPlaylist
+	}
+
 	// Initialize downloader if not exists
 	if h.downloader == nil {
 		h.downloader = NewAudioDownloader(h.client, nil, h.config)
+		// Set the base URL for resolving relative segment URLs
+		h.downloader.SetBaseURL(h.url)
 	}
 
 	// Download audio sample using configured duration
 	targetDuration := h.config.Audio.SampleDuration
 
-	audioData, err := h.downloader.DownloadAudioSample(ctx, h.playlist, targetDuration)
+	audioData, err := h.downloader.DownloadAudioSample(ctx, mediaPlaylist, targetDuration)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
 			common.ErrCodeDecoding, "failed to download audio sample", err)

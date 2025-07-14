@@ -168,3 +168,16 @@ func calculateChromaStats(chroma [][]float64, statType string) []float64 {
 
 	return stats
 }
+
+func quantizeFloat(val float64, decimals int) float64 {
+	factor := math.Pow(10, float64(decimals))
+	return math.Round(val*factor) / factor
+}
+
+func quantizeSlice(vals []float64, decimals int) []float64 {
+	result := make([]float64, len(vals))
+	for i, v := range vals {
+		result[i] = quantizeFloat(v, decimals)
+	}
+	return result
+}

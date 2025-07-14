@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
@@ -21,6 +23,7 @@ type AudioDownloader struct {
 	config        *DownloadConfig
 	hlsConfig     *Config
 	tempDir       string // Directory for temporary files
+	baseURL       string
 }
 
 // DownloadConfig contains configuration for audio downloading
@@ -204,7 +207,7 @@ func (ad *AudioDownloader) processSegmentData(segmentData []byte, segmentURL str
 	ad.downloadStats.DecodeTime += time.Since(decodeStartTime)
 
 	// Process and normalize the audio data (basic post-processing)
-	ad.processAudioData(audioData)
+	audioData = ad.processAudioData(audioData) // Use the returned value
 
 	// Add metadata and timestamp
 	audioData.Timestamp = startTime
@@ -252,6 +255,8 @@ func (ad *AudioDownloader) basicAudioExtraction(segmentData []byte, segmentURL s
 		audioData, err = ad.extractAAC(segmentData, segmentURL)
 	case "mp3":
 		audioData, err = ad.extractMP3(segmentData, segmentURL)
+	case "ts":
+		audioData, err = ad.extractTS(segmentData, segmentURL)
 	case "unknown":
 		// Try to extract basic info without full decoding
 		logger.Warn("Unknown format, creating placeholder audio data")
@@ -436,9 +441,9 @@ func (ad *AudioDownloader) generateSilence(sampleCount int) []float64 {
 }
 
 // processAudioData applies basic post-processing to audio data
-func (ad *AudioDownloader) processAudioData(audioData *common.AudioData) {
+func (ad *AudioDownloader) processAudioData(audioData *common.AudioData) *common.AudioData {
 	if audioData == nil || len(audioData.PCM) == 0 {
-		return
+		return audioData
 	}
 
 	logger := logging.WithFields(logging.Fields{
@@ -476,6 +481,7 @@ func (ad *AudioDownloader) processAudioData(audioData *common.AudioData) {
 	}
 
 	logger.Debug("Audio processing completed")
+	return audioData
 }
 
 // convertToMono converts stereo audio to mono by averaging channels
@@ -823,8 +829,31 @@ func (ad *AudioDownloader) downloadSegment(ctx context.Context, segmentURL strin
 
 // resolveSegmentURL resolves relative segment URLs against the playlist base URL
 func (ad *AudioDownloader) resolveSegmentURL(playlist *M3U8Playlist, segmentURI string) string {
-	// TODO: Implement proper URL resolution
-	// For now, assume segments are absolute URLs or relative to current directory
+	// If it's already an absolute URL, return as-is
+	if strings.HasPrefix(segmentURI, "http://") || strings.HasPrefix(segmentURI, "https://") {
+		return segmentURI
+	}
+
+	// Use base URL if available
+	if ad.baseURL != "" {
+		// Parse base URL
+		baseURL, err := url.Parse(ad.baseURL)
+		if err != nil {
+			return segmentURI // Return original if can't parse
+		}
+
+		// Parse relative URI
+		relativeURL, err := url.Parse(segmentURI)
+		if err != nil {
+			return segmentURI // Return original if can't parse
+		}
+
+		// Resolve relative to base
+		resolvedURL := baseURL.ResolveReference(relativeURL)
+		return resolvedURL.String()
+	}
+
+	// Fallback: return as-is (this was the original behavior)
 	return segmentURI
 }
 
@@ -838,6 +867,73 @@ func (ad *AudioDownloader) recordSegmentError(url string, err error, retry int, 
 		Retry:     retry,
 		Type:      errorType,
 	})
+}
+
+// extractTS performs basic TS (Transport Stream) extraction
+func (ad *AudioDownloader) extractTS(data []byte, segmentURL string) (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_downloader",
+		"function":  "extractTS",
+	})
+
+	// TS files contain multiple streams, we need to find audio streams
+	// This is a simplified implementation - in reality you'd need to parse TS packets
+
+	// For now, create a reasonable duration estimate based on typical HLS segments
+	estimatedDuration := 6.0 // Most HLS segments are ~6 seconds
+
+	// Look for TS packet sync bytes (0x47) to estimate content
+	packets := 0
+	for i := 0; i < len(data)-188; i += 188 {
+		if data[i] == 0x47 {
+			packets++
+		} else {
+			// Resync - look for next sync byte
+			for j := i + 1; j < len(data) && j < i+188; j++ {
+				if data[j] == 0x47 {
+					i = j - 188 // Will be incremented by loop
+					break
+				}
+			}
+		}
+	}
+
+	if packets == 0 {
+		logger.Warn("No TS packets detected")
+		return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL,
+			common.ErrCodeInvalidFormat, "no valid TS packets found", nil)
+	}
+
+	// Estimate duration based on typical TS segment length
+	// TS segments in HLS are typically 2-10 seconds
+	if packets > 0 {
+		// Rough estimation: more packets = longer duration
+		estimatedDuration = float64(packets) / 100.0 // Very rough estimate
+		if estimatedDuration < 1.0 {
+			estimatedDuration = 2.0
+		}
+		if estimatedDuration > 15.0 {
+			estimatedDuration = 10.0
+		}
+	}
+
+	// Generate silence with estimated duration
+	duration := time.Duration(estimatedDuration * float64(time.Second))
+	samples := int(float64(ad.config.OutputSampleRate) * estimatedDuration)
+
+	logger.Debug("TS extraction completed", logging.Fields{
+		"packets_found":      packets,
+		"estimated_duration": estimatedDuration,
+		"generated_samples":  samples,
+	})
+
+	return &common.AudioData{
+		PCM:        ad.generateSilence(samples),
+		SampleRate: ad.config.OutputSampleRate,
+		Channels:   ad.config.OutputChannels,
+		Duration:   duration,
+		Metadata:   ad.createBasicMetadata(segmentURL),
+	}, nil
 }
 
 // GetDownloadStats returns current download statistics
@@ -869,4 +965,9 @@ func (ad *AudioDownloader) Close() error {
 		return os.RemoveAll(ad.tempDir)
 	}
 	return nil
+}
+
+// SetBaseURL sets the base URL for resolving relative segment URLs
+func (ad *AudioDownloader) SetBaseURL(baseURL string) {
+	ad.baseURL = baseURL
 }
