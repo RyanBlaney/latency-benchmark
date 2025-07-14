@@ -8,7 +8,7 @@ import (
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat"
 )

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // Manager orchestrates complex stream operations like parallel audio extraction

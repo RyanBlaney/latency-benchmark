@@ -6,7 +6,7 @@ import (
 	"math/cmplx"
 
 	"github.com/mjibson/go-dsp/fft"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
 // SpectralAnalyzer provides core FFT and spectral analysis functionality
@@ -504,4 +504,3 @@ func (sa *SpectralAnalyzer) ComputeSpectralFlux(spectrogram *SpectrogramResult) 
 
 	return flux
 }
-

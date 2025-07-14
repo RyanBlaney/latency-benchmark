@@ -7,7 +7,7 @@ import (
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
 // SpeechFeatureExtractor extracts features optimized for talk/news content

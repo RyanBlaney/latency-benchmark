@@ -16,9 +16,9 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/tunein/cdn-benchmark-cli/configs"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 var (
@@ -616,4 +616,3 @@ func outputCSV(summary *BenchmarkSummary) error {
 
 	return nil
 }
-

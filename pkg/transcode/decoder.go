@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
 // AudioData represents decoded audio data - compatible with common.AudioData

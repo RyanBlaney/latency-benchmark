@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 // AudioDownloader handles downloading and processing HLS audio segments

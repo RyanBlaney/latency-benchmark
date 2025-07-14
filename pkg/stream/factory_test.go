@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
@@ -192,6 +193,12 @@ func (m *MockStreamHandler) GetMetadata() (*common.StreamMetadata, error) {
 
 // ReadAudio reads audio data from the stream.
 func (m *MockStreamHandler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
+	// Example return value
+	return &common.AudioData{}, nil
+}
+
+// ReadAudio reads a specified length of audio data from the stream.
+func (m *MockStreamHandler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
 	// Example return value
 	return &common.AudioData{}, nil
 }

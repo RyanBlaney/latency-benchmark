@@ -3,7 +3,7 @@ package common
 import (
 	"maps"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
 // StreamError represents stream-related errors with integrated logging
@@ -87,4 +87,3 @@ func NewStreamErrorWithFields(streamType StreamType, url, code, message string, 
 		Fields:  fields,
 	}
 }
-

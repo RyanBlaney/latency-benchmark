@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 func TestNewDetector(t *testing.T) {
@@ -718,4 +718,3 @@ func TestDetectorWithRealURLs(t *testing.T) {
 		}
 	})
 }
-

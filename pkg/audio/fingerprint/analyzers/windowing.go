@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
 // WindowType represents different window function types
