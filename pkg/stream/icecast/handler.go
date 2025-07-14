@@ -1,9 +1,11 @@
 package icecast
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -97,6 +99,12 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	h.url = url
 	h.startTime = time.Now()
 
+	logger := logging.WithFields(logging.Fields{
+		"component": "icecast_handler",
+		"function":  "Connect",
+		"url":       url,
+	})
+
 	// Create context with configured timeout
 	connectCtx, cancel := context.WithTimeout(ctx, h.config.HTTP.ConnectionTimeout)
 	defer cancel()
@@ -107,43 +115,127 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 			common.ErrCodeConnection, "failed to create request", err)
 	}
 
-	// Set headers from configuration
-	headers := h.config.GetHTTPHeaders()
-	for key, value := range headers {
-		req.Header.Set(key, value)
-	}
+	// Start with minimal headers - some ICEcast streams don't like extra headers
+	req.Header.Set("User-Agent", h.config.HTTP.UserAgent)
+	req.Header.Set("Accept", "*/*")
+
+	logger.Info("Attempting connection with minimal headers")
 
 	resp, err := h.client.Do(req)
 	if err != nil {
+		// If the minimal approach fails, log and return error
+		logger.Error(err, "Connection failed with minimal headers")
 		return common.NewStreamError(common.StreamTypeICEcast, url,
 			common.ErrCodeConnection, "connection failed", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return common.NewStreamErrorWithFields(common.StreamTypeICEcast, url,
-			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
-			logging.Fields{
+
+		// For some ICEcast servers, try with ICY headers if basic request failed
+		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusMethodNotAllowed {
+			logger.Debug("Basic request failed, trying with ICY headers", logging.Fields{
 				"status_code": resp.StatusCode,
-				"status_text": resp.Status,
 			})
+
+			// Try again with ICY metadata header
+			req2, err := http.NewRequestWithContext(connectCtx, "GET", url, nil)
+			if err != nil {
+				return common.NewStreamError(common.StreamTypeICEcast, url,
+					common.ErrCodeConnection, "failed to create retry request", err)
+			}
+
+			req2.Header.Set("User-Agent", h.config.HTTP.UserAgent)
+			req2.Header.Set("Accept", "*/*")
+			req2.Header.Set("Icy-MetaData", "1")
+
+			resp2, err := h.client.Do(req2)
+			if err != nil {
+				return common.NewStreamError(common.StreamTypeICEcast, url,
+					common.ErrCodeConnection, "retry connection failed", err)
+			}
+
+			if resp2.StatusCode != http.StatusOK {
+				resp2.Body.Close()
+				return common.NewStreamErrorWithFields(common.StreamTypeICEcast, url,
+					common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp2.StatusCode, resp2.Status), nil,
+					logging.Fields{
+						"status_code": resp2.StatusCode,
+						"status_text": resp2.Status,
+					})
+			}
+
+			resp = resp2
+		} else {
+			return common.NewStreamErrorWithFields(common.StreamTypeICEcast, url,
+				common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
+				logging.Fields{
+					"status_code": resp.StatusCode,
+					"status_text": resp.Status,
+				})
+		}
 	}
 
 	h.response = resp
 
-	// Parse ICY metadata interval if present
+	logger.Info("ICEcast connection successful", logging.Fields{
+		"status_code":  resp.StatusCode,
+		"content_type": resp.Header.Get("Content-Type"),
+	})
+
+	// Parse ICY metadata interval if present (might not be present for all streams)
 	if metaInt := resp.Header.Get("icy-metaint"); metaInt != "" {
 		if interval, err := strconv.Atoi(metaInt); err == nil {
 			h.icyMetaInt = interval
+			logger.Debug("ICY metadata interval detected", logging.Fields{
+				"interval": interval,
+			})
+		}
+	} else {
+		logger.Debug("No ICY metadata interval found - stream may not support metadata")
+	}
+
+	// Store response headers (may be minimal or empty for some streams)
+	headers := make(map[string]string)
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			headers[strings.ToLower(key)] = values[0]
 		}
 	}
 
-	// Extract initial metadata using the configured extractor
+	// Extract metadata using the configured extractor (handle case where headers are minimal)
 	h.metadata = h.metadataExtractor.ExtractMetadata(resp.Header, url)
+
+	// If metadata extraction failed due to missing headers, create basic metadata
+	if h.metadata == nil {
+		logger.Debug("Creating basic metadata due to minimal headers")
+		h.metadata = &common.StreamMetadata{
+			URL:         url,
+			Type:        common.StreamTypeICEcast,
+			ContentType: resp.Header.Get("Content-Type"),
+			Headers:     headers,
+			Timestamp:   time.Now(),
+		}
+
+		// Apply defaults for streams without proper headers
+		h.applyDefaultMetadata()
+	}
+
+	// Merge HTTP headers with metadata headers
+	if h.metadata.Headers == nil {
+		h.metadata.Headers = make(map[string]string)
+	}
+	maps.Copy(h.metadata.Headers, headers)
 
 	h.stats.ConnectionTime = time.Since(h.startTime)
 	h.stats.FirstByteTime = h.stats.ConnectionTime
 	h.connected = true
+
+	logger.Info("ICEcast handler connected successfully", logging.Fields{
+		"has_icy_metadata": h.icyMetaInt > 0,
+		"connection_time":  h.stats.ConnectionTime.Milliseconds(),
+		"headers_count":    len(headers),
+	})
 
 	return nil
 }
@@ -207,89 +299,240 @@ func (h *Handler) applyDefaultMetadata() {
 
 // ReadAudio reads audio data from the ICEcast stream
 func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
-	if !h.connected || h.response == nil {
+	logger := logging.WithFields(logging.Fields{
+		"component": "icecast_handler",
+		"function":  "ReadAudio",
+	})
+
+	logger.Debug("ReadAudio called", logging.Fields{
+		"connected":    h.connected,
+		"response_nil": h.response == nil,
+		"context_err":  ctx.Err(),
+	})
+
+	if !h.connected {
 		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
 			common.ErrCodeConnection, "not connected", nil)
 	}
 
-	// Use configured buffer size for reading
+	// For Connection: Close servers, always create a fresh connection for audio
+	// This completely bypasses any context inheritance issues
+	connectionHeader := ""
+	if h.response != nil {
+		connectionHeader = h.response.Header.Get("Connection")
+	}
+
+	needsNewConnection := strings.ToLower(connectionHeader) == "close" || h.response == nil
+
+	if needsNewConnection {
+		logger.Debug("Creating dedicated audio connection due to Connection: Close")
+		return h.readAudioWithFreshConnection()
+	}
+
+	// For persistent connections, try the existing connection first
+	return h.readAudioFromExistingConnection()
+}
+
+// readAudioWithFreshConnection creates a completely new HTTP connection just for reading audio
+func (h *Handler) readAudioWithFreshConnection() (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "icecast_handler",
+		"function":  "readAudioWithFreshConnection",
+		"url":       h.url,
+	})
+
+	// Create a completely isolated HTTP client for this audio request
+	audioClient := &http.Client{
+		Timeout: h.config.HTTP.ConnectionTimeout + h.config.HTTP.ReadTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:       1,
+			IdleConnTimeout:    10 * time.Second,
+			DisableCompression: false,
+			DisableKeepAlives:  true, // Important: disable keep-alives for one-shot requests
+		},
+	}
+
+	// Create a background context with a reasonable timeout for audio reading
+	// This is NOT derived from the original context to avoid cancellation inheritance
+	audioTimeout := 30 * time.Second // Fixed timeout just for audio reading
+	audioCtx, cancel := context.WithTimeout(context.Background(), audioTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(audioCtx, "GET", h.url, nil)
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "failed to create audio request", err)
+	}
+
+	// Use minimal headers
+	req.Header.Set("User-Agent", h.config.HTTP.UserAgent)
+	req.Header.Set("Accept", "*/*")
+
+	logger.Debug("Making fresh HTTP request for audio data")
+
+	resp, err := audioClient.Do(req)
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "failed to connect for audio", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil)
+	}
+
+	logger.Debug("Fresh audio connection successful", logging.Fields{
+		"status_code":  resp.StatusCode,
+		"content_type": resp.Header.Get("Content-Type"),
+	})
+
+	// Read audio data using a simple, direct approach
+	return h.readAudioDataFromResponse(resp, logger)
+}
+
+// readAudioFromExistingConnection reads from the existing persistent connection
+func (h *Handler) readAudioFromExistingConnection() (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "icecast_handler",
+		"function":  "readAudioFromExistingConnection",
+	})
+
+	// Test if the existing connection is still alive
+	testBuf := make([]byte, 1)
+	_, testErr := h.response.Body.Read(testBuf)
+	if testErr != nil {
+		logger.Debug("Existing connection failed, creating fresh connection", logging.Fields{
+			"test_error": testErr.Error(),
+		})
+		return h.readAudioWithFreshConnection()
+	}
+
+	// Connection is alive, put the test byte back and continue
+	multiReader := io.MultiReader(bytes.NewReader(testBuf), h.response.Body)
+	h.response.Body = io.NopCloser(multiReader)
+
+	return h.readAudioDataFromResponse(h.response, logger)
+}
+
+// readAudioDataFromResponse reads audio data from an HTTP response
+func (h *Handler) readAudioDataFromResponse(resp *http.Response, logger logging.Logger) (*common.AudioData, error) {
 	bufferSize := h.config.Audio.BufferSize
 	if bufferSize <= 0 {
-		bufferSize = 4096 // Fallback default
+		bufferSize = 8192
 	}
 
-	buffer := make([]byte, bufferSize)
+	// Read a reasonable amount of audio data quickly
+	targetBytes := bufferSize * 3
+	maxAttempts := 5
+	readTimeout := 10 * time.Second // Short timeout for individual reads
 
-	// Set read deadline based on context or configured timeout
-	if deadline, ok := ctx.Deadline(); ok {
-		if conn, ok := h.response.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
-			conn.SetReadDeadline(deadline)
-		}
-	} else if h.config.Audio.ReadTimeout > 0 {
-		deadline := time.Now().Add(h.config.Audio.ReadTimeout)
-		if conn, ok := h.response.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
-			conn.SetReadDeadline(deadline)
-		}
-	}
+	var allAudioBytes []byte
+	attempts := 0
+	startTime := time.Now()
 
-	// Handle ICY metadata if present and configured
-	var audioBytes []byte
-	if h.icyMetaInt > 0 && h.config.Audio.HandleICYMeta {
-		var err error
-		audioBytes, err = h.readWithICYMetadata(buffer)
+	logger.Debug("Starting to read audio data", logging.Fields{
+		"buffer_size":  bufferSize,
+		"target_bytes": targetBytes,
+		"max_attempts": maxAttempts,
+		"read_timeout": readTimeout.Seconds(),
+	})
+
+	for attempts < maxAttempts && len(allAudioBytes) < targetBytes {
+		attempts++
+
+		// Set a read deadline to prevent hanging
+		if conn, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
+			conn.SetReadDeadline(time.Now().Add(readTimeout))
+		}
+
+		buffer := make([]byte, bufferSize)
+		n, err := resp.Body.Read(buffer)
+
+		logger.Debug("Read attempt completed", logging.Fields{
+			"attempt":     attempts,
+			"bytes_read":  n,
+			"error":       err,
+			"total_bytes": len(allAudioBytes),
+		})
+
 		if err != nil {
-			return nil, err
-		}
-		if len(audioBytes) == 0 {
-			return nil, io.EOF
-		}
-	} else {
-		// Simple read without ICY metadata handling
-		n, err := h.response.Body.Read(buffer)
-		if err != nil && err != io.EOF {
-			if err == context.DeadlineExceeded || err == context.Canceled {
-				return nil, err
+			if err == io.EOF {
+				logger.Debug("Reached end of stream")
+				break
 			}
+
+			// For any other error, if we have some data, use it
+			if len(allAudioBytes) > 0 {
+				logger.Debug("Got error but have some data, proceeding", logging.Fields{
+					"error":      err.Error(),
+					"bytes_have": len(allAudioBytes),
+				})
+				break
+			}
+
 			return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
-				common.ErrCodeDecoding, "failed to read stream data", err)
+				common.ErrCodeDecoding, fmt.Sprintf("failed to read audio data: %v", err), err)
 		}
-		if n == 0 {
-			return nil, io.EOF
+
+		if n > 0 {
+			allAudioBytes = append(allAudioBytes, buffer[:n]...)
+			logger.Debug("Successfully read audio chunk", logging.Fields{
+				"chunk_size":  n,
+				"total_bytes": len(allAudioBytes),
+				"attempt":     attempts,
+			})
+		} else {
+			logger.Debug("Zero bytes read, stopping")
+			break
 		}
-		audioBytes = buffer[:n]
+
+		// Small delay to avoid busy waiting
+		time.Sleep(10 * time.Millisecond)
 	}
+
+	if len(allAudioBytes) == 0 {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeDecoding, "no audio data received after all attempts", nil)
+	}
+
+	logger.Debug("Audio reading completed", logging.Fields{
+		"total_bytes": len(allAudioBytes),
+		"attempts":    attempts,
+		"read_time":   time.Since(startTime).Seconds(),
+	})
 
 	// Update statistics
-	h.stats.BytesReceived += int64(len(audioBytes))
+	h.stats.BytesReceived += int64(len(allAudioBytes))
 
-	// Calculate average bitrate based on elapsed time
+	// Calculate average bitrate
 	elapsed := time.Since(h.startTime)
 	if elapsed > 0 {
 		h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
 	}
 
-	// Convert to PCM using configured audio parameters
-	pcmSamples, err := h.convertToPCM(audioBytes)
+	// Convert to PCM
+	pcmSamples, err := h.convertToPCM(allAudioBytes)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
 			common.ErrCodeDecoding, "failed to convert audio to PCM", err)
 	}
 
-	// Get current metadata
+	// Get metadata
 	metadata, err := h.GetMetadata()
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
 			common.ErrCodeMetadata, "failed to get metadata", err)
 	}
 
-	// Create a copy of metadata to avoid concurrent modification
+	// Create metadata copy
 	metadataCopy := *metadata
 	metadataCopy.Timestamp = time.Now()
 
-	// Calculate duration based on sample rate and channel count
+	// Calculate duration
 	sampleRate := metadataCopy.SampleRate
 	if sampleRate <= 0 {
-		sampleRate = 44100 // Default fallback
+		sampleRate = 44100
 	}
 
 	audioData := &common.AudioData{
@@ -300,6 +543,13 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 		Timestamp:  time.Now(),
 		Metadata:   &metadataCopy,
 	}
+
+	logger.Debug("Audio processing completed successfully", logging.Fields{
+		"samples":          len(pcmSamples),
+		"duration_seconds": audioData.Duration.Seconds(),
+		"sample_rate":      audioData.SampleRate,
+		"channels":         audioData.Channels,
+	})
 
 	return audioData, nil
 }
@@ -341,7 +591,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		targetSamples *= channels // Adjust for multiple channels
 	}
 
-	logger.Debug("Starting duration-based audio reading", logging.Fields{
+	logger.Info("Starting duration-based audio reading", logging.Fields{
 		"sample_rate":     sampleRate,
 		"channels":        channels,
 		"target_samples":  targetSamples,
@@ -445,7 +695,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		}
 		totalDuration = time.Duration(currentSamples) * time.Second / time.Duration(sampleRate)
 
-		logger.Debug("Accumulated audio data", logging.Fields{
+		logger.Info("Accumulated audio data", logging.Fields{
 			"current_samples":  len(allPCMSamples),
 			"target_samples":   targetSamples,
 			"current_duration": totalDuration.Seconds(),

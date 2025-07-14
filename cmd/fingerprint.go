@@ -38,13 +38,13 @@ func init() {
 		"debug logging mode")
 	fingerprintCmd.Flags().DurationVarP(&fingerprintSegmentDuration, "segment-duration", "t", time.Second*15,
 		"the downloaded length of each stream")
-	fingerprintCmd.Flags().DurationVarP(&fingerprintTimeout, "timeout", "", time.Second*30,
+	fingerprintCmd.Flags().DurationVarP(&fingerprintTimeout, "timeout", "T", time.Second*40,
 		"timeout for stream operations")
 }
 
 func runFingerprint(cmd *cobra.Command, args []string) error {
 	url1 := args[0]
-	//url2 := args[1]
+	url2 := args[1]
 
 	verbose := fingerprintVerbose || viper.GetBool("verbose")
 
@@ -100,6 +100,38 @@ func runFingerprint(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("   %sFailed to marshal json for audio data 1: %v%s", ColorRed, err, ColorReset)
 	}
 	fmt.Printf("Audio Data for Stream 1: %s", string(formattedData1))
+
+	// URL 2: ICEcast
+	fmt.Printf("\n\nStream 2: ICEcast: %s\n", url2)
+	handler2, err := streamFactory.DetectAndCreate(ctx, url2)
+	if err != nil {
+		return fmt.Errorf("   %sFailed to detect type and create handler: %v%s", ColorRed, err, ColorReset)
+	}
+
+	err = handler2.Connect(ctx, url2)
+	if err != nil {
+		return fmt.Errorf("   %sFailed to connect to stream: %v%s", ColorRed, err, ColorReset)
+	}
+
+	metadata2, err := handler2.GetMetadata()
+	if err != nil {
+		return fmt.Errorf("   %sFailed to extract metadata from stream: %v%s", ColorRed, err, ColorReset)
+	}
+	formattedMetadata2, err := json.Marshal(metadata2)
+	if err != nil {
+		return fmt.Errorf("   %sFailed to marshal json for audio data 2: %v%s", ColorRed, err, ColorReset)
+	}
+	fmt.Printf("Metadata for Stream 2: %s", string(formattedMetadata2))
+
+	audioData2, err := handler2.ReadAudio(ctx)
+	if err != nil {
+		return fmt.Errorf("   %sFailed to extract audio data from stream: %v%s", ColorRed, err, ColorReset)
+	}
+	formattedData2, err := json.Marshal(audioData2)
+	if err != nil {
+		return fmt.Errorf("   %sFailed to marshal json for audio data 2: %v%s", ColorRed, err, ColorReset)
+	}
+	fmt.Printf("Audio Data for Stream 2: %s", string(formattedData2))
 
 	if verbose {
 		fmt.Printf("%s", appConfig.LogLevel)

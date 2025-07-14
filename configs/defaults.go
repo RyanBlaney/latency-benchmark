@@ -252,7 +252,7 @@ func setICEcastDefaults(v *viper.Viper) {
 		})
 	}
 	if !v.IsSet("icecast.detection.timeout_seconds") {
-		v.Set("icecast.detection.timeout_seconds", 5)
+		v.Set("icecast.detection.timeout_seconds", 15)
 	}
 	if !v.IsSet("icecast.detection.required_headers") {
 		v.Set("icecast.detection.required_headers", []string{})
@@ -269,10 +269,10 @@ func setICEcastDefaults(v *viper.Viper) {
 		v.Set("icecast.http.accept_header", "audio/*, application/ogg, */*")
 	}
 	if !v.IsSet("icecast.http.connection_timeout") {
-		v.Set("icecast.http.connection_timeout", 10*time.Second)
+		v.Set("icecast.http.connection_timeout", 45*time.Second)
 	}
 	if !v.IsSet("icecast.http.read_timeout") {
-		v.Set("icecast.http.read_timeout", 30*time.Second)
+		v.Set("icecast.http.read_timeout", 60*time.Second)
 	}
 	if !v.IsSet("icecast.http.max_redirects") {
 		v.Set("icecast.http.max_redirects", 3)
@@ -298,7 +298,7 @@ func setICEcastDefaults(v *viper.Viper) {
 		v.Set("icecast.audio.max_read_attempts", 10)
 	}
 	if !v.IsSet("icecast.audio.read_timeout") {
-		v.Set("icecast.audio.read_timeout", 5*time.Second)
+		v.Set("icecast.audio.read_timeout", 30*time.Second)
 	}
 	if !v.IsSet("icecast.audio.handle_icy_meta") {
 		v.Set("icecast.audio.handle_icy_meta", true)
@@ -315,7 +315,7 @@ func setICEcastDefaults(v *viper.Viper) {
 		v.Set("icecast.metadata_extractor.enable_icy_metadata", true)
 	}
 	if !v.IsSet("icecast.metadata_extractor.icy_metadata_timeout") {
-		v.Set("icecast.metadata_extractor.icy_metadata_timeout", 5*time.Second)
+		v.Set("icecast.metadata_extractor.icy_metadata_timeout", 15*time.Second)
 	}
 	if !v.IsSet("icecast.metadata_extractor.default_values") {
 		v.Set("icecast.metadata_extractor.default_values", map[string]any{
@@ -671,4 +671,3 @@ func GetDefaultOutputConfigForFormat(format string) OutputConfig {
 
 	return base
 }
-
