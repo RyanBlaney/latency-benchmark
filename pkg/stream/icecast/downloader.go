@@ -26,7 +26,6 @@ type DownloadConfig struct {
 	MaxSegments      int           `json:"max_segments"`
 	SegmentTimeout   time.Duration `json:"segment_timeout"`
 	MaxRetries       int           `json:"max_retries"`
-	CacheSegments    bool          `json:"cache_segments"`
 	TargetDuration   time.Duration `json:"target_duration"`
 	PreferredBitrate int           `json:"preferred_bitrate"`
 	// Audio processing options (used for fallback basic processing)
@@ -91,7 +90,6 @@ func DefaultDownloadConfig() *DownloadConfig {
 		MaxSegments:      10,
 		SegmentTimeout:   10 * time.Second,
 		MaxRetries:       3,
-		CacheSegments:    true,
 		TargetDuration:   30 * time.Second,
 		PreferredBitrate: 128,
 		OutputSampleRate: 44100, // Standard for audio fingerprinting
@@ -121,6 +119,9 @@ func NewAudioDownloaderForContent(config *Config, contentType string) *AudioDown
 	return &AudioDownloader{
 		client:        client,
 		icecastConfig: config,
+		downloadStats: &DownloadStats{
+			AudioMetrics: &AudioMetrics{},
+		},
 	}
 }
 
@@ -331,9 +332,16 @@ func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url 
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode streamed audio with FFmpeg: %w", err)
 	}
-	audioData, ok := ad.(*common.AudioData)
-	if !ok {
-		return &common.AudioData{}, fmt.Errorf("failed to convert to AudioData")
+
+	var audioData *common.AudioData
+	if commonAudio, ok := ad.(*common.AudioData); ok {
+		audioData = commonAudio
+	} else {
+		// Use reflection to convert unknown AudioData type to common.AudioData
+		audioData = common.ConvertToAudioData(ad)
+		if audioData == nil {
+			return nil, fmt.Errorf("decoder returned unexpected type: %T", ad)
+		}
 	}
 
 	d.downloadStats.DecodeTime += time.Since(decodeStartTime)

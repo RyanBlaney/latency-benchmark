@@ -1,6 +1,7 @@
 package common
 
 import (
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -116,3 +117,58 @@ func ExtractContentType(contentType string) string {
 	return strings.TrimSpace(contentType)
 }
 
+func ConvertToAudioData(src any) *AudioData {
+	if src == nil {
+		return nil
+	}
+
+	srcVal := reflect.ValueOf(src)
+	if srcVal.Kind() == reflect.Ptr {
+		srcVal = srcVal.Elem()
+	}
+
+	if srcVal.Kind() != reflect.Struct {
+		return nil
+	}
+
+	// Extract fields using reflection
+	result := &AudioData{}
+
+	if pcmField := srcVal.FieldByName("PCM"); pcmField.IsValid() && pcmField.CanInterface() {
+		if pcm, ok := pcmField.Interface().([]float64); ok {
+			result.PCM = pcm
+		}
+	}
+
+	if srField := srcVal.FieldByName("SampleRate"); srField.IsValid() && srField.CanInterface() {
+		if sr, ok := srField.Interface().(int); ok {
+			result.SampleRate = sr
+		}
+	}
+
+	if chField := srcVal.FieldByName("Channels"); chField.IsValid() && chField.CanInterface() {
+		if ch, ok := chField.Interface().(int); ok {
+			result.Channels = ch
+		}
+	}
+
+	if durField := srcVal.FieldByName("Duration"); durField.IsValid() && durField.CanInterface() {
+		if dur, ok := durField.Interface().(time.Duration); ok {
+			result.Duration = dur
+		}
+	}
+
+	if tsField := srcVal.FieldByName("Timestamp"); tsField.IsValid() && tsField.CanInterface() {
+		if ts, ok := tsField.Interface().(time.Time); ok {
+			result.Timestamp = ts
+		}
+	}
+
+	if metaField := srcVal.FieldByName("Metadata"); metaField.IsValid() && metaField.CanInterface() {
+		if meta, ok := metaField.Interface().(*StreamMetadata); ok {
+			result.Metadata = meta
+		}
+	}
+
+	return result
+}
