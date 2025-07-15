@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/logging"
 )
 
 var testHLSSRCStreamURL = "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"

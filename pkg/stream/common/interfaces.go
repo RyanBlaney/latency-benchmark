@@ -125,14 +125,22 @@ type StreamValidator interface {
 // AudioDecoder defines the interface for audio decoding implementations
 // This allows the stream package to use different audio decoders (gmf, ffmpeg, etc.)
 // without depending on any specific implementation
+//
+// Here is the structure of AudioData (the `any` type):
+// - PCM        []float64
+// - SampleRate int
+// - Channels   int
+// - Duration   time.Duration
+// - Timestamp  time.Time
+// - Metadata   *StreamMetadata
 type AudioDecoder interface {
 	// DecodeBytes decodes audio data from a byte slice
 	// Returns decoded PCM audio data ready for processing
-	DecodeBytes(data []byte) (*AudioData, error)
+	DecodeBytes(data []byte) (any, error)
 
 	// DecodeReader decodes audio data from an io.Reader
 	// Useful for streaming audio data
-	DecodeReader(reader io.Reader) (*AudioData, error)
+	DecodeReader(reader io.Reader) (any, error)
 
 	// GetConfig returns decoder configuration information
 	// Useful for debugging and compatibility checks

@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 // AudioDownloader handles continuous streaming download from ICEcast servers
 type AudioDownloader struct {
-	client *http.Client
-	config *Config
+	client  *http.Client
+	config  *Config
+	decoder *transcode.Decoder
 }
 
 // NewAudioDownloader creates a new ICEcast audio downloader
@@ -33,9 +36,39 @@ func NewAudioDownloader(config *Config) *AudioDownloader {
 		},
 	}
 
+	// Create FFmpeg decoder optimized for news/talk content (typical for ICEcast)
+	decoder := transcode.NewNormalizingDecoder("news")
+
 	return &AudioDownloader{
-		client: client,
-		config: config,
+		client:  client,
+		config:  config,
+		decoder: decoder,
+	}
+}
+
+// NewAudioDownloaderForContent creates a new ICEcast audio downloader optimized for specific content
+func NewAudioDownloaderForContent(config *Config, contentType string) *AudioDownloader {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	client := &http.Client{
+		Timeout: 0, // No timeout for streaming connections
+		Transport: &http.Transport{
+			MaxIdleConns:       1,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: false,
+			DisableKeepAlives:  false, // Allow keep-alives for streaming
+		},
+	}
+
+	// Create FFmpeg decoder optimized for the specified content type
+	decoder := transcode.NewNormalizingDecoder(contentType)
+
+	return &AudioDownloader{
+		client:  client,
+		config:  config,
+		decoder: decoder,
 	}
 }
 
@@ -109,8 +142,8 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 		"efficiency":       fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
 	})
 
-	// Convert raw audio bytes to PCM
-	return d.processStreamedAudio(audioData, url, logger)
+	// Convert raw audio bytes using FFmpeg decoder
+	return d.processStreamedAudioWithFFmpeg(audioData, url, logger)
 }
 
 // streamAudioData continuously reads audio data from the stream
@@ -119,7 +152,7 @@ func (d *AudioDownloader) streamAudioData(resp *http.Response, targetBytes int, 
 
 	// Use larger buffer for streaming efficiency
 	bufferSize := 65536 // 64KB buffer for efficient streaming
-	bufferSize = max(bufferSize, d.config.Audio.BufferSize)
+	bufferSize = max(d.config.Audio.BufferSize, bufferSize)
 
 	startTime := time.Now()
 	readCount := 0
@@ -221,112 +254,96 @@ func (d *AudioDownloader) streamAudioData(resp *http.Response, targetBytes int, 
 	return audioData, nil
 }
 
-// processStreamedAudio converts streamed audio bytes to AudioData
-func (d *AudioDownloader) processStreamedAudio(audioBytes []byte, url string, logger logging.Logger) (*common.AudioData, error) {
+// processStreamedAudioWithFFmpeg converts streamed audio bytes using FFmpeg decoder
+func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url string, logger logging.Logger) (*common.AudioData, error) {
 	if len(audioBytes) == 0 {
 		return nil, fmt.Errorf("no audio data received from stream")
 	}
 
-	logger.Info("Processing streamed audio", logging.Fields{
+	logger.Info("Processing streamed audio with FFmpeg decoder", logging.Fields{
 		"raw_bytes": len(audioBytes),
 	})
 
-	// Extract metadata from the audio stream
-	metadata := &common.StreamMetadata{
-		URL:         url,
-		Type:        common.StreamTypeICEcast,
-		ContentType: "audio/mpeg",
-		Format:      "mp3",
-		Codec:       "mp3",
-		SampleRate:  44100, // Default for MP3
-		Channels:    2,     // Default to stereo
-		Bitrate:     128,   // Typical for ICEcast
-		Timestamp:   time.Now(),
-	}
-
-	// Convert to PCM (simplified - in reality you'd use a proper audio decoder)
-	pcmSamples, err := d.convertToPCM(audioBytes, metadata)
+	// Use FFmpeg decoder to properly decode MP3 data
+	ad, err := d.decoder.DecodeBytes(audioBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert streamed audio to PCM: %w", err)
+		return nil, fmt.Errorf("failed to decode streamed audio with FFmpeg: %w", err)
+	}
+	audioData, ok := ad.(*common.AudioData)
+	if !ok {
+		return &common.AudioData{}, fmt.Errorf("failed to convert to AudioData")
 	}
 
-	// Calculate duration based on samples
-	samplesPerChannel := len(pcmSamples)
-	if metadata.Channels > 0 {
-		samplesPerChannel = samplesPerChannel / metadata.Channels
+	logger.Info("FFmpeg decoding completed", logging.Fields{
+		"decoded_samples":     len(audioData.PCM),
+		"decoded_duration":    audioData.Duration.Seconds(),
+		"decoded_channels":    audioData.Channels,
+		"decoded_sample_rate": audioData.SampleRate,
+	})
+
+	// Convert from transcode.AudioData to common.AudioData
+	commonAudioData := &common.AudioData{
+		PCM:        audioData.PCM,
+		SampleRate: audioData.SampleRate,
+		Channels:   audioData.Channels,
+		Duration:   audioData.Duration,
+		Timestamp:  time.Now(),
+		Metadata:   d.convertMetadata(audioData.Metadata, url),
 	}
 
-	var duration time.Duration
-	if metadata.SampleRate > 0 && samplesPerChannel > 0 {
-		duration = time.Duration(samplesPerChannel) * time.Second / time.Duration(metadata.SampleRate)
-	} else {
-		// Fallback duration calculation based on bytes and bitrate
-		if metadata.Bitrate > 0 {
-			// Bitrate is in kbps, convert to bytes per second, then calculate duration
-			bytesPerSecond := metadata.Bitrate * 1000 / 8
-			duration = time.Duration(len(audioBytes)) * time.Second / time.Duration(bytesPerSecond)
-		} else {
-			// Last resort: assume ~16KB/s for 128kbps stream
-			duration = time.Duration(len(audioBytes)) * time.Second / 16000
+	logger.Info("Streamed audio processing completed with FFmpeg", logging.Fields{
+		"final_samples":         len(commonAudioData.PCM),
+		"final_duration_sec":    commonAudioData.Duration.Seconds(),
+		"final_sample_rate":     commonAudioData.SampleRate,
+		"final_channels":        commonAudioData.Channels,
+		"normalization_applied": audioData.Metadata != nil && audioData.Metadata.Headers["normalization_applied"] == "true",
+	})
+
+	return commonAudioData, nil
+}
+
+// convertMetadata converts from transcode.StreamMetadata to common.StreamMetadata
+func (d *AudioDownloader) convertMetadata(transcodeMetadata *common.StreamMetadata, url string) *common.StreamMetadata {
+	if transcodeMetadata == nil {
+		// Create basic metadata if none provided
+		return &common.StreamMetadata{
+			URL:         url,
+			Type:        common.StreamTypeICEcast,
+			ContentType: "audio/mpeg",
+			Format:      "mp3",
+			Codec:       "mp3",
+			SampleRate:  44100,
+			Channels:    2,
+			Bitrate:     128,
+			Timestamp:   time.Now(),
 		}
 	}
 
-	audioData := &common.AudioData{
-		PCM:        pcmSamples,
-		SampleRate: metadata.SampleRate,
-		Channels:   metadata.Channels,
-		Duration:   duration,
-		Timestamp:  time.Now(),
-		Metadata:   metadata,
+	// Convert transcode metadata to common metadata
+	headers := make(map[string]string)
+	if transcodeMetadata.Headers != nil {
+		maps.Copy(headers, transcodeMetadata.Headers)
 	}
 
-	logger.Info("Streamed audio processing completed", logging.Fields{
-		"pcm_samples":   len(pcmSamples),
-		"duration_sec":  duration.Seconds(),
-		"sample_rate":   audioData.SampleRate,
-		"channels":      audioData.Channels,
-		"bytes_per_sec": len(audioBytes) / int(duration.Seconds()),
-	})
-
-	return audioData, nil
+	return &common.StreamMetadata{
+		URL:         url,
+		Type:        common.StreamTypeICEcast,
+		Format:      transcodeMetadata.Format,
+		Bitrate:     transcodeMetadata.Bitrate,
+		SampleRate:  transcodeMetadata.SampleRate,
+		Channels:    transcodeMetadata.Channels,
+		Codec:       transcodeMetadata.Codec,
+		ContentType: transcodeMetadata.ContentType,
+		Title:       transcodeMetadata.Title,
+		Artist:      transcodeMetadata.Artist,
+		Genre:       transcodeMetadata.Genre,
+		Station:     transcodeMetadata.Station,
+		Headers:     headers,
+		Timestamp:   time.Now(),
+	}
 }
 
-// convertToPCM converts raw MP3 bytes to PCM samples
-func (d *AudioDownloader) convertToPCM(audioBytes []byte, metadata *common.StreamMetadata) ([]float64, error) {
-	// TODO: Implement proper MP3 decoding using LibAV/FFmpeg
-	// For now, this is a placeholder that simulates PCM conversion
-
-	if len(audioBytes) < 4 {
-		return nil, fmt.Errorf("insufficient audio data for conversion: %d bytes", len(audioBytes))
-	}
-
-	// Estimate samples based on bitrate and duration
-	// This is a rough approximation for demonstration
-	estimatedSamples := len(audioBytes) / 4 // Conservative estimate for 16-bit stereo
-
-	// Ensure we don't exceed available data
-	maxSamples := len(audioBytes) / 2
-	if estimatedSamples > maxSamples {
-		estimatedSamples = maxSamples
-	}
-
-	if estimatedSamples <= 0 {
-		return nil, fmt.Errorf("no samples could be extracted from %d bytes", len(audioBytes))
-	}
-
-	pcmSamples := make([]float64, estimatedSamples)
-
-	// Simulate conversion by creating normalized float samples
-	// In reality, this would use proper audio decoding
-	for i := 0; i < estimatedSamples && (i*2+1) < len(audioBytes); i++ {
-		// Convert bytes to 16-bit signed integer (little-endian)
-		sample := int16(audioBytes[i*2]) | int16(audioBytes[i*2+1])<<8
-		// Normalize to [-1.0, 1.0]
-		pcmSamples[i] = float64(sample) / 32768.0
-	}
-
-	return pcmSamples, nil
-}
+// Note: convertToPCM method removed - now using FFmpeg decoder instead
 
 // DownloadAudioSampleWithRetry downloads audio with automatic retry logic
 func (d *AudioDownloader) DownloadAudioSampleWithRetry(ctx context.Context, url string, targetDuration time.Duration, maxRetries int) (*common.AudioData, error) {

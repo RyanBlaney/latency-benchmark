@@ -23,7 +23,7 @@ type mockAudioDecoder struct {
 	duration   time.Duration
 }
 
-func (m *mockAudioDecoder) DecodeBytes(data []byte) (*common.AudioData, error) {
+func (m *mockAudioDecoder) DecodeBytes(data []byte) (any, error) {
 	if m.shouldFail {
 		return nil, common.NewStreamError(common.StreamTypeHLS, "",
 			common.ErrCodeDecoding, "mock decoder failure", nil)
@@ -53,7 +53,7 @@ func (m *mockAudioDecoder) DecodeBytes(data []byte) (*common.AudioData, error) {
 	}, nil
 }
 
-func (m *mockAudioDecoder) DecodeReader(reader io.Reader) (*common.AudioData, error) {
+func (m *mockAudioDecoder) DecodeReader(reader io.Reader) (any, error) {
 	// Read all data from reader and delegate to DecodeBytes
 	data, err := io.ReadAll(reader)
 	if err != nil {

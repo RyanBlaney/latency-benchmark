@@ -179,12 +179,23 @@ func (ad *AudioDownloader) processSegmentData(segmentData []byte, segmentURL str
 	if ad.hlsConfig != nil && ad.hlsConfig.AudioDecoder != nil {
 		logger.Debug("Using injected audio decoder")
 
-		audioData, err = ad.hlsConfig.AudioDecoder.DecodeBytes(segmentData)
+		anyData, err := ad.hlsConfig.AudioDecoder.DecodeBytes(segmentData)
+		var ok bool
+		audioData, ok = anyData.(*common.AudioData)
+
 		if err != nil {
 			logger.Error(err, "Injected decoder failed, falling back to basic extraction")
 			// Fall back to basic extraction
 			audioData, err = ad.basicAudioExtraction(segmentData, segmentURL)
+			if err != nil {
+				logger.Error(err, "Fallback extraction also failed")
+				ad.recordSegmentError(segmentURL, err, 0, "decode")
+				return nil, common.NewStreamError(common.StreamTypeHLS, segmentURL, common.ErrCodeDecoding, "fallback extraction failed", err)
+			}
 		} else {
+			if !ok {
+				return &common.AudioData{}, fmt.Errorf("failed to convert AudioData")
+			}
 			logger.Debug("Injected decoder succeeded", logging.Fields{
 				"samples":     len(audioData.PCM),
 				"sample_rate": audioData.SampleRate,
@@ -832,6 +843,15 @@ func (ad *AudioDownloader) resolveSegmentURL(playlist *M3U8Playlist, segmentURI 
 	// If it's already an absolute URL, return as-is
 	if strings.HasPrefix(segmentURI, "http://") || strings.HasPrefix(segmentURI, "https://") {
 		return segmentURI
+	}
+
+	// Try playlist's base URL first (more accurate)
+	if playlist != nil && playlist.Metadata.URL != "" {
+		if baseURL, err := url.Parse(playlist.Metadata.URL); err != nil {
+			if relativeURL, err := url.Parse(segmentURI); err != nil {
+				return baseURL.ResolveReference(relativeURL).String()
+			}
+		}
 	}
 
 	// Use base URL if available

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 // Config holds configuration for HLS processing
@@ -17,7 +18,7 @@ type Config struct {
 	Detection         *DetectionConfig         `json:"detection"`
 	HTTP              *HTTPConfig              `json:"http"`
 	Audio             *AudioConfig             `json:"audio"`
-	AudioDecoder      common.AudioDecoder      `json:"-"` // Nonserializable
+	AudioDecoder      common.AudioDecoder      `json:"-"` // External package
 }
 
 // ParserConfig holds configuration for M3U8 parsing
@@ -136,6 +137,7 @@ func DefaultConfig() *Config {
 			FollowLive:      false,
 			AnalyzeSegments: false,
 		},
+		AudioDecoder: transcode.NewDecoder(transcode.DefaultDecoderConfig()),
 	}
 }
 

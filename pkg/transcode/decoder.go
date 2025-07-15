@@ -17,9 +17,9 @@ import (
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
-// AudioData represents decoded audio data - compatible with common.AudioData
+// AudioData represents decoded audio data
 type AudioData struct {
-	PCM        []float64       `json:"-"`
+	PCM        []float64       `json:"-"` // Raw PCM data
 	SampleRate int             `json:"sample_rate"`
 	Channels   int             `json:"channels"`
 	Duration   time.Duration   `json:"duration"`
@@ -137,7 +137,6 @@ func NewDecoder(config *DecoderConfig) *Decoder {
 	return &Decoder{config: config}
 }
 
-// Simple factory method for easy usage
 func NewNormalizingDecoder(contentType string) *Decoder {
 	config := ContentOptimizedDecoderConfig(contentType)
 	return NewDecoder(config)
@@ -173,7 +172,8 @@ func (d *Decoder) DecodeFile(filename string) (*AudioData, error) {
 }
 
 // DecodeBytes decodes audio from byte slice
-func (d *Decoder) DecodeBytes(data []byte) (*AudioData, error) {
+// Returns AudioData (`any` is for package independence)
+func (d *Decoder) DecodeBytes(data []byte) (any, error) {
 	logger := logging.WithFields(logging.Fields{
 		"component": "audio_decoder",
 		"function":  "DecodeBytes",
@@ -223,7 +223,8 @@ func (d *Decoder) DecodeBytes(data []byte) (*AudioData, error) {
 }
 
 // DecodeReader decodes audio from an io.Reader
-func (d *Decoder) DecodeReader(reader io.Reader) (*AudioData, error) {
+// Returns `AudioData` (`any` is for package independence)
+func (d *Decoder) DecodeReader(reader io.Reader) (any, error) {
 	logger := logging.WithFields(logging.Fields{
 		"component": "audio_decoder",
 		"function":  "DecodeReader",
@@ -416,7 +417,7 @@ func (d *Decoder) decodeFileWithFFmpeg(filename string, metadata *AudioMetadata)
 				"stderr": string(exitError.Stderr),
 			})
 		}
-		return nil, fmt.Errorf("Ffmpeg decode failed: %w", err)
+		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
 	}
 
 	return d.processFFmpegOutput(output, metadata, filename, logger)
@@ -456,7 +457,7 @@ func (d *Decoder) decodeWithFFmpeg(data []byte, metadata *AudioMetadata) (*Audio
 				"stderr": string(exitError.Stderr),
 			})
 		}
-		return nil, fmt.Errorf("Ffmpeg decode failed: %w", err)
+		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
 	}
 
 	return d.processFFmpegOutput(output, metadata, "", logger)
@@ -512,6 +513,7 @@ func (d *Decoder) buildFFmpegArgs(metadata *AudioMetadata) []string {
 }
 
 // buildNormalizationFilter builds the arguments based on the `DecoderConfig` for a normalization filter
+// buildNormalizationFilter builds the arguments based on the `DecoderConfig` for a normalization filter
 func (d *Decoder) buildNormalizationFilter() string {
 	switch d.config.NormalizationMethod {
 	case "loudnorm":
@@ -522,8 +524,8 @@ func (d *Decoder) buildNormalizationFilter() string {
 			d.config.LoudnessRange)
 
 	case "dynaudnorm":
-		// Dynamic audio normalization
-		return "dynaudnorm=p=0.95:m=10;s=12"
+		// Dynamic audio normalization - FIXED: use colons instead of semicolon
+		return "dynaudnorm=p=0.95:m=10:s=12"
 
 	case "compand":
 		// Compressor/limiter

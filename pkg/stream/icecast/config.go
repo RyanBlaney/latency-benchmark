@@ -6,6 +6,7 @@ import (
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 // Config holds configuration for ICEcast processing
@@ -14,6 +15,7 @@ type Config struct {
 	Detection         *DetectionConfig         `json:"detection"`
 	HTTP              *HTTPConfig              `json:"http"`
 	Audio             *AudioConfig             `json:"audio"`
+	AudioDecoder      common.AudioDecoder      `json:"-"` // nonserializable
 }
 
 // MetadataExtractorConfig holds configuration for metadata extraction
@@ -135,6 +137,7 @@ func DefaultConfig() *Config {
 			HandleICYMeta:    true,
 			MetadataInterval: 0, // Will be determined from stream
 		},
+		AudioDecoder: transcode.NewDecoder(transcode.DefaultDecoderConfig()),
 	}
 }
 
