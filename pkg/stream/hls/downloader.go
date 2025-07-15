@@ -235,7 +235,7 @@ func (ad *AudioDownloader) processSegmentData(segmentData []byte, segmentURL str
 	// Update audio metrics
 	ad.updateAudioMetrics(audioData)
 
-	logger.Info("Segment processing completed", logging.Fields{
+	logger.Debug("Segment processing completed", logging.Fields{
 		"final_samples":     len(audioData.PCM),
 		"final_sample_rate": audioData.SampleRate,
 		"final_channels":    audioData.Channels,
@@ -300,7 +300,7 @@ func (ad *AudioDownloader) basicAudioExtraction(segmentData []byte, segmentURL s
 	}
 	audioData.Metadata.Codec = format
 
-	logger.Info("Basic audio extraction completed", logging.Fields{
+	logger.Debug("Basic audio extraction completed", logging.Fields{
 		"format":      format,
 		"samples":     len(audioData.PCM),
 		"sample_rate": audioData.SampleRate,
@@ -653,7 +653,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlist *M3
 	var totalDuration time.Duration
 	maxSegments := ad.config.MaxSegments
 
-	logger.Info("Starting audio sample download")
+	logger.Debug("Starting audio sample download")
 
 	for i, segment := range playlist.Segments {
 		if i >= maxSegments || totalDuration >= targetDuration {
@@ -696,7 +696,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlist *M3
 			common.ErrCodeConnection, "failed to download any audio segments", nil)
 	}
 
-	logger.Info("Audio sample download completed", logging.Fields{
+	logger.Debug("Audio sample download completed", logging.Fields{
 		"segments_downloaded": len(audioSamples),
 		"total_duration":      totalDuration.Seconds(),
 	})
@@ -762,7 +762,7 @@ func (ad *AudioDownloader) combineAudioSamples(samples []*common.AudioData) (*co
 		offset += len(sample.PCM)
 	}
 
-	logger.Info("Audio samples combined successfully", logging.Fields{
+	logger.Debug("Audio samples combined successfully", logging.Fields{
 		"total_samples":     len(combined.PCM),
 		"combined_duration": combined.Duration.Seconds(),
 		"final_sample_rate": combined.SampleRate,

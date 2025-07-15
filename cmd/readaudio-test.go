@@ -21,12 +21,10 @@ var ( // rat => readaudio-test ¬‿¬
 
 var ratCmd = &cobra.Command{
 	Use:   "readaudio-test [url1] [url2]",
-	Short: "Validate streams via audio fingerprinting and comparison",
-	Long: `Perform comprehensive audio fingerprinting and comparison through
-	downloading short segments of audio and comparing the fingerprints through
-	various methods.`,
-	Args: cobra.ExactArgs(2),
-	RunE: runReadAudioTest,
+	Short: "Validate streams",
+	Long:  `...`,
+	Args:  cobra.ExactArgs(2),
+	RunE:  runReadAudioTest,
 }
 
 func init() {
@@ -46,12 +44,12 @@ func runReadAudioTest(cmd *cobra.Command, args []string) error {
 	url1 := args[0]
 	url2 := args[1]
 
-	verbose := fingerprintVerbose || viper.GetBool("verbose")
+	verbose := ratVerbose || viper.GetBool("verbose")
 
 	fmt.Printf("Stream Fingerprint Comparison\n")
 	fmt.Printf("=============================\n\n")
 
-	ctx, cancel := context.WithTimeout(context.Background(), fingerprintTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), ratTimeout)
 	defer cancel()
 
 	timer := NewPerformanceTimer()

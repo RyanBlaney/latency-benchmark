@@ -134,7 +134,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Info("Starting ICEcast streaming download")
+	logger.Debug("Starting ICEcast streaming download")
 
 	// Create a context with reasonable timeout (target duration + buffer)
 	downloadTimeout := targetDuration + (30 * time.Second)
@@ -152,7 +152,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Connection", "keep-alive")
 
-	logger.Info("Establishing streaming connection")
+	logger.Debug("Establishing streaming connection")
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -164,7 +164,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 		return nil, fmt.Errorf("streaming request failed with status %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	logger.Info("Streaming connection established", logging.Fields{
+	logger.Debug("Streaming connection established", logging.Fields{
 		"status_code":  resp.StatusCode,
 		"content_type": resp.Header.Get("Content-Type"),
 		"connection":   resp.Header.Get("Connection"),
@@ -177,7 +177,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 	bufferMultiplier := 1.5 // 50% buffer
 	targetBytes := int(float64(estimatedTotalBytes) * bufferMultiplier)
 
-	logger.Info("Starting continuous audio download", logging.Fields{
+	logger.Debug("Starting continuous audio download", logging.Fields{
 		"estimated_bytes_per_sec":  estimatedBytesPerSecond,
 		"estimated_total_bytes":    estimatedTotalBytes,
 		"target_bytes_with_buffer": targetBytes,
@@ -189,7 +189,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 		return nil, fmt.Errorf("failed to stream audio data: %w", err)
 	}
 
-	logger.Info("ICEcast streaming download completed", logging.Fields{
+	logger.Debug("ICEcast streaming download completed", logging.Fields{
 		"bytes_downloaded": len(audioData),
 		"target_bytes":     targetBytes,
 		"efficiency":       fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
@@ -432,7 +432,7 @@ func (d *AudioDownloader) DownloadAudioSampleWithRetry(ctx context.Context, url 
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			logger.Info("Retrying ICEcast download", logging.Fields{
+			logger.Debug("Retrying ICEcast download", logging.Fields{
 				"attempt":     attempt + 1,
 				"max_retries": maxRetries + 1,
 				"last_error":  lastErr.Error(),
@@ -445,7 +445,7 @@ func (d *AudioDownloader) DownloadAudioSampleWithRetry(ctx context.Context, url 
 		audioData, err := d.DownloadAudioSample(ctx, url, targetDuration)
 		if err == nil {
 			if attempt > 0 {
-				logger.Info("ICEcast download succeeded after retry", logging.Fields{
+				logger.Debug("ICEcast download succeeded after retry", logging.Fields{
 					"successful_attempt": attempt + 1,
 				})
 			}
