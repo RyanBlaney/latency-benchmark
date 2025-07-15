@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"math/cmplx"
+	"runtime"
+	"sync"
 
 	"github.com/mjibson/go-dsp/fft"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
@@ -453,10 +455,11 @@ func (sa *SpectralAnalyzer) calculateSpectralSkewness(spectrum []float64, freqs 
 	// Calculate third moment
 	for i := range len(spectrum) {
 		diff := freqs[i] - centroid
-		numerator += math.Pow(diff, 3) * spectrum[i]
+		// My linter doesn't like math.Pow(diff, 3) here
+		numerator += (diff * diff * diff) * spectrum[i]
 	}
 
-	skewness := (numerator / denominator) / math.Pow(stdDev, 3)
+	skewness := (numerator / denominator) / (stdDev * stdDev * stdDev)
 	return skewness
 }
 
@@ -503,4 +506,328 @@ func (sa *SpectralAnalyzer) ComputeSpectralFlux(spectrogram *SpectrogramResult) 
 	}
 
 	return flux
+}
+
+// getOptimalWorkerCount determines the optimal number of workers based on workload
+func (sa *SpectralAnalyzer) getOptimalWorkerCount(numFrames int) int {
+	// Base number on available CPUs
+	numCPU := runtime.NumCPU()
+
+	// For small workloads, don't over-parallelize
+	if numFrames < 100 {
+		return min(numCPU/2, numFrames)
+	}
+
+	// For medium workloads, use most CPUs
+	if numFrames < 1000 {
+		return min(numCPU, 8) // Cap at 8 for medium loads
+	}
+
+	// For large workloads, use all available CPUs
+	return numCPU
+}
+
+// ComputeSTFTBatch processes multiple signals in parallel (useful for batch fingerprinting)
+func (sa *SpectralAnalyzer) ComputeSTFTBatch(signals [][]float64, windowSize int, hopSize int, windowType WindowType) ([]*SpectrogramResult, error) {
+	if len(signals) == 0 {
+		return nil, fmt.Errorf("no signals provided")
+	}
+
+	results := make([]*SpectrogramResult, len(signals))
+	errors := make([]error, len(signals))
+
+	// Use goroutines for batch processing
+	var wg sync.WaitGroup
+	numWorkers := min(runtime.NumCPU(), len(signals))
+
+	// Channel for signal processing jobs
+	type signalJob struct {
+		index  int
+		signal []float64
+	}
+
+	jobs := make(chan signalJob, len(signals))
+
+	// Launch workers
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				result, err := sa.ComputeSTFTWithWindow(job.signal, windowSize, hopSize, windowType)
+				results[job.index] = result
+				errors[job.index] = err
+			}
+		}()
+	}
+
+	// Send jobs
+	go func() {
+		defer close(jobs)
+		for i, signal := range signals {
+			jobs <- signalJob{index: i, signal: signal}
+		}
+	}()
+
+	wg.Wait()
+
+	// Check for any errors
+	for i, err := range errors {
+		if err != nil {
+			return nil, fmt.Errorf("error processing signal %d: %w", i, err)
+		}
+	}
+
+	return results, nil
+}
+
+// ComputeSTFTStreaming processes audio in streaming fashion with overlap-add
+// Useful for real-time audio fingerprinting
+func (sa *SpectralAnalyzer) ComputeSTFTStreaming(windowSize int, hopSize int, windowType WindowType) (*STFTStreamer, error) {
+	windowConfig := &WindowConfig{
+		Type:      windowType,
+		Size:      windowSize,
+		Normalize: true,
+		Symmetric: true,
+	}
+
+	window, err := sa.windowGenerator.Generate(windowConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate window: %w", err)
+	}
+
+	return &STFTStreamer{
+		analyzer:   sa,
+		window:     window,
+		windowSize: windowSize,
+		hopSize:    hopSize,
+		buffer:     make([]float64, 0, windowSize*2),
+		freqBins:   windowSize/2 + 1,
+	}, nil
+}
+
+// STFTStreamer handles streaming STFT computation
+type STFTStreamer struct {
+	analyzer   *SpectralAnalyzer
+	window     *Window
+	windowSize int
+	hopSize    int
+	buffer     []float64
+	freqBins   int
+}
+
+// ProcessChunk processes a new chunk of audio data
+func (s *STFTStreamer) ProcessChunk(chunk []float64) ([]*SpectrogramFrame, error) {
+	if len(chunk) == 0 {
+		return nil, nil
+	}
+
+	// Add new data to buffer
+	s.buffer = append(s.buffer, chunk...)
+
+	var frames []*SpectrogramFrame
+
+	// Process as many complete frames as possible
+	for len(s.buffer) >= s.windowSize {
+		// Extract frame
+		frameData := make([]float64, s.windowSize)
+		copy(frameData, s.buffer[:s.windowSize])
+
+		// Apply window
+		err := s.window.ApplyInPlace(frameData)
+		if err != nil {
+			return nil, err
+		}
+
+		// Compute FFT
+		fftResult := s.analyzer.FFT(frameData)
+
+		// Create frame result
+		frame := &SpectrogramFrame{
+			Magnitude: make([]float64, s.freqBins),
+			Phase:     make([]float64, s.freqBins),
+			Complex:   make([]complex128, s.freqBins),
+		}
+
+		// Extract positive frequencies
+		for i := 0; i < s.freqBins; i++ {
+			frame.Complex[i] = fftResult[i]
+			frame.Magnitude[i] = cmplx.Abs(fftResult[i])
+			frame.Phase[i] = cmplx.Phase(fftResult[i])
+		}
+
+		frames = append(frames, frame)
+
+		// Advance buffer by hop size
+		if s.hopSize >= len(s.buffer) {
+			s.buffer = s.buffer[:0]
+		} else {
+			copy(s.buffer, s.buffer[s.hopSize:])
+			s.buffer = s.buffer[:len(s.buffer)-s.hopSize]
+		}
+	}
+
+	return frames, nil
+}
+
+// SpectrogramFrame represents a single frame of spectrogram data
+type SpectrogramFrame struct {
+	Magnitude []float64    `json:"magnitude"`
+	Phase     []float64    `json:"phase"`
+	Complex   []complex128 `json:"-"`
+}
+
+// ComputeSTFTWithWindow computes STFT with parallel processing and custom window type
+// This is the main optimized implementation with goroutines
+func (sa *SpectralAnalyzer) ComputeSTFTWithWindow(signal []float64, windowSize int, hopSize int, windowType WindowType) (*SpectrogramResult, error) {
+	if len(signal) == 0 {
+		return nil, fmt.Errorf("empty signal")
+	}
+
+	if windowSize <= 0 {
+		return nil, fmt.Errorf("window size must be positive")
+	}
+
+	if hopSize <= 0 {
+		return nil, fmt.Errorf("hop size must be positive")
+	}
+
+	logger := sa.logger.WithFields(logging.Fields{
+		"function":      "ComputeSTFTWithWindow",
+		"signal_length": len(signal),
+		"window_size":   windowSize,
+		"hop_size":      hopSize,
+		"window_type":   windowType,
+	})
+
+	logger.Debug("Computing STFT with parallel processing")
+
+	// Calculate number of frames
+	numFrames := (len(signal)-windowSize)/hopSize + 1
+	if numFrames <= 0 {
+		return nil, fmt.Errorf("signal too short for given window size and hop size")
+	}
+
+	// Generate window function using your WindowGenerator
+	windowConfig := &WindowConfig{
+		Type:      windowType,
+		Size:      windowSize,
+		Normalize: true,
+		Symmetric: true,
+	}
+
+	window, err := sa.windowGenerator.Generate(windowConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate window: %w", err)
+	}
+
+	// Calculate frequency bins (positive frequencies only)
+	freqBins := windowSize/2 + 1
+
+	// Initialize result matrices
+	magnitude := make([][]float64, numFrames)
+	phase := make([][]float64, numFrames)
+	complexSpectrum := make([][]complex128, numFrames)
+
+	// Pre-allocate all arrays
+	for i := range numFrames {
+		magnitude[i] = make([]float64, freqBins)
+		phase[i] = make([]float64, freqBins)
+		complexSpectrum[i] = make([]complex128, freqBins)
+	}
+
+	// Determine optimal number of workers based on system and workload
+	numWorkers := sa.getOptimalWorkerCount(numFrames)
+
+	// Channel for frame processing jobs
+	type frameJob struct {
+		frameIdx int
+		startIdx int
+		endIdx   int
+	}
+
+	jobs := make(chan frameJob, numFrames)
+
+	// Launch worker goroutines
+	var wg sync.WaitGroup
+
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Reuse frame buffer for this worker
+			frameBuffer := make([]float64, windowSize)
+
+			for job := range jobs {
+				// Safety check
+				if job.endIdx > len(signal) {
+					continue
+				}
+
+				// Extract and window the frame
+				copy(frameBuffer, signal[job.startIdx:job.endIdx])
+
+				// Apply window function in-place
+				err := window.ApplyInPlace(frameBuffer)
+				if err != nil {
+					logger.Error(err, "Failed to apply window", logging.Fields{"frame": job.frameIdx})
+					continue
+				}
+
+				// Compute FFT
+				fftResult := sa.FFT(frameBuffer)
+
+				// Extract positive frequencies and compute magnitude/phase
+				for i := range freqBins {
+					complexSpectrum[job.frameIdx][i] = fftResult[i]
+					magnitude[job.frameIdx][i] = cmplx.Abs(fftResult[i])
+					phase[job.frameIdx][i] = cmplx.Phase(fftResult[i])
+				}
+			}
+		}()
+	}
+
+	// Send jobs to workers
+	go func() {
+		defer close(jobs)
+		for frameIdx := range numFrames {
+			startIdx := frameIdx * hopSize
+			endIdx := startIdx + windowSize
+
+			if endIdx <= len(signal) {
+				jobs <- frameJob{
+					frameIdx: frameIdx,
+					startIdx: startIdx,
+					endIdx:   endIdx,
+				}
+			}
+		}
+	}()
+
+	// Wait for all workers to complete
+	wg.Wait()
+
+	result := &SpectrogramResult{
+		Magnitude:      magnitude,
+		Phase:          phase,
+		Complex:        complexSpectrum,
+		TimeFrames:     numFrames,
+		FreqBins:       freqBins,
+		SampleRate:     sa.sampleRate,
+		WindowSize:     windowSize,
+		HopSize:        hopSize,
+		FreqResolution: float64(sa.sampleRate) / float64(windowSize),
+		TimeResolution: float64(hopSize) / float64(sa.sampleRate),
+	}
+
+	logger.Debug("STFT computation completed", logging.Fields{
+		"time_frames":     result.TimeFrames,
+		"freq_bins":       result.FreqBins,
+		"freq_resolution": result.FreqResolution,
+		"time_resolution": result.TimeResolution,
+		"workers_used":    numWorkers,
+	})
+
+	return result, nil
 }
