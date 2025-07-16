@@ -1,0 +1,39 @@
+ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers
+  built with Apple clang version 17.0.0 (clang-1700.0.13.5)
+  configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/7.1.1-with-options --enable-shared --cc=clang --host-cflags= --host-ldflags= --enable-gpl --enable-libaom --enable-libdav1d --enable-libmp3lame --enable-libopus --enable-libsnappy --enable-libtheora --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-libfontconfig --enable-libfreetype --enable-frei0r --enable-libass --enable-demuxer=dash --enable-opencl --enable-audiotoolbox --enable-videotoolbox --enable-neon --disable-htmlpages --enable-libcaca --enable-libfdk-aac --enable-libgsm --enable-libmodplug --enable-librtmp --enable-libsoxr --enable-libssh --enable-libtwolame --enable-libvidstab --enable-nonfree
+  libavutil      59. 39.100 / 59. 39.100
+  libavcodec     61. 19.101 / 61. 19.101
+  libavformat    61.  7.100 / 61.  7.100
+  libavdevice    61.  3.100 / 61.  3.100
+  libavfilter    10.  4.100 / 10.  4.100
+  libswscale      8.  3.100 /  8.  3.100
+  libswresample   5.  3.100 /  5.  3.100
+  libpostproc    58.  3.100 / 58.  3.100
+[mp3 @ 0x124f04aa0] Skipping 360 bytes of junk at 0.
+Input #0, mp3, from 'http://stream1.skyviewnetworks.com:8010/MSNBC':
+  Metadata:
+    icy-br          : 128
+    icy-description : Feed From CrossPort Server
+    icy-genre       : TV
+    icy-name        : MSNBC
+    icy-pub         : False
+    StreamTitle     : #
+  Duration: N/A, start: 0.000000, bitrate: 128 kb/s
+  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, stereo, fltp, 128 kb/s
+Stream mapping:
+  Stream #0:0 -> #0:0 (mp3 (mp3float) -> pcm_s16le (native))
+Press [q] to stop, [?] for help
+Output #0, wav, to '/Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_30s.wav':
+  Metadata:
+    icy-br          : 128
+    icy-description : Feed From CrossPort Server
+    icy-genre       : TV
+    icy-name        : MSNBC
+    icy-pub         : False
+    StreamTitle     : #
+    ISFT            : Lavf61.7.100
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 44100 Hz, stereo, s16, 1411 kb/s
+      Metadata:
+        encoder         : Lavc61.19.101 pcm_s16le
+size=    1280KiB time=00:00:08.64 bitrate=1212.7kbits/s speed=17.2x    size=    1536KiB time=00:00:09.03 bitrate=1392.2kbits/s speed=8.99x    size=    1536KiB time=00:00:09.61 bitrate=1308.9kbits/s speed=6.36x    size=    1536KiB time=00:00:10.00 bitrate=1257.7kbits/s speed=4.96x    size=    1792KiB time=00:00:10.63 bitrate=1380.8kbits/s speed=4.22x    size=    1792KiB time=00:00:11.07 bitrate=1325.4kbits/s speed=3.66x    size=    1792KiB time=00:00:11.59 bitrate=1265.7kbits/s speed=3.29x    size=    2048KiB time=00:00:12.12 bitrate=1384.2kbits/s speed=   3x    size=    2048KiB time=00:00:12.56 bitrate=1335.2kbits/s speed=2.77x    size=    2048KiB time=00:00:13.06 bitrate=1284.5kbits/s speed=2.59x    size=    2304KiB time=00:00:13.58 bitrate=1389.5kbits/s speed=2.45x    size=    2304KiB time=00:00:14.02 bitrate=1345.5kbits/s speed=2.32x    size=    2304KiB time=00:00:14.68 bitrate=1285.6kbits/s speed=2.24x    size=    2560KiB time=00:00:15.12 bitrate=1386.6kbits/s speed=2.14x    size=    2560KiB time=00:00:15.64 bitrate=1340.3kbits/s speed=2.07x    size=    2560KiB time=00:00:16.09 bitrate=1303.3kbits/s speed=1.99x    size=    2816KiB time=00:00:16.61 bitrate=1388.5kbits/s speed=1.94x    size=    2816KiB time=00:00:17.11 bitrate=1348.2kbits/s speed=1.89x    size=    2816KiB time=00:00:17.63 bitrate=1308.3kbits/s speed=1.84x    size=    3072KiB time=00:00:18.20 bitrate=1382.2kbits/s speed=1.81x    size=    3072KiB time=00:00:18.72 bitrate=1343.6kbits/s speed=1.77x    size=    3072KiB time=00:00:19.17 bitrate=1312.5kbits/s speed=1.73x    size=    3328KiB time=00:00:19.67 bitrate=1386.0kbits/s speed= 1.7x    size=    3328KiB time=00:00:20.14 bitrate=1353.6kbits/s speed=1.66x    size=    3584KiB time=00:00:20.84 bitrate=1408.4kbits/s speed=1.65x    size=    3584KiB time=00:00:21.15 bitrate=1387.6kbits/s speed=1.61x    size=    3584KiB time=00:00:21.78 bitrate=1347.7kbits/s speed= 1.6x    size=    3584KiB time=00:00:22.17 bitrate=1323.8kbits/s speed=1.57x    size=    3840KiB time=00:00:22.62 bitrate=1390.6kbits/s speed=1.55x    size=    3840KiB time=00:00:23.14 bitrate=1359.2kbits/s speed=1.53x    size=    3840KiB time=00:00:23.71 bitrate=1326.2kbits/s speed=1.52x    size=    4096KiB time=00:00:24.11 bitrate=1391.7kbits/s speed=1.49x    size=    4096KiB time=00:00:24.73 bitrate=1356.4kbits/s speed=1.49x    size=    4096KiB time=00:00:25.20 bitrate=1331.1kbits/s speed=1.47x    size=    4352KiB time=00:00:25.70 bitrate=1387.0kbits/s speed=1.46x    size=    4352KiB time=00:00:26.14 bitrate=1363.4kbits/s speed=1.44x    size=    4352KiB time=00:00:26.67 bitrate=1336.7kbits/s speed=1.43x    size=    4608KiB time=00:00:27.19 bitrate=1388.2kbits/s speed=1.42x    size=    4608KiB time=00:00:27.82 bitrate=1356.9kbits/s speed=1.42x    size=    4608KiB time=00:00:28.16 bitrate=1340.5kbits/s speed= 1.4x    size=    4864KiB time=00:00:28.73 bitrate=1386.7kbits/s speed=1.39x    size=    4864KiB time=00:00:29.23 bitrate=1363.1kbits/s speed=1.38x    size=    5120KiB time=00:00:29.75 bitrate=1409.7kbits/s speed=1.37x    [out#0/wav @ 0x6000032b4000] video:0KiB audio:5168KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.001474%
+size=    5168KiB time=00:00:30.00 bitrate=1411.2kbits/s speed=1.36x    

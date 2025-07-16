@@ -70,17 +70,52 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 		"frames":   spectrogram.TimeFrames,
 	})
 
-	logger.Debug("Extracting speech-specific features")
+	logger.Info("Extractor received spectrogram", logging.Fields{
+		"spectrogram_frames":      spectrogram.TimeFrames,
+		"spectrogram_freq_bins":   spectrogram.FreqBins,
+		"spectrogram_hop_size":    spectrogram.HopSize,
+		"spectrogram_window_size": spectrogram.WindowSize,
+		"pcm_length":              len(pcm),
+		"sample_rate":             sampleRate,
+	})
 
 	features := &ExtractedFeatures{
 		ExtractionMetadata: make(map[string]any),
 	}
 
+	// Extract MFCC features with validation
+	if s.config.EnableMFCC {
+		logger.Info("Extracting MFCC features...")
+		mfccFeatures, err := s.extractMFCC(spectrogram)
+		if err != nil {
+			logger.Error(err, "Failed to extract MFCC features")
+			// Create empty MFCC instead of failing completely
+			features.MFCC = make([][]float64, spectrogram.TimeFrames)
+			for i := range features.MFCC {
+				features.MFCC[i] = make([]float64, s.config.MFCCCoefficients)
+			}
+		} else {
+			// VALIDATE MFCC values before accepting them
+			err = s.validateMFCCValues(mfccFeatures)
+			if err != nil {
+				logger.Error(err, "MFCC validation failed")
+				return nil, fmt.Errorf("MFCC validation failed: %w", err)
+			}
+
+			features.MFCC = mfccFeatures
+			logger.Info("MFCC features extracted and validated successfully", logging.Fields{
+				"frames": len(mfccFeatures),
+				"coeffs": len(mfccFeatures[0]),
+			})
+		}
+	}
+
+	// Extract speech-specific features if enabled
 	if s.config.EnableSpeechFeatures {
+		logger.Info("Extracting speech-specific features...")
 		speechFeatures, err := s.extractSpeechFeatures(spectrogram, pcm, sampleRate)
 		if err != nil {
 			logger.Error(err, "Failed to extract speech features")
-
 			// Create empty speech features instead of leaving nil
 			speechFeatures = &SpeechFeatures{
 				FormantFrequencies: make([][]float64, spectrogram.TimeFrames),
@@ -92,125 +127,216 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 		features.SpeechFeatures = speechFeatures
 	}
 
-	// Extract basic spectral features (focused on speech range)
+	// Extract spectral features (focused on speech range)
+	logger.Info("Extracting spectral features...")
 	spectralFeatures, err := s.extractSpeechSpectralFeatures(spectrogram, pcm)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
-
-		// Create empty spectral features instead of leaving nil
-		spectralFeatures = &SpectralFeatures{
-			SpectralCentroid:  make([]float64, spectrogram.TimeFrames),
-			SpectralRolloff:   make([]float64, spectrogram.TimeFrames),
-			SpectralBandwidth: make([]float64, spectrogram.TimeFrames),
-			SpectralFlatness:  make([]float64, spectrogram.TimeFrames),
-			SpectralCrest:     make([]float64, spectrogram.TimeFrames),
-			SpectralSlope:     make([]float64, spectrogram.TimeFrames),
-			ZeroCrossingRate:  make([]float64, spectrogram.TimeFrames),
-			SpectralFlux:      make([]float64, max(0, spectrogram.TimeFrames-1)),
-		}
+		return nil, fmt.Errorf("spectral feature extraction failed: %w", err)
 	}
 	features.SpectralFeatures = spectralFeatures
 
 	// Extract temporal features (pauses, speech rate)
 	if s.config.EnableTemporalFeatures {
+		logger.Info("Extracting temporal features...")
 		temporalFeatures, err := s.extractSpeechTemporalFeatures(pcm, sampleRate)
 		if err != nil {
 			logger.Error(err, "Failed to extract temporal features")
-
-			// Create empty temporal features instead of leaving nil
-			temporalFeatures = &TemporalFeatures{
-				RMSEnergy:        make([]float64, 0),
-				DynamicRange:     0.0,
-				SilenceRatio:     0.0,
-				PeakAmplitude:    0.0,
-				AverageAmplitude: 0.0,
-				OnsetDensity:     0.0,
-			}
+			return nil, fmt.Errorf("temporal feature extraction failed: %w", err)
 		}
 		features.TemporalFeatures = temporalFeatures
 	}
 
-	// Step 5: Extract energy features
-	logger.Info("Step 5: Extracting energy features...")
-	energyFeatures, err := s.extractSpeechEnergyFeatures(pcm, sampleRate)
+	// Extract energy features (critical for alignment)
+	logger.Info("Extracting energy features...")
+	energyFeatures, err := s.extractSpeechEnergyFeatures(pcm, spectrogram)
 	if err != nil {
 		logger.Error(err, "Failed to extract energy features")
-		// Create empty energy features instead of leaving nil
-		energyFeatures = &EnergyFeatures{
-			ShortTimeEnergy: make([]float64, 0),
-			EnergyEntropy:   make([]float64, 0),
-			CrestFactor:     make([]float64, 0),
-			EnergyVariance:  0.0,
-			LoudnessRange:   0.0,
-		}
+		return nil, fmt.Errorf("energy feature extraction failed: %w", err)
 	}
 	features.EnergyFeatures = energyFeatures
-	logger.Info("Energy features extraction completed")
 
-	// Add extraction metadata
+	// Add comprehensive extraction metadata
 	features.ExtractionMetadata["extractor_type"] = "speech"
+	features.ExtractionMetadata["mfcc_enabled"] = s.config.EnableMFCC
 	features.ExtractionMetadata["mfcc_coefficients"] = s.config.MFCCCoefficients
 	features.ExtractionMetadata["speech_features_enabled"] = s.config.EnableSpeechFeatures
+	features.ExtractionMetadata["temporal_features_enabled"] = s.config.EnableTemporalFeatures
 
-	logger.Info("Speech feature extraction completed")
+	// Frame count validation
+	features.ExtractionMetadata["spectrogram_frames"] = spectrogram.TimeFrames
+	features.ExtractionMetadata["energy_frames"] = len(energyFeatures.ShortTimeEnergy)
+	features.ExtractionMetadata["spectral_frames"] = len(spectralFeatures.SpectralCentroid)
+	if features.MFCC != nil {
+		features.ExtractionMetadata["mfcc_frames"] = len(features.MFCC)
+	}
+	if features.TemporalFeatures != nil {
+		features.ExtractionMetadata["temporal_frames"] = len(features.TemporalFeatures.RMSEnergy)
+	}
+
+	// Timing metadata
+	features.ExtractionMetadata["spectrogram_hop_size"] = spectrogram.HopSize
+	features.ExtractionMetadata["spectrogram_window_size"] = spectrogram.WindowSize
+	features.ExtractionMetadata["sample_rate"] = sampleRate
+
+	logger.Info("Speech feature extraction completed successfully")
+
+	// VALIDATE that everything is properly aligned
+	err = s.validateFeatureConsistency(features, spectrogram)
+	if err != nil {
+		logger.Error(err, "Feature consistency validation failed")
+		return nil, fmt.Errorf("feature validation failed: %w", err)
+	}
+
 	return features, nil
 }
 
-// extractMFCC computes MFCC optimized for speech (300-4000Hz range)
-// TODO: this isn't called anywhere
 func (s *SpeechFeatureExtractor) extractMFCC(spectrogram *analyzers.SpectrogramResult) ([][]float64, error) {
-	logger := s.logger.WithFields(logging.Fields{
-		"function":          "extractMFCC",
-		"mfcc_coefficients": s.config.MFCCCoefficients,
-	})
+	// logger := s.logger.WithFields(logging.Fields{
+	// "function":          "extractMFCC",
+	// "mfcc_coefficients": s.config.MFCCCoefficients,
+	// })
 
 	numCoeffs := s.config.MFCCCoefficients
 	if numCoeffs == 0 {
-		numCoeffs = 13 // Standard number for speech
+		numCoeffs = 13
+	}
+
+	if numCoeffs < 1 || numCoeffs > 50 {
+		return nil, fmt.Errorf("invalid number of MFCC coefficients: %d (should be 1-50)", numCoeffs)
+	}
+
+	// Mel filter bank parameters
+	numMelFilters := 26
+	speechLowFreq := 300.0
+	speechHighFreq := minFloat64(4000.0, float64(spectrogram.SampleRate)/2.0)
+
+	melFilters, err := s.createMelFilterBank(numMelFilters, speechLowFreq, speechHighFreq, spectrogram.FreqBins, spectrogram.SampleRate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mel filter bank: %w", err)
 	}
 
 	mfcc := make([][]float64, spectrogram.TimeFrames)
 
-	// Create mel filter bank optimized for speech (300-4000Hz)
-	numMelFilters := 26
-	speechLowFreq := 300.0   // Lower bound for speech
-	speechHighFreq := 4000.0 // Upper bound for speech
-	melFilters := s.createSpeechMelFilterBank(numMelFilters, speechLowFreq, speechHighFreq, spectrogram.FreqBins, spectrogram.SampleRate)
-
 	// Process each time frame
 	for t := 0; t < spectrogram.TimeFrames; t++ {
+		if t >= len(spectrogram.Magnitude) {
+			mfcc[t] = make([]float64, numCoeffs)
+			continue
+		}
+
 		magnitude := spectrogram.Magnitude[t]
+		if len(magnitude) == 0 {
+			mfcc[t] = make([]float64, numCoeffs)
+			continue
+		}
 
 		// Apply mel filter bank
 		melSpectrum := s.applyMelFilters(magnitude, melFilters)
 
-		// Pre-emphasis for speech (optional but common)
-		melSpectrum = s.applyPreEmphasis(melSpectrum)
+		// Convert to log mel spectrum
+		logMelSpectrum := s.computeLogMelSpectrum(melSpectrum)
 
-		// Take logarithm
-		logMelSpectrum := make([]float64, len(melSpectrum))
-		for i, val := range melSpectrum {
-			if val > 1e-10 {
-				logMelSpectrum[i] = math.Log(val)
-			} else {
-				logMelSpectrum[i] = math.Log(1e-10) // Floor value
-			}
-		}
+		// Apply DCT
+		mfccFrame := s.applyDCT(logMelSpectrum, numCoeffs)
 
-		// Apply DCT (Discrete Cosine Transform)
-		mfcc[t] = s.applyDCT(logMelSpectrum, numCoeffs)
-
-		// Apply liftering (optional cepstral smoothing for speech)
-		mfcc[t] = s.applyLiftering(mfcc[t])
+		// Apply liftering
+		mfcc[t] = s.applyLiftering(mfccFrame)
 	}
 
-	logger.Debug("Speech MFCC features extracted", logging.Fields{
-		"mfcc_frames": len(mfcc),
-		"mfcc_coeffs": numCoeffs,
-		"freq_range":  fmt.Sprintf("%.0f-%.0fHz", speechLowFreq, speechHighFreq),
-	})
+	// Apply normalization to handle extreme values
+	mfcc = s.normalizeMFCC(mfcc)
 
 	return mfcc, nil
+}
+
+func (s *SpeechFeatureExtractor) hzToMel(hz float64) float64 {
+	return 2595.0 * math.Log10(1.0+hz/700.0)
+}
+
+func (s *SpeechFeatureExtractor) melToHz(mel float64) float64 {
+	return 700.0 * (math.Pow(10, mel/2595.0) - 1.0)
+}
+
+func (s *SpeechFeatureExtractor) validateMFCCValues(mfcc [][]float64) error {
+	if len(mfcc) == 0 {
+		return fmt.Errorf("empty MFCC array")
+	}
+
+	for t, frame := range mfcc {
+		for c, coeff := range frame {
+			if math.IsNaN(coeff) || math.IsInf(coeff, 0) {
+				return fmt.Errorf("invalid MFCC at frame %d, coeff %d: %f", t, c, coeff)
+			}
+			if math.Abs(coeff) > 200 {
+				return fmt.Errorf("extreme MFCC at frame %d, coeff %d: %f (should be -50 to +50)", t, c, coeff)
+			}
+		}
+	}
+
+	// Calculate statistics
+	var allValues []float64
+	for _, frame := range mfcc {
+		allValues = append(allValues, frame...)
+	}
+
+	if len(allValues) > 0 {
+		mean := 0.0
+		for _, val := range allValues {
+			mean += val
+		}
+		mean /= float64(len(allValues))
+
+		variance := 0.0
+		for _, val := range allValues {
+			variance += (val - mean) * (val - mean)
+		}
+		variance /= float64(len(allValues))
+		stdDev := math.Sqrt(variance)
+
+		s.logger.Info("MFCC validation statistics", logging.Fields{
+			"frames":  len(mfcc),
+			"coeffs":  len(mfcc[0]),
+			"mean":    mean,
+			"std_dev": stdDev,
+			"min":     s.findMinInMFCC(mfcc),
+			"max":     s.findMaxInMFCC(mfcc),
+		})
+	}
+
+	return nil
+}
+
+func (s *SpeechFeatureExtractor) findMinInMFCC(mfcc [][]float64) float64 {
+	if len(mfcc) == 0 || len(mfcc[0]) == 0 {
+		return 0
+	}
+
+	min := mfcc[0][0]
+	for _, frame := range mfcc {
+		for _, coeff := range frame {
+			if coeff < min {
+				min = coeff
+			}
+		}
+	}
+	return min
+}
+
+func (s *SpeechFeatureExtractor) findMaxInMFCC(mfcc [][]float64) float64 {
+	if len(mfcc) == 0 || len(mfcc[0]) == 0 {
+		return 0
+	}
+
+	max := mfcc[0][0]
+	for _, frame := range mfcc {
+		for _, coeff := range frame {
+			if coeff > max {
+				max = coeff
+			}
+		}
+	}
+	return max
 }
 
 // extractSpeechFeatures extracts speech-specific characteristics
@@ -277,90 +403,68 @@ func (s *SpeechFeatureExtractor) extractSpeechSpectralFeatures(spectrogram *anal
 		ZeroCrossingRate:  make([]float64, spectrogram.TimeFrames),
 	}
 
-	// Generate frequency bins focused on speech range (300-4000Hz)
+	// Generate frequency bins
 	freqs := make([]float64, spectrogram.FreqBins)
-	speechFreqs := make([]float64, 0)
-	speechMags := make([][]float64, spectrogram.TimeFrames)
-
 	for i := 0; i < spectrogram.FreqBins; i++ {
-		freq := float64(i) * float64(spectrogram.SampleRate) / float64((spectrogram.FreqBins-1)*2)
-		freqs[i] = freq
-
-		// Keep only speech-relevant frequencies
-		if freq >= 300 && freq <= 4000 {
-			speechFreqs = append(speechFreqs, freq)
-		}
+		freqs[i] = float64(i) * float64(spectrogram.SampleRate) / float64(spectrogram.WindowSize)
 	}
 
 	hopSize := spectrogram.HopSize
-	frameSize := hopSize * 2
+	frameSize := spectrogram.WindowSize
 
-	// Extract speech-band magnitude for each frame
-	for t := 0; t < spectrogram.TimeFrames; t++ {
+	// Process each frame
+	for t := range spectrogram.TimeFrames {
+		// Get magnitude spectrum for this frame
+		magnitude := spectrogram.Magnitude[t]
+
+		// Filter to speech range (300-4000Hz) - FIXED indexing
 		speechMag := make([]float64, 0)
+		speechFreqs := make([]float64, 0)
+
 		for i, freq := range freqs {
-			if freq >= 300 && freq <= 4000 && i < len(spectrogram.Magnitude[t]) {
-				speechMag = append(speechMag, spectrogram.Magnitude[t][i])
+			if freq >= 300 && freq <= 4000 && i < len(magnitude) {
+				speechMag = append(speechMag, magnitude[i])
+				speechFreqs = append(speechFreqs, freq)
 			}
 		}
-		speechMags[t] = speechMag
 
-		// Calculate features on speech-band only
+		if len(speechMag) == 0 {
+			// No speech frequencies available - use low frequency range
+			maxIdx := min(len(magnitude), len(freqs)/4) // Use first quarter of spectrum
+			speechMag = magnitude[:maxIdx]
+			speechFreqs = freqs[:maxIdx]
+		}
+
+		// Calculate features on speech-relevant frequencies
 		features.SpectralCentroid[t] = s.calculateSpectralCentroid(speechMag, speechFreqs)
-		features.SpectralRolloff[t] = s.calculateSpectralRolloff(speechMag, speechFreqs, 0.90) // Higher rolloff for speech
+		features.SpectralRolloff[t] = s.calculateSpectralRolloff(speechMag, speechFreqs, 0.85)
 		features.SpectralBandwidth[t] = s.calculateSpectralBandwidth(speechMag, speechFreqs, features.SpectralCentroid[t])
 		features.SpectralFlatness[t] = s.calculateSpectralFlatness(speechMag)
 		features.SpectralCrest[t] = s.calculateSpectralCrest(speechMag)
 		features.SpectralSlope[t] = s.calculateSpectralSlope(speechMag, speechFreqs)
 
-		// Calculate zero crossing rate
+		// Calculate zero crossing rate - FIXED frame boundaries
 		start := t * hopSize
-		end := start + frameSize
-		end = min(end, len(pcm))
+		end := min(start+frameSize, len(pcm))
 
-		if start < len(pcm) {
+		if start < len(pcm) && end > start {
 			pcmFrame := pcm[start:end]
 			features.ZeroCrossingRate[t] = calculateZeroCrossingRate(pcmFrame)
 		}
 	}
 
-	// Calculate spectral flux for speech activity detection
-	features.SpectralFlux = s.calculateSpeechSpectralFlux(speechMags)
+	// Calculate spectral flux
+	features.SpectralFlux = s.calculateSpectralFlux(spectrogram)
 
 	logger.Debug("Speech spectral features extracted", logging.Fields{
 		"avg_centroid": s.calculateMean(features.SpectralCentroid),
 		"avg_rolloff":  s.calculateMean(features.SpectralRolloff),
-		"speech_bands": len(speechFreqs),
+		"frames":       spectrogram.TimeFrames,
+		"freq_bins":    spectrogram.FreqBins,
+		"sample_rate":  spectrogram.SampleRate,
 	})
 
 	return features, nil
-}
-
-// Helper functions for logging
-func (s *SpeechFeatureExtractor) findMin(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	min := values[0]
-	for _, v := range values {
-		if v < min {
-			min = v
-		}
-	}
-	return min
-}
-
-func (s *SpeechFeatureExtractor) findMax(values []float64) float64 {
-	if len(values) == 0 {
-		return 0
-	}
-	max := values[0]
-	for _, v := range values {
-		if v > max {
-			max = v
-		}
-	}
-	return max
 }
 
 // extractSpeechTemporalFeatures extracts temporal features relevant to speech
@@ -404,7 +508,7 @@ func (s *SpeechFeatureExtractor) extractSpeechTemporalFeatures(pcm []float64, sa
 
 	// Speech-specific temporal characteristics
 	features.DynamicRange = s.calculateSpeechDynamicRange(pcm)
-	features.SilenceRatio = s.calculateSpeechSilenceRatio(energies, sampleRate)
+	features.SilenceRatio = s.calculateSpeechSilenceRatio(energies)
 	features.PeakAmplitude = s.calculatePeakAmplitude(pcm)
 	features.AverageAmplitude = s.calculateAverageAmplitude(pcm)
 
@@ -423,35 +527,50 @@ func (s *SpeechFeatureExtractor) extractSpeechTemporalFeatures(pcm []float64, sa
 }
 
 // extractSpeechEnergyFeatures extracts energy features for voice activity detection
-func (s *SpeechFeatureExtractor) extractSpeechEnergyFeatures(pcm []float64, sampleRate int) (*EnergyFeatures, error) {
+func (s *SpeechFeatureExtractor) extractSpeechEnergyFeatures(pcm []float64, spectrogram *analyzers.SpectrogramResult) (*EnergyFeatures, error) {
 	logger := s.logger.WithFields(logging.Fields{
 		"function": "extractSpeechEnergyFeatures",
 	})
 
-	features := &EnergyFeatures{}
+	// CRITICAL FIX: Use the SAME timing as the spectrogram
+	hopSize := spectrogram.HopSize
+	frameSize := spectrogram.WindowSize
+	expectedFrames := spectrogram.TimeFrames
 
-	// Speech-optimized frame size (25ms)
-	frameSize := sampleRate * 25 / 1000
-	hopSize := frameSize / 2
+	logger.Info("Energy extraction using spectrogram timing", logging.Fields{
+		"hop_size":        hopSize,
+		"frame_size":      frameSize,
+		"expected_frames": expectedFrames,
+		"pcm_length":      len(pcm),
+	})
 
-	numFrames := (len(pcm)-frameSize)/hopSize + 1
-	if numFrames <= 0 {
-		return features, fmt.Errorf("insufficient audio length for speech energy analysis")
+	features := &EnergyFeatures{
+		ShortTimeEnergy: make([]float64, expectedFrames),
+		EnergyEntropy:   make([]float64, expectedFrames),
+		CrestFactor:     make([]float64, expectedFrames),
 	}
 
-	features.ShortTimeEnergy = make([]float64, numFrames)
-	features.EnergyEntropy = make([]float64, numFrames)
-	features.CrestFactor = make([]float64, numFrames)
+	energies := make([]float64, expectedFrames)
 
-	energies := make([]float64, numFrames)
-
-	// Calculate frame-based energy features
-	for i := range numFrames {
+	// Extract energy using EXACT same framing as spectrogram
+	for i := range expectedFrames {
 		start := i * hopSize
-		end := start + frameSize
-		end = min(end, len(pcm))
+		end := min(start+frameSize, len(pcm))
 
-		frame := pcm[start:end]
+		if start >= len(pcm) {
+			// Handle edge case - pad with zeros
+			features.ShortTimeEnergy[i] = 0.0
+			features.EnergyEntropy[i] = 0.0
+			features.CrestFactor[i] = 0.0
+			energies[i] = 0.0
+			continue
+		}
+
+		// Extract frame (with zero padding if needed)
+		frame := make([]float64, frameSize)
+		copyLen := min(end-start, frameSize)
+		copy(frame, pcm[start:start+copyLen])
+		// Rest is already zero-padded
 
 		// Short-time energy
 		energy := 0.0
@@ -462,28 +581,31 @@ func (s *SpeechFeatureExtractor) extractSpeechEnergyFeatures(pcm []float64, samp
 				maxVal = math.Abs(sample)
 			}
 		}
-		energy /= float64(len(frame))
+		energy /= float64(len(frame)) // Normalize by frame length
 		features.ShortTimeEnergy[i] = energy
 		energies[i] = energy
 
 		// Crest factor (peak-to-RMS ratio)
 		rms := math.Sqrt(energy)
-		if rms > 0 {
+		if rms > 1e-10 {
 			features.CrestFactor[i] = maxVal / rms
+		} else {
+			features.CrestFactor[i] = 0.0
 		}
 
-		// Energy entropy (speech vs noise discrimination)
+		// Energy entropy
 		features.EnergyEntropy[i] = s.calculateSpeechEnergyEntropy(frame)
 	}
 
-	// Global energy characteristics for speech
+	// Global energy characteristics
 	features.EnergyVariance = s.calculateVariance(energies)
 	features.LoudnessRange = s.calculateSpeechLoudnessRange(energies)
 
-	logger.Debug("Speech energy features extracted", logging.Fields{
-		"energy_variance": features.EnergyVariance,
-		"loudness_range":  features.LoudnessRange,
-		"avg_crest":       s.calculateMean(features.CrestFactor),
+	logger.Info("Speech energy features extracted with correct timing", logging.Fields{
+		"frames_extracted": len(features.ShortTimeEnergy),
+		"energy_variance":  features.EnergyVariance,
+		"loudness_range":   features.LoudnessRange,
+		"avg_energy":       s.calculateMean(energies),
 	})
 
 	return features, nil
@@ -491,82 +613,55 @@ func (s *SpeechFeatureExtractor) extractSpeechEnergyFeatures(pcm []float64, samp
 
 // Speech-specific helper methods
 
-func (s *SpeechFeatureExtractor) createSpeechMelFilterBank(numFilters int, lowFreq, highFreq float64, freqBins, sampleRate int) [][]float64 {
-	// Convert to mel scale
-	lowMel := 2595.0 * math.Log10(1.0+lowFreq/700.0)
-	highMel := 2595.0 * math.Log10(1.0+highFreq/700.0)
+func (s *SpeechFeatureExtractor) validateFeatureConsistency(features *ExtractedFeatures, spectrogram *analyzers.SpectrogramResult) error {
+	expectedFrames := spectrogram.TimeFrames
 
-	// Create equally spaced mel frequencies
-	melPoints := make([]float64, numFilters+2)
-	melStep := (highMel - lowMel) / float64(numFilters+1)
-	for i := range melPoints {
-		melPoints[i] = lowMel + float64(i)*melStep
-	}
-
-	// Convert back to Hz
-	freqPoints := make([]float64, len(melPoints))
-	for i, mel := range melPoints {
-		freqPoints[i] = 700.0 * (math.Pow(10, mel/2595.0) - 1.0)
-	}
-
-	// Create filter bank
-	filterBank := make([][]float64, numFilters)
-	for i := range numFilters {
-		filter := make([]float64, freqBins)
-
-		leftFreq := freqPoints[i]
-		centerFreq := freqPoints[i+1]
-		rightFreq := freqPoints[i+2]
-
-		for j := range freqBins {
-			freq := float64(j) * float64(sampleRate) / float64(freqBins*2)
-
-			if freq >= leftFreq && freq <= rightFreq {
-				if freq <= centerFreq {
-					// Rising edge
-					if centerFreq > leftFreq {
-						filter[j] = (freq - leftFreq) / (centerFreq - leftFreq)
-					}
-				} else {
-					// Falling edge
-					if rightFreq > centerFreq {
-						filter[j] = (rightFreq - freq) / (rightFreq - centerFreq)
-					}
+	// Check MFCC consistency
+	if features.MFCC != nil {
+		if len(features.MFCC) != expectedFrames {
+			return fmt.Errorf("MFCC frame count mismatch: expected %d, got %d", expectedFrames, len(features.MFCC))
+		}
+		for i, frame := range features.MFCC {
+			if len(frame) != s.config.MFCCCoefficients {
+				return fmt.Errorf("MFCC coefficient count mismatch at frame %d: expected %d, got %d",
+					i, s.config.MFCCCoefficients, len(frame))
+			}
+			for j, coeff := range frame {
+				if math.IsNaN(coeff) || math.IsInf(coeff, 0) {
+					return fmt.Errorf("invalid MFCC coefficient at frame %d, coeff %d: %f", i, j, coeff)
 				}
 			}
 		}
-
-		filterBank[i] = filter
 	}
 
-	return filterBank
-}
-
-func (s *SpeechFeatureExtractor) applyPreEmphasis(melSpectrum []float64) []float64 {
-	// Apply high-frequency emphasis common in speech processing
-	alpha := 0.97
-	emphasized := make([]float64, len(melSpectrum))
-
-	if len(melSpectrum) > 0 {
-		emphasized[0] = melSpectrum[0]
-		for i := 1; i < len(melSpectrum); i++ {
-			emphasized[i] = melSpectrum[i] - alpha*melSpectrum[i-1]
+	// Check energy features consistency
+	if features.EnergyFeatures != nil {
+		if len(features.EnergyFeatures.ShortTimeEnergy) != expectedFrames {
+			return fmt.Errorf("energy frame count mismatch: expected %d, got %d",
+				expectedFrames, len(features.EnergyFeatures.ShortTimeEnergy))
 		}
 	}
 
-	return emphasized
+	// Check spectral features consistency
+	if features.SpectralFeatures != nil {
+		if len(features.SpectralFeatures.SpectralCentroid) != expectedFrames {
+			return fmt.Errorf("spectral frame count mismatch: expected %d, got %d",
+				expectedFrames, len(features.SpectralFeatures.SpectralCentroid))
+		}
+	}
+
+	return nil
 }
 
 func (s *SpeechFeatureExtractor) applyLiftering(mfcc []float64) []float64 {
-	// Apply liftering to smooth cepstral coefficients
-	L := 22 // Liftering parameter
+	L := 22.0
 	liftered := make([]float64, len(mfcc))
 
 	for i := range mfcc {
 		if i == 0 {
-			liftered[i] = mfcc[i] // Don't lifter C0
+			liftered[i] = mfcc[i]
 		} else {
-			lifter := 1 + float64(L)/2*math.Sin(math.Pi*float64(i)/float64(L))
+			lifter := 1.0 + L/2.0*math.Sin(math.Pi*float64(i)/L)
 			liftered[i] = mfcc[i] * lifter
 		}
 	}
@@ -822,7 +917,7 @@ func (s *SpeechFeatureExtractor) calculateSpeechDynamicRange(pcm []float64) floa
 	return 0
 }
 
-func (s *SpeechFeatureExtractor) calculateSpeechSilenceRatio(energies []float64, sampleRate int) float64 {
+func (s *SpeechFeatureExtractor) calculateSpeechSilenceRatio(energies []float64) float64 {
 	// Calculate silence ratio with speech-specific thresholds
 	if len(energies) == 0 {
 		return 0
@@ -970,31 +1065,6 @@ func (s *SpeechFeatureExtractor) calculateSpeechLoudnessRange(energies []float64
 	return 0
 }
 
-func (s *SpeechFeatureExtractor) calculateSpeechSpectralFlux(speechMags [][]float64) []float64 {
-	// Calculate spectral flux for speech activity detection
-	if len(speechMags) < 2 {
-		return nil
-	}
-
-	flux := make([]float64, len(speechMags)-1)
-
-	for t := 1; t < len(speechMags); t++ {
-		sum := 0.0
-		minLen := len(speechMags[t])
-		minLen = min(len(speechMags[t-1]), minLen)
-
-		for f := 0; f < minLen; f++ {
-			diff := speechMags[t][f] - speechMags[t-1][f]
-			if diff > 0 { // Only positive changes
-				sum += diff * diff
-			}
-		}
-		flux[t-1] = math.Sqrt(sum)
-	}
-
-	return flux
-}
-
 func (s *SpeechFeatureExtractor) findClosestFreqBin(targetFreq float64, freqs []float64) int {
 	// Find the frequency bin closest to target frequency
 	minDiff := math.Inf(1)
@@ -1013,35 +1083,132 @@ func (s *SpeechFeatureExtractor) findClosestFreqBin(targetFreq float64, freqs []
 
 // Common helper methods shared with other extractors
 
+func (s *SpeechFeatureExtractor) computeMagnitudeStatistics(magnitude [][]float64) map[string]float64 {
+	var allMagnitudes []float64
+
+	for _, frame := range magnitude {
+		for _, mag := range frame {
+			if mag > 0 {
+				allMagnitudes = append(allMagnitudes, mag)
+			}
+		}
+	}
+
+	if len(allMagnitudes) == 0 {
+		return map[string]float64{
+			"mean":   1.0,
+			"max":    1.0,
+			"median": 1.0,
+		}
+	}
+
+	// Sort for percentiles
+	sort.Float64s(allMagnitudes)
+
+	// Calculate statistics
+	mean := s.calculateMean(allMagnitudes)
+	max := allMagnitudes[len(allMagnitudes)-1]
+	median := allMagnitudes[len(allMagnitudes)/2]
+	p95 := allMagnitudes[int(0.95*float64(len(allMagnitudes)))]
+
+	return map[string]float64{
+		"mean":   mean,
+		"max":    max,
+		"median": median,
+		"p95":    p95,
+	}
+}
+
+func (s *SpeechFeatureExtractor) createMelFilterBank(numFilters int, lowFreq, highFreq float64, freqBins, sampleRate int) ([][]float64, error) {
+	if numFilters <= 0 || freqBins <= 0 || sampleRate <= 0 {
+		return nil, fmt.Errorf("invalid parameters: filters=%d, bins=%d, rate=%d", numFilters, freqBins, sampleRate)
+	}
+
+	nyquist := float64(sampleRate) / 2.0
+	if highFreq > nyquist {
+		highFreq = nyquist
+	}
+
+	// Convert to mel scale
+	lowMel := s.hzToMel(lowFreq)
+	highMel := s.hzToMel(highFreq)
+
+	// Create mel points
+	melPoints := make([]float64, numFilters+2)
+	melStep := (highMel - lowMel) / float64(numFilters+1)
+	for i := range melPoints {
+		melPoints[i] = lowMel + float64(i)*melStep
+	}
+
+	// Convert back to Hz
+	freqPoints := make([]float64, len(melPoints))
+	for i, mel := range melPoints {
+		freqPoints[i] = s.melToHz(mel)
+	}
+
+	// FIXED: Correct frequency resolution for FFT
+	freqResolution := float64(sampleRate) / float64(2*(freqBins-1))
+
+	// Create normalized filter bank
+	filterBank := make([][]float64, numFilters)
+	for i := 0; i < numFilters; i++ {
+		filter := make([]float64, freqBins)
+		filterSum := 0.0
+
+		leftFreq := freqPoints[i]
+		centerFreq := freqPoints[i+1]
+		rightFreq := freqPoints[i+2]
+
+		for j := 0; j < freqBins; j++ {
+			freq := float64(j) * freqResolution
+
+			if freq >= leftFreq && freq <= rightFreq {
+				var weight float64
+				if freq <= centerFreq {
+					if centerFreq > leftFreq {
+						weight = (freq - leftFreq) / (centerFreq - leftFreq)
+					}
+				} else {
+					if rightFreq > centerFreq {
+						weight = (rightFreq - freq) / (rightFreq - centerFreq)
+					}
+				}
+				filter[j] = weight
+				filterSum += weight
+			}
+		}
+
+		// Normalize filter to preserve energy
+		if filterSum > 0 {
+			for j := range filter {
+				filter[j] /= filterSum
+			}
+		}
+
+		filterBank[i] = filter
+	}
+
+	return filterBank, nil
+}
+
 func (s *SpeechFeatureExtractor) applyMelFilters(magnitude []float64, filterBank [][]float64) []float64 {
 	melSpectrum := make([]float64, len(filterBank))
 
 	for i, filter := range filterBank {
 		sum := 0.0
-		for j, coeff := range filter {
-			if j < len(magnitude) {
-				sum += magnitude[j] * coeff
-			}
+		for j := 0; j < len(filter) && j < len(magnitude); j++ {
+			sum += magnitude[j] * filter[j]
 		}
+
+		// Ensure minimum value to prevent log issues
+		if sum < 1e-8 {
+			sum = 1e-8
+		}
+
 		melSpectrum[i] = sum
 	}
 
 	return melSpectrum
-}
-
-func (s *SpeechFeatureExtractor) applyDCT(logMelSpectrum []float64, numCoeffs int) []float64 {
-	mfcc := make([]float64, numCoeffs)
-	N := float64(len(logMelSpectrum))
-
-	for k := range numCoeffs {
-		sum := 0.0
-		for n := range len(logMelSpectrum) {
-			sum += logMelSpectrum[n] * math.Cos(math.Pi*float64(k)*(float64(n)+0.5)/N)
-		}
-		mfcc[k] = sum
-	}
-
-	return mfcc
 }
 
 func (s *SpeechFeatureExtractor) calculateSpectralCentroid(magnitude, freqs []float64) float64 {
@@ -1244,4 +1411,240 @@ func (s *SpeechFeatureExtractor) calculateVariance(values []float64) float64 {
 	}
 
 	return variance / float64(len(values))
+}
+
+func (s *SpeechFeatureExtractor) calculateSpectralFlux(spectrogram *analyzers.SpectrogramResult) []float64 {
+	if spectrogram.TimeFrames < 2 {
+		return make([]float64, max(0, spectrogram.TimeFrames-1))
+	}
+
+	flux := make([]float64, spectrogram.TimeFrames-1)
+
+	for t := 1; t < spectrogram.TimeFrames; t++ {
+		sum := 0.0
+		minLen := min(len(spectrogram.Magnitude[t]), len(spectrogram.Magnitude[t-1]))
+
+		for f := range minLen {
+			diff := spectrogram.Magnitude[t][f] - spectrogram.Magnitude[t-1][f]
+			if diff > 0 { // Only positive changes (energy increases)
+				sum += diff * diff
+			}
+		}
+		flux[t-1] = math.Sqrt(sum)
+	}
+
+	return flux
+}
+
+func (s *SpeechFeatureExtractor) AuditFeatureUsage(features *ExtractedFeatures) {
+	logger := s.logger.WithFields(logging.Fields{
+		"function": "AuditFeatureUsage",
+	})
+
+	logger.Info("=== FEATURE USAGE AUDIT ===")
+
+	if len(features.MFCC) > 0 {
+		logger.Info("✅ MFCC features extracted", logging.Fields{
+			"frames": len(features.MFCC),
+			"coeffs": len(features.MFCC[0]),
+		})
+	} else {
+		logger.Info("❌ MFCC features missing or empty")
+	}
+
+	if features.EnergyFeatures != nil && len(features.EnergyFeatures.ShortTimeEnergy) > 0 {
+		logger.Info("✅ Energy features extracted", logging.Fields{
+			"frames": len(features.EnergyFeatures.ShortTimeEnergy),
+		})
+	} else {
+		logger.Info("❌ Energy features missing or empty")
+	}
+
+	if features.SpectralFeatures != nil && len(features.SpectralFeatures.SpectralCentroid) > 0 {
+		logger.Info("✅ Spectral features extracted", logging.Fields{
+			"frames": len(features.SpectralFeatures.SpectralCentroid),
+		})
+	} else {
+		logger.Info("❌ Spectral features missing or empty")
+	}
+
+	if features.SpeechFeatures != nil {
+		logger.Info("✅ Speech-specific features extracted")
+	} else {
+		logger.Info("❌ Speech-specific features missing")
+	}
+
+	if features.TemporalFeatures != nil && len(features.TemporalFeatures.RMSEnergy) > 0 {
+		logger.Info("✅ Temporal features extracted", logging.Fields{
+			"frames": len(features.TemporalFeatures.RMSEnergy),
+		})
+	} else {
+		logger.Info("❌ Temporal features missing or empty")
+	}
+
+	logger.Info("=== END FEATURE AUDIT ===")
+}
+
+func (s *SpeechFeatureExtractor) normalizeMagnitude(magnitude []float64, stats map[string]float64) []float64 {
+	normalized := make([]float64, len(magnitude))
+
+	// Use 95th percentile as normalization factor to avoid outliers
+	normFactor := stats["p95"]
+	if normFactor == 0 {
+		normFactor = 1.0
+	}
+
+	for i, mag := range magnitude {
+		// Normalize and add small offset
+		normalized[i] = (mag / normFactor) + 1e-8
+	}
+
+	return normalized
+}
+
+func (s *SpeechFeatureExtractor) computeLogMelSpectrum(melSpectrum []float64) []float64 {
+	logMelSpectrum := make([]float64, len(melSpectrum))
+
+	for i, val := range melSpectrum {
+		// Use natural log for standard MFCC
+		logMelSpectrum[i] = math.Log(val)
+	}
+
+	return logMelSpectrum
+}
+
+func (s *SpeechFeatureExtractor) applyDCT(logMelSpectrum []float64, numCoeffs int) []float64 {
+	if len(logMelSpectrum) == 0 {
+		return make([]float64, numCoeffs)
+	}
+
+	mfcc := make([]float64, numCoeffs)
+	N := float64(len(logMelSpectrum))
+
+	for k := 0; k < numCoeffs; k++ {
+		sum := 0.0
+		for n := 0; n < len(logMelSpectrum); n++ {
+			sum += logMelSpectrum[n] * math.Cos(math.Pi*float64(k)*(float64(n)+0.5)/N)
+		}
+
+		// Standard DCT normalization
+		normFactor := math.Sqrt(2.0 / N)
+		if k == 0 {
+			normFactor = math.Sqrt(1.0 / N)
+		}
+
+		mfcc[k] = sum * normFactor
+	}
+
+	return mfcc
+}
+
+func (s *SpeechFeatureExtractor) postProcessMFCC(mfcc [][]float64) [][]float64 {
+	if len(mfcc) == 0 {
+		return mfcc
+	}
+
+	// Calculate global statistics
+	var allCoeffs []float64
+	for _, frame := range mfcc {
+		allCoeffs = append(allCoeffs, frame...)
+	}
+
+	if len(allCoeffs) == 0 {
+		return mfcc
+	}
+
+	// Calculate mean and std
+	mean := s.calculateMean(allCoeffs)
+	std := math.Sqrt(s.calculateVariance(allCoeffs))
+
+	// Z-score normalization if values are too extreme
+	if std > 20 || math.Abs(mean) > 10 {
+		s.logger.Info("Applying z-score normalization to MFCC", logging.Fields{
+			"original_mean": mean,
+			"original_std":  std,
+		})
+
+		for i := range mfcc {
+			for j := range mfcc[i] {
+				if std > 0 {
+					mfcc[i][j] = (mfcc[i][j] - mean) / std * 5.0 // Scale to reasonable range
+				}
+			}
+		}
+	}
+
+	// Final clamp with less aggressive bounds
+	for i := range mfcc {
+		for j := range mfcc[i] {
+			if math.IsNaN(mfcc[i][j]) || math.IsInf(mfcc[i][j], 0) {
+				mfcc[i][j] = 0.0
+			} else if mfcc[i][j] > 25 {
+				mfcc[i][j] = 25.0
+			} else if mfcc[i][j] < -25 {
+				mfcc[i][j] = -25.0
+			}
+		}
+	}
+
+	return mfcc
+}
+
+func (s *SpeechFeatureExtractor) normalizeMFCC(mfcc [][]float64) [][]float64 {
+	if len(mfcc) == 0 {
+		return mfcc
+	}
+
+	// Calculate statistics per coefficient
+	numCoeffs := len(mfcc[0])
+	coeffStats := make([]struct{ mean, std float64 }, numCoeffs)
+
+	for c := 0; c < numCoeffs; c++ {
+		values := make([]float64, len(mfcc))
+		for t := 0; t < len(mfcc); t++ {
+			values[t] = mfcc[t][c]
+		}
+
+		mean := s.calculateMean(values)
+		std := math.Sqrt(s.calculateVariance(values))
+
+		coeffStats[c].mean = mean
+		coeffStats[c].std = std
+	}
+
+	// Apply coefficient-wise normalization
+	for t := 0; t < len(mfcc); t++ {
+		for c := 0; c < numCoeffs; c++ {
+			// Handle extreme values based on coefficient type
+			if c == 0 {
+				// C0 (energy) - clamp to reasonable range
+				if mfcc[t][c] > 20 {
+					mfcc[t][c] = 20.0
+				} else if mfcc[t][c] < -20 {
+					mfcc[t][c] = -20.0
+				}
+			} else {
+				// Other coefficients - use z-score normalization if needed
+				if coeffStats[c].std > 15 {
+					if coeffStats[c].std > 0 {
+						mfcc[t][c] = (mfcc[t][c] - coeffStats[c].mean) / coeffStats[c].std * 5.0
+					}
+				}
+
+				// Final clamp
+				if mfcc[t][c] > 15 {
+					mfcc[t][c] = 15.0
+				} else if mfcc[t][c] < -15 {
+					mfcc[t][c] = -15.0
+				}
+			}
+
+			// Handle NaN/Inf
+			if math.IsNaN(mfcc[t][c]) || math.IsInf(mfcc[t][c], 0) {
+				mfcc[t][c] = 0.0
+			}
+		}
+	}
+
+	return mfcc
 }

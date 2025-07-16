@@ -434,7 +434,7 @@ func (m *MusicFeatureExtractor) extractEnergyFeatures(pcm []float64, sampleRate 
 
 	numFrames := (len(pcm)-frameSize)/hopSize + 1
 	if numFrames <= 0 {
-		return features, fmt.Errorf("Insufficient audio length for energy analysis")
+		return features, fmt.Errorf("insufficient audio length for energy analysis")
 	}
 
 	features.ShortTimeEnergy = make([]float64, numFrames)
@@ -528,7 +528,7 @@ func (m *MusicFeatureExtractor) calculateSpectralRolloff(magnitude []float64, fr
 	return 0
 }
 
-func (m *MusicFeatureExtractor) calculateSpectralBandwidth(magnitude, freqs []float64, centroid float64) float64 {
+/* func (m *MusicFeatureExtractor) calculateSpectralBandwidth(magnitude, freqs []float64, centroid float64) float64 {
 	numerator := 0.0
 	denominator := 0.0
 
@@ -542,7 +542,7 @@ func (m *MusicFeatureExtractor) calculateSpectralBandwidth(magnitude, freqs []fl
 		return 0
 	}
 	return math.Sqrt(numerator / denominator)
-}
+} */
 
 func (m *MusicFeatureExtractor) calculateSpectralFlatness(magnitude []float64) float64 {
 	if len(magnitude) == 0 {
@@ -896,7 +896,7 @@ func (m *MusicFeatureExtractor) calculateDynamicRange(pcm []float64) float64 {
 
 	for _, sample := range pcm {
 		abs := math.Abs(sample)
-		abs = min(abs, maxVal)
+		abs = minFloat64(abs, maxVal)
 		if abs < minVal && abs > 1e-10 {
 			minVal = abs
 		}

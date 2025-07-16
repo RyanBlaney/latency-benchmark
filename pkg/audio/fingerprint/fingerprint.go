@@ -165,6 +165,12 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 	hopSize := fg.config.FeatureConfig.HopSize
 	windowType := analyzers.WindowHann // Good default for audio analysis
 
+	logger.Info("STFT Configuration", logging.Fields{
+		"window_size": windowSize,
+		"hop_size":    hopSize,
+		"pcm_length":  len(audioData.PCM),
+	})
+
 	spectrogram, err := fg.spectralAnalyzer.ComputeSTFTWithWindow(
 		audioData.PCM,
 		windowSize,
@@ -174,11 +180,12 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 		logger.Error(err, "Failed to compute STFT")
 	}
 
-	logger.Info("STFT computed", logging.Fields{
-		"time_frames":     spectrogram.TimeFrames,
-		"freq_bins":       spectrogram.FreqBins,
-		"pcm_length":      len(audioData.PCM),
-		"expected_frames": (len(audioData.PCM)-windowSize)/hopSize + 1,
+	logger.Info("STFT Debug Info", logging.Fields{
+		"pcm_length":     len(audioData.PCM),
+		"window_size":    windowSize,
+		"hop_size":       hopSize,
+		"stft_frames":    spectrogram.TimeFrames,
+		"stft_freq_bins": spectrogram.FreqBins,
 	})
 
 	// Extract features using appropriate extractor

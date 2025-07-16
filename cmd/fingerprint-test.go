@@ -3,15 +3,18 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+	// "github.com/spf13/viper"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 var (
@@ -90,7 +93,7 @@ type FingerprintTestResults struct {
 	TotalTime      time.Duration
 }
 
-func runFingerprintTest(cmd *cobra.Command, args []string) error {
+/* func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	urls := args
 	verbose := ftVerbose || viper.GetBool("verbose")
 
@@ -258,6 +261,286 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	printFinalResults(testResults, verbose)
 
 	return nil
+} */
+
+func runFingerprintTest(cmd *cobra.Command, args []string) error {
+	urls := args
+	// verbose := ftVerbose || viper.GetBool("verbose")
+
+	fmt.Printf("🎵 FINGERPRINT PIPELINE TEST\n")
+	fmt.Printf("============================\n\n")
+
+	// Configuration summary
+	fmt.Printf("⚙️  Configuration:\n")
+	fmt.Printf("   Mode: %s\n", map[bool]string{true: "Parallel", false: "Sequential"}[ftParallel])
+	fmt.Printf("   Inputs: %d\n", len(urls))
+	fmt.Printf("   Duration: %.1f seconds\n", ftSegmentDuration.Seconds())
+	fmt.Printf("   Content Type: %s\n", ftContentType)
+	fmt.Printf("   Feature Rate: %.1f Hz\n", ftFeatureRate)
+	fmt.Printf("   Max Offset: %.1f seconds\n", ftMaxOffsetSec)
+
+	// Check input types
+	localFiles := 0
+	streamUrls := 0
+	for _, input := range urls {
+		if isLocalFile(input) {
+			localFiles++
+		} else {
+			streamUrls++
+		}
+	}
+
+	fmt.Printf("   Input Types: %d local files, %d stream URLs\n", localFiles, streamUrls)
+
+	fmt.Printf("\n🧪 Test Components:\n")
+	fmt.Printf("   Feature Extraction: %s\n", enabledStatus(ftTestExtraction))
+	fmt.Printf("   Temporal Alignment: %s\n", enabledStatus(ftTestAlignment))
+	fmt.Printf("   Stream Comparison: %s\n", enabledStatus(ftTestComparison))
+	fmt.Printf("\n")
+
+	// Create context with overall timeout
+	ctx, cancel := context.WithTimeout(context.Background(), ftTimeout)
+	defer cancel()
+
+	timer := NewPerformanceTimer()
+	timer.StartEvent("overall")
+
+	var err error
+
+	// Create Stream Manager (only needed for live streams)
+	var manager *stream.Manager
+	if streamUrls > 0 {
+		fmt.Printf("🏗️  Setting up Stream Manager...\n")
+		managerConfig := &stream.ManagerConfig{
+			StreamTimeout:        ftTimeout,
+			OverallTimeout:       ftTimeout + (10 * time.Second),
+			MaxConcurrentStreams: ftMaxConcurrent,
+			ResultBufferSize:     len(urls),
+		}
+		manager = stream.NewManagerWithConfig(managerConfig)
+		fmt.Printf("✅ Stream Manager configured\n\n")
+	}
+
+	// Initialize test results
+	testResults := &FingerprintTestResults{
+		FeatureResults:    make(map[string]*extractors.ExtractedFeatures),
+		AlignmentResults:  make(map[string]*extractors.AlignmentResult),
+		ComparisonResults: make(map[string]float64),
+	}
+
+	// PHASE 1: Audio Extraction
+	fmt.Printf("🎵 PHASE 1: Audio Extraction\n")
+	fmt.Printf("=============================\n")
+
+	timer.StartEvent("audio_extraction")
+
+	var audioResults *stream.ParallelExtractionResult
+
+	if localFiles == len(urls) {
+		// All inputs are local files
+		fmt.Printf("📁 Extracting audio from %d local files...\n", len(urls))
+		audioResults, err = extractAudioFromLocalFiles(ctx, urls, ftSegmentDuration)
+	} else if streamUrls == len(urls) {
+		// All inputs are streams
+		fmt.Printf("📡 Extracting audio from %d streams...\n", len(urls))
+		if ftParallel {
+			audioResults, err = manager.ExtractAudioParallel(ctx, urls, ftSegmentDuration)
+		} else {
+			audioResults, err = manager.ExtractAudioSequential(ctx, urls, ftSegmentDuration)
+		}
+	} else {
+		// Mixed inputs - handle separately
+		fmt.Printf("📋 Extracting audio from %d mixed inputs...\n", len(urls))
+		audioResults, err = extractMixedInputs(ctx, urls, ftSegmentDuration, manager)
+	}
+
+	timer.EndEvent("audio_extraction")
+	testResults.ExtractionTime = timer.GetDuration("audio_extraction")
+	testResults.AudioResults = audioResults
+
+	if err != nil {
+		return fmt.Errorf("❌ Audio extraction failed: %v", err)
+	}
+
+	fmt.Printf("✅ Audio extraction completed in %.2f seconds\n", testResults.ExtractionTime.Seconds())
+	fmt.Printf("   Successful: %d/%d streams\n", audioResults.SuccessfulStreams, len(urls))
+
+	if audioResults.FailedStreams > 0 {
+		fmt.Printf("   ⚠️  Failed: %d streams\n", audioResults.FailedStreams)
+		// Show which ones failed
+		for i, result := range audioResults.Results {
+			if result.Error != nil {
+				fmt.Printf("     - %s: %v\n", urls[i], result.Error)
+			}
+		}
+	}
+	fmt.Printf("\n")
+
+	// Check if we have enough successful streams
+	if audioResults.SuccessfulStreams < 2 {
+		return fmt.Errorf("❌ Need at least 2 successful streams for fingerprinting, got %d", audioResults.SuccessfulStreams)
+	}
+
+	// PHASE 2: Feature Extraction
+	if ftTestExtraction {
+		fmt.Printf("🧬 PHASE 2: Feature Extraction\n")
+		fmt.Printf("==============================\n")
+
+		timer.StartEvent("feature_extraction")
+
+		err = runFeatureExtraction(testResults, verbose)
+		if err != nil {
+			return fmt.Errorf("❌ Feature extraction failed: %v", err)
+		}
+
+		timer.EndEvent("feature_extraction")
+		testResults.ExtractionTime = timer.GetDuration("feature_extraction")
+
+		fmt.Printf("✅ Feature extraction completed in %.2f seconds\n", testResults.ExtractionTime.Seconds())
+		fmt.Printf("   Extracted features from %d streams\n", len(testResults.FeatureResults))
+		fmt.Printf("\n")
+	} else {
+		fmt.Printf("⏭️  PHASE 2: Feature Extraction SKIPPED\n\n")
+	}
+
+	// PHASE 3: Temporal Alignment
+	if ftTestAlignment && ftTestExtraction {
+		fmt.Printf("⏰ PHASE 3: Temporal Alignment\n")
+		fmt.Printf("==============================\n")
+
+		timer.StartEvent("alignment")
+
+		err = runTemporalAlignment(testResults, verbose)
+		if err != nil {
+			return fmt.Errorf("❌ Temporal alignment failed: %v", err)
+		}
+
+		timer.EndEvent("alignment")
+		testResults.AlignmentTime = timer.GetDuration("alignment")
+
+		fmt.Printf("✅ Temporal alignment completed in %.2f seconds\n", testResults.AlignmentTime.Seconds())
+		fmt.Printf("   Analyzed %d stream pairs\n", len(testResults.AlignmentResults))
+		fmt.Printf("\n")
+	} else {
+		fmt.Printf("⏭️  PHASE 3: Temporal Alignment SKIPPED\n\n")
+	}
+
+	// PHASE 4: Stream Comparison
+	if ftTestComparison && ftTestExtraction {
+		fmt.Printf("🔍 PHASE 4: Stream Comparison\n")
+		fmt.Printf("=============================\n")
+
+		timer.StartEvent("comparison")
+
+		err = runStreamComparison(testResults, verbose)
+		if err != nil {
+			return fmt.Errorf("❌ Stream comparison failed: %v", err)
+		}
+
+		timer.EndEvent("comparison")
+		testResults.ComparisonTime = timer.GetDuration("comparison")
+
+		fmt.Printf("✅ Stream comparison completed in %.2f seconds\n", testResults.ComparisonTime.Seconds())
+		fmt.Printf("   Compared %d stream pairs\n", len(testResults.ComparisonResults))
+		fmt.Printf("\n")
+	} else {
+		fmt.Printf("⏭️  PHASE 4: Stream Comparison SKIPPED\n\n")
+	}
+
+	// Final Results Summary
+	timer.EndEvent("overall")
+	testResults.TotalTime = timer.GetDuration("overall")
+
+	fmt.Printf("📊 FINAL RESULTS\n")
+	fmt.Printf("================\n")
+
+	printFinalResults(testResults, verbose)
+
+	return nil
+}
+
+// Handle mixed local files and stream URLs
+func extractMixedInputs(ctx context.Context, inputs []string, segmentDuration time.Duration, manager *stream.Manager) (*stream.ParallelExtractionResult, error) {
+	results := make([]*stream.AudioExtractionResult, len(inputs))
+	successfulStreams := 0
+	failedStreams := 0
+
+	for i, input := range inputs {
+		if isLocalFile(input) {
+			// Handle as local file
+			cleanPath := strings.TrimPrefix(input, "file://")
+			fileData, err := os.ReadFile(cleanPath)
+			if err != nil {
+				results[i] = &stream.AudioExtractionResult{
+					URL:   input,
+					Error: fmt.Errorf("failed to read file: %w", err),
+				}
+				failedStreams++
+				continue
+			}
+
+			decoder := transcode.NewNormalizingDecoder(ftContentType)
+
+			anyData, err := decoder.DecodeBytes(fileData)
+			if err != nil {
+				results[i] = &stream.AudioExtractionResult{
+					URL:   input,
+					Error: fmt.Errorf("failed to decode audio: %w", err),
+				}
+				failedStreams++
+				continue
+			}
+
+			var audioData *common.AudioData
+			if commonAudio, ok := anyData.(*common.AudioData); ok {
+				audioData = commonAudio
+			} else {
+				// Use reflection to convert unknown AudioData type to common.AudioData
+				audioData = common.ConvertToAudioData(anyData)
+				if audioData == nil {
+					return nil, fmt.Errorf("decoder returned unexpected type: %T", anyData)
+				}
+			}
+
+			// Truncate if needed
+			if segmentDuration > 0 {
+				maxSamples := int(segmentDuration.Seconds() * float64(audioData.SampleRate))
+				if len(audioData.PCM) > maxSamples {
+					audioData.PCM = audioData.PCM[:maxSamples]
+				}
+			}
+
+			results[i] = &stream.AudioExtractionResult{
+				URL:       input,
+				AudioData: audioData,
+				Error:     nil,
+			}
+			successfulStreams++
+		} else {
+			// Handle as stream URL
+			streamResults, err := manager.ExtractAudioSequential(ctx, []string{input}, segmentDuration)
+			if err != nil || len(streamResults.Results) == 0 {
+				results[i] = &stream.AudioExtractionResult{
+					URL:   input,
+					Error: fmt.Errorf("failed to extract from stream: %w", err),
+				}
+				failedStreams++
+			} else {
+				results[i] = streamResults.Results[0]
+				if results[i].Error == nil {
+					successfulStreams++
+				} else {
+					failedStreams++
+				}
+			}
+		}
+	}
+
+	return &stream.ParallelExtractionResult{
+		Results:           results,
+		SuccessfulStreams: successfulStreams,
+		FailedStreams:     failedStreams,
+	}, nil
 }
 
 func runFeatureExtraction(results *FingerprintTestResults, verbose bool) error {
@@ -288,8 +571,17 @@ func runFeatureExtraction(results *FingerprintTestResults, verbose bool) error {
 		// Create spectral analyzer for this stream
 		analyzer := analyzers.NewSpectralAnalyzer(result.AudioData.SampleRate)
 
+		windowSize := featureConfig.WindowSize
+		hopSize := featureConfig.HopSize
+		windowType := analyzers.WindowHann
+
 		// Compute spectrogram
-		spectrogram, err := analyzer.ComputeFFT(result.AudioData.PCM)
+		spectrogram, err := analyzer.ComputeSTFTWithWindow(
+			result.AudioData.PCM,
+			windowSize,
+			hopSize,
+			windowType,
+		)
 		if err != nil {
 			return fmt.Errorf("failed to compute spectrogram for %s: %w", streamID, err)
 		}
@@ -320,7 +612,7 @@ func runTemporalAlignment(results *FingerprintTestResults, verbose bool) error {
 	streamIDs := getStreamIDs(results.FeatureResults)
 
 	// Compare each pair of streams
-	for i := 0; i < len(streamIDs); i++ {
+	for i := range len(streamIDs) {
 		for j := i + 1; j < len(streamIDs); j++ {
 			stream1ID := streamIDs[i]
 			stream2ID := streamIDs[j]
@@ -346,7 +638,7 @@ func runTemporalAlignment(results *FingerprintTestResults, verbose bool) error {
 				status = "✅"
 			}
 
-			fmt.Printf("   %s %s: offset=%.2fs, confidence=%.3f, valid=%d\n",
+			fmt.Printf("   %s %s: offset=%.2fs, confidence=%.3f, valid=%t\n",
 				status, pairID, alignment.OffsetSeconds, alignment.Confidence, alignment.IsValid)
 
 			if verbose && alignment.IsValid {
@@ -791,4 +1083,89 @@ func parseContentTypeFlag(contentTypeStr string) config.ContentType {
 		fmt.Printf("   ⚠️  Unknown content type '%s', using music\n", contentTypeStr)
 		return config.ContentMusic
 	}
+}
+
+func extractAudioFromLocalFiles(ctx context.Context, filePaths []string, segmentDuration time.Duration) (*stream.ParallelExtractionResult, error) {
+	results := make([]*stream.AudioExtractionResult, len(filePaths))
+	successfulStreams := 0
+	failedStreams := 0
+
+	for i, filePath := range filePaths {
+		// Remove file:// prefix if present
+		cleanPath := strings.TrimPrefix(filePath, "file://")
+
+		fmt.Printf("   Reading file: %s\n", cleanPath)
+
+		// Read the file
+		fileData, err := os.ReadFile(cleanPath)
+		if err != nil {
+			results[i] = &stream.AudioExtractionResult{
+				URL:   filePath,
+				Error: fmt.Errorf("failed to read file: %w", err),
+			}
+			failedStreams++
+			continue
+		}
+
+		// Decode the audio using your transcode package
+		decoder := transcode.NewNormalizingDecoder(ftContentType)
+
+		anyData, err := decoder.DecodeBytes(fileData)
+		if err != nil {
+			results[i] = &stream.AudioExtractionResult{
+				URL:   filePath,
+				Error: fmt.Errorf("failed to decode audio: %w", err),
+			}
+			failedStreams++
+			continue
+		}
+
+		var audioData *common.AudioData
+		if commonAudio, ok := anyData.(*common.AudioData); ok {
+			audioData = commonAudio
+		} else {
+			// Use reflection to convert unknown AudioData type to common.AudioData
+			audioData = common.ConvertToAudioData(anyData)
+			if audioData == nil {
+				return nil, fmt.Errorf("decoder returned unexpected type: %T", anyData)
+			}
+		}
+
+		// Truncate to segment duration if needed
+		if segmentDuration > 0 {
+			maxSamples := int(segmentDuration.Seconds() * float64(audioData.SampleRate))
+			if len(audioData.PCM) > maxSamples {
+				audioData.PCM = audioData.PCM[:maxSamples]
+			}
+		}
+
+		results[i] = &stream.AudioExtractionResult{
+			URL:       filePath,
+			AudioData: audioData,
+			Error:     nil,
+		}
+		successfulStreams++
+
+		fmt.Printf("   ✅ Loaded: %s (%.1fs, %dHz, %d samples)\n",
+			cleanPath,
+			float64(len(audioData.PCM))/float64(audioData.SampleRate),
+			audioData.SampleRate,
+			len(audioData.PCM))
+	}
+
+	return &stream.ParallelExtractionResult{
+		Results:           results,
+		SuccessfulStreams: successfulStreams,
+		FailedStreams:     failedStreams,
+	}, nil
+}
+
+// Check if input is a local file path
+func isLocalFile(input string) bool {
+	// Check for file:// prefix or local file patterns
+	return strings.HasPrefix(input, "file://") ||
+		strings.HasPrefix(input, "/") ||
+		strings.HasPrefix(input, "./") ||
+		strings.HasPrefix(input, "../") ||
+		(!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://"))
 }
