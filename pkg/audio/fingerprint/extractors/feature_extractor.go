@@ -36,9 +36,9 @@ func (f *FeatureExtractorFactory) CreateExtractor(contentType config.ContentType
 	})
 
 	switch contentType {
-	case config.ContentMusic:
-		logger.Debug("Creating music feature extractor")
-		return NewMusicFeatureExtractor(&featureConfig), nil
+	// case config.ContentMusic:
+	// logger.Debug("Creating music feature extractor")
+	// return NewMusicFeatureExtractor(&featureConfig), nil
 
 	case config.ContentNews:
 		logger.Debug("Creating news feature extractor")
@@ -48,16 +48,16 @@ func (f *FeatureExtractorFactory) CreateExtractor(contentType config.ContentType
 		logger.Debug("Creating talk feature extractor")
 		return NewSpeechFeatureExtractor(&featureConfig, false), nil
 
-	case config.ContentSports:
-		logger.Debug("Creating sports feature extractor")
-		return NewSportsFeatureExtractor(&featureConfig), nil
+	// case config.ContentSports:
+	// logger.Debug("Creating sports feature extractor")
+	// return NewSportsFeatureExtractor(&featureConfig), nil
 
-	case config.ContentMixed:
-		logger.Debug("Creating mixed content feature extractor")
-		return NewMixedFeatureExtractor(&featureConfig), nil
+	// case config.ContentMixed:
+	// logger.Debug("Creating mixed content feature extractor")
+	// return NewMixedFeatureExtractor(&featureConfig), nil
 
 	default:
 		logger.Debug("Creating general feature extractor for unknown content")
-		return NewGeneralFeatureExtractor(&featureConfig), nil
+		return NewSpeechFeatureExtractor(&featureConfig, true), nil
 	}
 }

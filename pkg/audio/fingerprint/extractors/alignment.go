@@ -4,301 +4,536 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/goccmack/godsp"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/stats"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/temporal"
+	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
-// LightweightAlignment performs fast temporal alignment using go-dsp cross-correlation
-type LightweightAlignment struct {
-	MaxOffsetSeconds float64 // Maximum expected offset
-	FeatureRateHz    float64 // Feature extraction rate (features per second)
+// AlignmentExtractor performs audio alignment and synchronization analysis
+// WHY: Critical for fingerprint matching, determining temporal relationships,
+// and measuring similarity between audio segments of different lengths
+type AlignmentExtractor struct {
+	config *config.FeatureConfig
+	logger logging.Logger
+
+	// Alignment algorithms from algorithms package
+	alignmentAnalyzer *stats.AlignmentAnalyzer
+	dtwAnalyzer       *stats.DTWAlignment
+	crossCorr         *stats.CrossCorrelation
+	energy            *temporal.Energy
+
+	// Alignment parameters
+	maxLagSamples    int
+	maxLagSeconds    float64
+	stepSize         int
+	confidenceThresh float64
 }
 
-// NewLightweightAlignment creates a new lightweight alignment analyzer
-func NewLightweightAlignment(maxOffsetSeconds, featureRateHz float64) *LightweightAlignment {
-	return &LightweightAlignment{
-		MaxOffsetSeconds: maxOffsetSeconds,
-		FeatureRateHz:    featureRateHz,
-	}
+// AlignmentFeatures contains alignment and synchronization results
+type AlignmentFeatures struct {
+	// Primary alignment results
+	BestAlignment *AlignmentResult `json:"best_alignment"` // Best overall alignment
+	DTWAlignment  *AlignmentResult `json:"dtw_alignment"`  // DTW-based alignment
+	CorrAlignment *AlignmentResult `json:"corr_alignment"` // Cross-correlation alignment
+
+	// Offset and timing information
+	TemporalOffset   float64 `json:"temporal_offset"`   // Best offset in seconds
+	OffsetConfidence float64 `json:"offset_confidence"` // Confidence in offset estimate
+	TimeStretch      float64 `json:"time_stretch"`      // Estimated time stretch factor
+
+	// Similarity metrics
+	OverallSimilarity float64            `json:"overall_similarity"` // Combined similarity score
+	FeatureSimilarity map[string]float64 `json:"feature_similarity"` // Per-feature similarity
+
+	// Quality and consistency
+	AlignmentQuality float64               `json:"alignment_quality"` // Quality of alignment
+	Consistency      *stats.AlignmentStats `json:"consistency"`       // Consistency analysis
+
+	// Analysis metadata
+	Method          string  `json:"method"`           // Best alignment method
+	ProcessingTime  float64 `json:"processing_time"`  // Processing time (ms)
+	QueryLength     float64 `json:"query_length"`     // Query length in seconds
+	ReferenceLength float64 `json:"reference_length"` // Reference length in seconds
 }
 
-// AlignmentResult contains the alignment results
+// AlignmentResult wraps the stats package result with additional context
 type AlignmentResult struct {
-	OffsetSeconds float64 // Time offset in seconds (stream2 relative to stream1)
-	Confidence    float64 // Correlation coefficient (0-1)
-	IsValid       bool    // Whether alignment is reliable
+	*stats.AlignmentResult
+	FeatureType string `json:"feature_type"`        // Type of features used
+	Success     bool   `json:"success"`             // Whether alignment succeeded
+	ErrorMsg    string `json:"error_msg,omitempty"` // Error message if failed
 }
 
-// FindAlignment finds temporal offset between two feature sets using go-dsp
-func (la *LightweightAlignment) FindAlignment(features1, features2 *ExtractedFeatures) (*AlignmentResult, error) {
-	// Extract the best signals for alignment (prioritize energy for speech)
-	signal1 := la.extractBestSignal(features1)
-	signal2 := la.extractBestSignal(features2)
+// NewAlignmentExtractor creates a new alignment feature extractor
+func NewAlignmentExtractor(featureConf *config.FeatureConfig, alignmentConf *config.AlignmentConfig) *AlignmentExtractor {
+	logger := logging.WithFields(logging.Fields{
+		"component": "alignment_extractor",
+	})
 
-	if len(signal1) == 0 || len(signal2) == 0 {
-		return nil, fmt.Errorf("no suitable signals for alignment")
+	maxLagSeconds := alignmentConf.MaxLagSeconds
+	maxLagSamples := int(maxLagSeconds * float64(featureConf.SampleRate))
+
+	maxLagFrames := maxLagSamples / featureConf.HopSize
+
+	return &AlignmentExtractor{
+		config: featureConf,
+		logger: logger,
+
+		// Initialize alignment algorithms
+		alignmentAnalyzer: stats.NewAlignmentAnalyzer(stats.AlignmentHybrid, maxLagFrames, featureConf.SampleRate, featureConf.HopSize, featureConf.WindowSize, alignmentConf.MinConfidence),
+		dtwAnalyzer:       stats.NewDTWAlignment(),
+		crossCorr:         stats.NewCrossCorrelation(maxLagFrames),
+		energy:            temporal.NewEnergy(featureConf.WindowSize, featureConf.HopSize, featureConf.SampleRate),
+
+		// Set parameters
+		maxLagSamples:    maxLagSamples,
+		maxLagSeconds:    maxLagSeconds,
+		stepSize:         alignmentConf.StepSize,
+		confidenceThresh: alignmentConf.MinConfidence,
+	}
+}
+
+// NewAlignmentExtractorWithMaxLag creates a new alignment feature extractor based on the max lag (in seconds)
+func NewAlignmentExtractorWithMaxLag(featureConf *config.FeatureConfig, alignmentConf *config.AlignmentConfig, maxLagSeconds float64) *AlignmentExtractor {
+	logger := logging.WithFields(logging.Fields{
+		"component": "alignment_extractor",
+	})
+
+	maxLagSamples := int(maxLagSeconds * float64(featureConf.SampleRate))
+
+	hopSize := featureConf.HopSize
+	maxLagFrames := maxLagSamples / hopSize
+
+	logger.Info("Alignment extractor configuration", logging.Fields{
+		"maxLagSeconds": maxLagSeconds,
+		"maxLagSamples": maxLagSamples,
+		"maxLagFrames":  maxLagFrames,
+		"hopSize":       hopSize,
+	})
+
+	return &AlignmentExtractor{
+		config: featureConf,
+		logger: logger,
+
+		alignmentAnalyzer: stats.NewAlignmentAnalyzer(
+			stats.AlignmentHybrid,
+			maxLagFrames,
+			featureConf.SampleRate,
+			featureConf.HopSize,
+			featureConf.WindowSize,
+			alignmentConf.MinConfidence),
+		dtwAnalyzer: stats.NewDTWAlignment(),
+		crossCorr:   stats.NewCrossCorrelation(maxLagFrames),
+		energy:      temporal.NewEnergy(featureConf.WindowSize, featureConf.HopSize, featureConf.SampleRate),
+
+		maxLagSamples:    maxLagSamples,
+		maxLagSeconds:    maxLagSeconds,
+		stepSize:         alignmentConf.StepSize,
+		confidenceThresh: alignmentConf.MinConfidence,
+	}
+}
+
+// ExtractAlignmentFeatures performs comprehensive alignment analysis between two feature sets
+func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
+	queryFeatures, referenceFeatures *ExtractedFeatures,
+	queryPCM, referencePCM []float64,
+	sampleRate int,
+) (*AlignmentFeatures, error) {
+
+	if queryFeatures == nil || referenceFeatures == nil {
+		return nil, fmt.Errorf("feature sets cannot be nil")
 	}
 
-	fmt.Printf("DEBUG Alignment: signal lengths: sig1=%d, sig2=%d, max_offset=%.1fs\n",
-		len(signal1), len(signal2), la.MaxOffsetSeconds)
+	logger := ae.logger.WithFields(logging.Fields{
+		"function":      "ExtractAlignmentFeatures",
+		"query_pcm_len": len(queryPCM),
+		"ref_pcm_len":   len(referencePCM),
+		"sample_rate":   sampleRate,
+	})
 
-	// Use manual cross-correlation (more reliable than go-dsp for alignment)
-	offset, confidence := la.crossCorrelateManual(signal1, signal2)
+	logger.Info("Starting alignment feature extraction")
 
-	fmt.Printf("DEBUG Alignment: result: offset=%.3fs, confidence=%.4f\n", offset, confidence)
+	result := &AlignmentFeatures{
+		FeatureSimilarity: make(map[string]float64),
+		QueryLength:       float64(len(queryPCM)) / float64(sampleRate),
+		ReferenceLength:   float64(len(referencePCM)) / float64(sampleRate),
+	}
 
-	// Determine if alignment is valid
-	isValid := confidence > 0.6
+	// Step 1: Try alignment with multiple feature types
+	alignments := ae.performMultiFeatureAlignment(queryFeatures, referenceFeatures, sampleRate)
+
+	// Step 2: Select best alignment
+	bestAlignment := ae.selectBestAlignment(alignments)
+	if bestAlignment != nil {
+		result.BestAlignment = bestAlignment
+		result.TemporalOffset = bestAlignment.OffsetSeconds
+		result.OffsetConfidence = bestAlignment.Confidence
+		result.OverallSimilarity = bestAlignment.Similarity
+		result.AlignmentQuality = bestAlignment.AlignmentQuality
+		result.Method = bestAlignment.FeatureType
+	}
+
+	// Step 3: Store individual alignment results
+	for featureType, alignment := range alignments {
+		switch featureType {
+		case "dtw_mfcc":
+			if alignment.AlignmentResult != nil && alignment.DTWResult != nil {
+				result.DTWAlignment = alignment
+			}
+		case "corr_energy":
+			if alignment.AlignmentResult != nil && alignment.CrossCorrResult != nil {
+				result.CorrAlignment = alignment
+			}
+		}
+
+		// Store feature similarities
+		if alignment.Success {
+			result.FeatureSimilarity[featureType] = alignment.Similarity
+		}
+	}
+
+	// Step 4: Estimate time stretch factor
+	result.TimeStretch = ae.estimateTimeStretch(result.BestAlignment, result.QueryLength, result.ReferenceLength)
+
+	// Step 5: Analyze alignment consistency
+	if result.BestAlignment != nil && result.BestAlignment.Success {
+		consistency, err := ae.analyzeConsistency(queryFeatures, referenceFeatures, sampleRate)
+		if err != nil {
+			logger.Warn("Failed to analyze alignment consistency", logging.Fields{"error": err})
+		} else {
+			result.Consistency = consistency
+		}
+	}
+
+	logger.Info("Alignment feature extraction completed", logging.Fields{
+		"best_method":     result.Method,
+		"temporal_offset": result.TemporalOffset,
+		"similarity":      result.OverallSimilarity,
+		"quality":         result.AlignmentQuality,
+	})
+
+	return result, nil
+}
+
+// performMultiFeatureAlignment tries alignment with different feature types
+func (ae *AlignmentExtractor) performMultiFeatureAlignment(
+	queryFeatures, referenceFeatures *ExtractedFeatures,
+	sampleRate int,
+) map[string]*AlignmentResult {
+
+	alignments := make(map[string]*AlignmentResult)
+
+	ae.logger.Debug("Available features for alignment", logging.Fields{
+		"query_mfcc_available":     queryFeatures.MFCC != nil,
+		"ref_mfcc_available":       referenceFeatures.MFCC != nil,
+		"query_energy_available":   queryFeatures.EnergyFeatures != nil,
+		"ref_energy_available":     referenceFeatures.EnergyFeatures != nil,
+		"query_spectral_available": queryFeatures.SpectralFeatures != nil,
+		"ref_spectral_available":   referenceFeatures.SpectralFeatures != nil,
+	})
+
+	// 1. MFCC-based DTW alignment (best for speech content)
+	if queryFeatures.MFCC != nil && referenceFeatures.MFCC != nil {
+		alignment := ae.alignWithFeatures("dtw_mfcc", queryFeatures.MFCC, referenceFeatures.MFCC, sampleRate, stats.AlignmentDTW)
+		alignments["dtw_mfcc"] = alignment
+	}
+
+	// 2. Energy-based cross-correlation (fast, good for similar content)
+	if queryFeatures.EnergyFeatures != nil && referenceFeatures.EnergyFeatures != nil &&
+		len(queryFeatures.EnergyFeatures.ShortTimeEnergy) > 0 && len(referenceFeatures.EnergyFeatures.ShortTimeEnergy) > 0 {
+
+		// Convert energy to 2D features
+		queryEnergy := ae.convertEnergyTo2D(queryFeatures.EnergyFeatures.ShortTimeEnergy)
+		refEnergy := ae.convertEnergyTo2D(referenceFeatures.EnergyFeatures.ShortTimeEnergy)
+
+		alignment := ae.alignWithFeatures("corr_energy", queryEnergy, refEnergy, sampleRate, stats.AlignmentCrossCorrelation)
+		alignments["corr_energy"] = alignment
+	}
+
+	// 3. Spectral centroid alignment (good for timbral changes)
+	if queryFeatures.SpectralFeatures != nil && referenceFeatures.SpectralFeatures != nil &&
+		len(queryFeatures.SpectralFeatures.SpectralCentroid) > 0 && len(referenceFeatures.SpectralFeatures.SpectralCentroid) > 0 {
+
+		queryCentroid := ae.convertSpectralTo2D(queryFeatures.SpectralFeatures.SpectralCentroid)
+		refCentroid := ae.convertSpectralTo2D(referenceFeatures.SpectralFeatures.SpectralCentroid)
+
+		alignment := ae.alignWithFeatures("dtw_centroid", queryCentroid, refCentroid, sampleRate, stats.AlignmentDTW)
+		alignments["dtw_centroid"] = alignment
+	}
+
+	// 4. Chroma alignment (good for harmonic content)
+	if queryFeatures.ChromaFeatures != nil && referenceFeatures.ChromaFeatures != nil &&
+		len(queryFeatures.ChromaFeatures) > 0 && len(referenceFeatures.ChromaFeatures) > 0 {
+
+		alignment := ae.alignWithFeatures("dtw_chroma", queryFeatures.ChromaFeatures, referenceFeatures.ChromaFeatures, sampleRate, stats.AlignmentDTW)
+		alignments["dtw_chroma"] = alignment
+	}
+
+	return alignments
+}
+
+// alignWithFeatures performs alignment using specified features and method
+func (ae *AlignmentExtractor) alignWithFeatures(
+	featureType string,
+	queryFeatures, referenceFeatures [][]float64,
+	sampleRate int,
+	method stats.AlignmentMethod,
+) *AlignmentResult {
+
+	logger := ae.logger.WithFields(logging.Fields{
+		"feature_type": featureType,
+		"method":       method,
+		"query_frames": len(queryFeatures),
+		"ref_frames":   len(referenceFeatures),
+	})
+
+	// Use frame-based lag for feature-space operations
+	maxLagFrames := ae.maxLagSamples / ae.config.HopSize
+
+	logger.Info("Creating alignment analyzer", logging.Fields{
+		"maxLagSamples": ae.maxLagSamples,
+		"maxLagFrames":  maxLagFrames,
+		"hopSize":       ae.config.HopSize,
+	})
+
+	// Create analyzer with FRAME-based lag
+	analyzer := stats.NewAlignmentAnalyzer(method, maxLagFrames, sampleRate, ae.config.HopSize, ae.config.WindowSize, ae.confidenceThresh)
+
+	logger.Info("Starting alignment computation")
+
+	// Perform alignment
+	result, err := analyzer.AlignFeatures(queryFeatures, referenceFeatures, sampleRate)
+	if err != nil {
+		logger.Warn("Alignment failed", logging.Fields{"error": err})
+		return &AlignmentResult{
+			FeatureType: featureType,
+			Success:     false,
+			ErrorMsg:    err.Error(),
+		}
+	}
+
+	logger.Info("Alignment succeeded", logging.Fields{
+		"offset_seconds": result.OffsetSeconds,
+		"confidence":     result.Confidence,
+		"similarity":     result.Similarity,
+	})
 
 	return &AlignmentResult{
-		OffsetSeconds: offset,
-		Confidence:    confidence,
-		IsValid:       isValid,
-	}, nil
+		AlignmentResult: result,
+		FeatureType:     featureType,
+		Success:         true,
+	}
 }
 
-// crossCorrelateManual performs manual cross-correlation for better control
-func (la *LightweightAlignment) crossCorrelateManual(signal1, signal2 []float64) (float64, float64) {
-	// Calculate max delay in samples
-	maxDelaySamples := int(la.MaxOffsetSeconds * la.FeatureRateHz)
+// selectBestAlignment chooses the best alignment from multiple attempts
+func (ae *AlignmentExtractor) selectBestAlignment(alignments map[string]*AlignmentResult) *AlignmentResult {
+	var bestAlignment *AlignmentResult
+	bestScore := 0.0
 
-	fmt.Printf("DEBUG CrossCorr: manual implementation with maxDelay=%d samples (%.1fs)\n",
-		maxDelaySamples, la.MaxOffsetSeconds)
-
-	// Normalize signals to improve correlation
-	norm1 := la.normalizeSignal(signal1)
-	norm2 := la.normalizeSignal(signal2)
-
-	// Ensure we don't search beyond signal boundaries
-	minLen := len(norm1)
-	if len(norm2) < minLen {
-		minLen = len(norm2)
+	// Define priority weights for different feature types
+	weights := map[string]float64{
+		"dtw_mfcc":     1.0, // Highest priority for speech content
+		"corr_energy":  0.8, // Good general-purpose alignment
+		"dtw_chroma":   0.7, // Good for harmonic content
+		"dtw_centroid": 0.6, // Lower priority but still useful
 	}
 
-	// Limit search range to prevent out-of-bounds
-	maxSearchDelay := minInt(maxDelaySamples, minLen-1)
+	for featureType, alignment := range alignments {
+		if !alignment.Success || alignment.AlignmentResult == nil {
+			continue
+		}
 
-	fmt.Printf("DEBUG CrossCorr: searching range: -%d to +%d samples\n", maxSearchDelay, maxSearchDelay)
+		// Calculate weighted score
+		weight := weights[featureType]
+		if weight == 0 {
+			weight = 0.5 // Default weight for unknown feature types
+		}
 
-	maxCorr := -1.0
-	bestOffset := 0
+		// Combine confidence, similarity, and quality
+		score := weight * (0.4*alignment.Confidence + 0.4*alignment.Similarity + 0.2*alignment.AlignmentQuality)
 
-	// Search both positive and negative offsets
-	for delay := -maxSearchDelay; delay <= maxSearchDelay; delay++ {
-		corr := la.calculateCorrelation(norm1, norm2, delay)
-
-		if corr > maxCorr {
-			maxCorr = corr
-			bestOffset = delay
+		if score > bestScore {
+			bestScore = score
+			bestAlignment = alignment
 		}
 	}
 
-	// Convert to seconds
-	offsetSeconds := float64(bestOffset) / la.FeatureRateHz
-
-	fmt.Printf("DEBUG CrossCorr: best offset: %d samples (%.3fs), correlation: %.4f\n",
-		bestOffset, offsetSeconds, maxCorr)
-
-	return offsetSeconds, maxCorr
+	return bestAlignment
 }
 
-// calculateCorrelation calculates normalized correlation at a specific delay
-func (la *LightweightAlignment) calculateCorrelation(signal1, signal2 []float64, delay int) float64 {
-	// Determine overlap region
-	start1, end1 := 0, len(signal1)
-	start2, end2 := 0, len(signal2)
+// estimateTimeStretch estimates the time stretch factor between sequences
+func (ae *AlignmentExtractor) estimateTimeStretch(alignment *AlignmentResult, queryLen, refLen float64) float64 {
+	if alignment == nil || !alignment.Success || queryLen <= 0 || refLen <= 0 {
+		return 1.0 // No stretch
+	}
 
-	if delay >= 0 {
-		// signal2 is delayed relative to signal1
-		start2 = delay
-		end1 = minInt(end1, len(signal2)-delay)
+	// Simple ratio-based stretch estimation
+	lengthRatio := queryLen / refLen
+
+	// If we have DTW path, use it for more accurate estimation
+	if alignment.DTWResult != nil && len(alignment.DTWResult.Path) > 0 {
+		// Calculate average slope of DTW path
+		path := alignment.DTWResult.Path
+		if len(path) > 1 {
+			startPoint := path[0]
+			endPoint := path[len(path)-1]
+
+			querySpan := float64(endPoint.QueryIndex - startPoint.QueryIndex + 1)
+			refSpan := float64(endPoint.RefIndex - startPoint.RefIndex + 1)
+
+			if refSpan > 0 {
+				pathRatio := querySpan / refSpan
+				// Weighted combination of length ratio and path ratio
+				return 0.7*pathRatio + 0.3*lengthRatio
+			}
+		}
+	}
+
+	return lengthRatio
+}
+
+// analyzeConsistency performs consistency analysis using multiple alignment attempts
+func (ae *AlignmentExtractor) analyzeConsistency(
+	queryFeatures, referenceFeatures *ExtractedFeatures,
+	sampleRate int,
+) (*stats.AlignmentStats, error) {
+
+	// Use MFCC features if available, otherwise use energy
+	var queryFeats, refFeats [][]float64
+
+	if queryFeatures.MFCC != nil && referenceFeatures.MFCC != nil {
+		queryFeats = queryFeatures.MFCC
+		refFeats = referenceFeatures.MFCC
+	} else if queryFeatures.EnergyFeatures != nil && referenceFeatures.EnergyFeatures != nil {
+		queryFeats = ae.convertEnergyTo2D(queryFeatures.EnergyFeatures.ShortTimeEnergy)
+		refFeats = ae.convertEnergyTo2D(referenceFeatures.EnergyFeatures.ShortTimeEnergy)
 	} else {
-		// signal1 is delayed relative to signal2
-		start1 = -delay
-		end2 = minInt(end2, len(signal1)+delay)
+		return nil, fmt.Errorf("no suitable features for consistency analysis")
 	}
 
-	// Calculate correlation for overlap region
-	overlapLen := minInt(end1-start1, end2-start2)
-	if overlapLen <= 0 {
-		return 0.0
-	}
-
-	var sum1, sum2, sum12, sum1sq, sum2sq float64
-	count := 0
-
-	for i := 0; i < overlapLen; i++ {
-		idx1 := start1 + i
-		idx2 := start2 + i
-
-		if idx1 >= 0 && idx1 < len(signal1) && idx2 >= 0 && idx2 < len(signal2) {
-			val1 := signal1[idx1]
-			val2 := signal2[idx2]
-
-			sum1 += val1
-			sum2 += val2
-			sum12 += val1 * val2
-			sum1sq += val1 * val1
-			sum2sq += val2 * val2
-			count++
-		}
-	}
-
-	if count == 0 {
-		return 0.0
-	}
-
-	// Calculate Pearson correlation coefficient
-	n := float64(count)
-	numerator := n*sum12 - sum1*sum2
-	denominator1 := n*sum1sq - sum1*sum1
-	denominator2 := n*sum2sq - sum2*sum2
-
-	denominator := math.Sqrt(denominator1 * denominator2)
-	if denominator < 1e-10 {
-		return 0.0
-	}
-
-	correlation := numerator / denominator
-
-	// Ensure correlation is in valid range [-1, 1]
-	if correlation > 1.0 {
-		correlation = 1.0
-	} else if correlation < -1.0 {
-		correlation = -1.0
-	}
-
-	return correlation
+	return ae.alignmentAnalyzer.AnalyzeAlignmentConsistency(queryFeats, refFeats, sampleRate, 5)
 }
 
-// crossCorrelateWithGoDSP performs cross-correlation using the go-dsp library (backup method)
-func (la *LightweightAlignment) crossCorrelateWithGoDSP(signal1, signal2 []float64) (float64, float64) {
-	// Calculate max delay in samples
-	maxDelaySamples := int(la.MaxOffsetSeconds * la.FeatureRateHz)
+// Helper methods for feature conversion
 
-	fmt.Printf("DEBUG CrossCorr: using go-dsp with maxDelay=%d samples (%.1fs)\n",
-		maxDelaySamples, la.MaxOffsetSeconds)
-
-	// Normalize signals to improve correlation
-	norm1 := la.normalizeSignal(signal1)
-	norm2 := la.normalizeSignal(signal2)
-
-	// Use go-dsp cross-correlation
-	correlation := godsp.Xcorr(norm1, norm2, maxDelaySamples)
-
-	// Find the peak correlation
-	maxCorr := -1.0
-	bestOffset := 0
-
-	for i, corr := range correlation {
-		if corr > maxCorr {
-			maxCorr = corr
-			bestOffset = i - maxDelaySamples // Center around zero
-		}
+func (ae *AlignmentExtractor) convertEnergyTo2D(energy []float64) [][]float64 {
+	result := make([][]float64, len(energy))
+	for i, val := range energy {
+		result[i] = []float64{val}
 	}
-
-	// Convert to seconds
-	offsetSeconds := float64(bestOffset) / la.FeatureRateHz
-
-	fmt.Printf("DEBUG CrossCorr: best offset: %d samples (%.3fs), correlation: %.4f\n",
-		bestOffset, offsetSeconds, maxCorr)
-
-	return offsetSeconds, maxCorr
+	return result
 }
 
-// extractBestSignal extracts the most reliable signal for alignment
-func (la *LightweightAlignment) extractBestSignal(features *ExtractedFeatures) []float64 {
-	// Priority 1: Energy features (best for speech alignment)
-	if features.EnergyFeatures != nil && len(features.EnergyFeatures.ShortTimeEnergy) > 0 {
-		fmt.Printf("DEBUG: Using energy features for alignment (length: %d)\n", len(features.EnergyFeatures.ShortTimeEnergy))
-		return features.EnergyFeatures.ShortTimeEnergy
+func (ae *AlignmentExtractor) convertSpectralTo2D(spectral []float64) [][]float64 {
+	result := make([][]float64, len(spectral))
+	for i, val := range spectral {
+		result[i] = []float64{val}
 	}
-
-	// Priority 2: Temporal RMS energy
-	if features.TemporalFeatures != nil && len(features.TemporalFeatures.RMSEnergy) > 0 {
-		fmt.Printf("DEBUG: Using temporal RMS energy for alignment (length: %d)\n", len(features.TemporalFeatures.RMSEnergy))
-		return features.TemporalFeatures.RMSEnergy
-	}
-
-	// Priority 3: Spectral centroid (fallback)
-	if features.SpectralFeatures != nil && len(features.SpectralFeatures.SpectralCentroid) > 0 {
-		fmt.Printf("DEBUG: Using spectral centroid for alignment (length: %d)\n", len(features.SpectralFeatures.SpectralCentroid))
-		return features.SpectralFeatures.SpectralCentroid
-	}
-
-	fmt.Printf("DEBUG: No suitable features found for alignment\n")
-	return []float64{}
+	return result
 }
 
-// normalizeSignal normalizes a signal to zero mean and unit variance
-func (la *LightweightAlignment) normalizeSignal(signal []float64) []float64 {
-	if len(signal) == 0 {
-		return signal
+// AlignAudioFiles provides a high-level interface for aligning two audio files
+func (ae *AlignmentExtractor) AlignAudioFiles(
+	queryPCM, referencePCM []float64,
+	sampleRate int,
+	extractorFactory *FeatureExtractorFactory,
+	contentType config.ContentType,
+) (*AlignmentFeatures, error) {
+
+	logger := ae.logger.WithFields(logging.Fields{
+		"function":     "AlignAudioFiles",
+		"content_type": contentType,
+	})
+
+	// Create appropriate feature extractor
+	// TODO: unused extractor
+	//extractor, err := extractorFactory.CreateExtractor(contentType, *ae.config)
+	//if err != nil {
+	//	return nil, fmt.Errorf("failed to create feature extractor: %w", err)
+	//}
+
+	// TODO:
+	// Extract features from both audio files
+	// Note: This is simplified - in practice you'd need spectrograms
+	// For now, we'll use energy-based alignment as a fallback
+
+	// Extract energy features directly
+	queryEnergy := ae.energy.ComputeShortTimeEnergy(queryPCM)
+	refEnergy := ae.energy.ComputeShortTimeEnergy(referencePCM)
+
+	// Convert to 2D features
+	queryFeats := ae.convertEnergyTo2D(queryEnergy)
+	refFeats := ae.convertEnergyTo2D(refEnergy)
+
+	// Perform alignment
+	result, err := ae.alignmentAnalyzer.AlignFeatures(queryFeats, refFeats, sampleRate)
+	if err != nil {
+		return nil, fmt.Errorf("alignment failed: %w", err)
 	}
 
-	// Calculate mean
-	mean := 0.0
-	for _, val := range signal {
-		mean += val
-	}
-	mean /= float64(len(signal))
-
-	// Calculate standard deviation
-	variance := 0.0
-	for _, val := range signal {
-		diff := val - mean
-		variance += diff * diff
-	}
-	variance /= float64(len(signal))
-	stdDev := math.Sqrt(variance)
-
-	// Handle constant signals
-	if stdDev < 1e-10 {
-		normalized := make([]float64, len(signal))
-		for i, val := range signal {
-			normalized[i] = val - mean
-		}
-		return normalized
+	// Create alignment features result
+	alignmentFeatures := &AlignmentFeatures{
+		BestAlignment: &AlignmentResult{
+			AlignmentResult: result,
+			FeatureType:     "energy",
+			Success:         true,
+		},
+		TemporalOffset:    result.OffsetSeconds,
+		OffsetConfidence:  result.Confidence,
+		OverallSimilarity: result.Similarity,
+		AlignmentQuality:  result.AlignmentQuality,
+		Method:            "energy_correlation",
+		QueryLength:       float64(len(queryPCM)) / float64(sampleRate),
+		ReferenceLength:   float64(len(referencePCM)) / float64(sampleRate),
+		FeatureSimilarity: map[string]float64{
+			"energy": result.Similarity,
+		},
 	}
 
-	// Normalize to zero mean, unit variance
-	normalized := make([]float64, len(signal))
-	for i, val := range signal {
-		normalized[i] = (val - mean) / stdDev
-	}
+	logger.Info("Audio file alignment completed", logging.Fields{
+		"offset_seconds": alignmentFeatures.TemporalOffset,
+		"similarity":     alignmentFeatures.OverallSimilarity,
+		"confidence":     alignmentFeatures.OffsetConfidence,
+	})
 
-	return normalized
+	return alignmentFeatures, nil
 }
 
-// AlignStreams is a convenience function for aligning two feature sets
-func AlignStreams(features1, features2 *ExtractedFeatures, maxOffsetSeconds, featureRateHz float64) (*AlignmentResult, error) {
-	aligner := NewLightweightAlignment(maxOffsetSeconds, featureRateHz)
-	return aligner.FindAlignment(features1, features2)
-}
+// GetAlignmentSummary provides a human-readable summary of alignment results
+func (ae *AlignmentExtractor) GetAlignmentSummary(features *AlignmentFeatures) map[string]any {
+	summary := make(map[string]any)
 
-// AlignStreamsWithEnergyOnly performs energy-only alignment (fastest, best for speech)
-func AlignStreamsWithEnergyOnly(features1, features2 *ExtractedFeatures, maxOffsetSeconds, featureRateHz float64) (*AlignmentResult, error) {
-	aligner := NewLightweightAlignment(maxOffsetSeconds, featureRateHz)
+	if features == nil {
+		summary["status"] = "failed"
+		return summary
+	}
 
-	// Extract energy signals directly
-	var signal1, signal2 []float64
+	summary["status"] = "success"
+	summary["method"] = features.Method
+	summary["offset_seconds"] = features.TemporalOffset
+	summary["similarity_percent"] = features.OverallSimilarity * 100
+	summary["confidence_percent"] = features.OffsetConfidence * 100
+	summary["quality_percent"] = features.AlignmentQuality * 100
 
-	if features1.EnergyFeatures != nil && len(features1.EnergyFeatures.ShortTimeEnergy) > 0 {
-		signal1 = features1.EnergyFeatures.ShortTimeEnergy
+	// Classify alignment quality
+	if features.OffsetConfidence > 0.8 {
+		summary["quality_description"] = "excellent"
+	} else if features.OffsetConfidence > 0.6 {
+		summary["quality_description"] = "good"
+	} else if features.OffsetConfidence > 0.4 {
+		summary["quality_description"] = "fair"
 	} else {
-		return nil, fmt.Errorf("no energy features in stream 1")
+		summary["quality_description"] = "poor"
 	}
 
-	if features2.EnergyFeatures != nil && len(features2.EnergyFeatures.ShortTimeEnergy) > 0 {
-		signal2 = features2.EnergyFeatures.ShortTimeEnergy
+	// Time stretch information
+	summary["time_stretch_factor"] = features.TimeStretch
+	if math.Abs(features.TimeStretch-1.0) > 0.05 {
+		summary["time_stretch_detected"] = true
 	} else {
-		return nil, fmt.Errorf("no energy features in stream 2")
+		summary["time_stretch_detected"] = false
 	}
 
-	offset, confidence := aligner.crossCorrelateManual(signal1, signal2)
-
-	return &AlignmentResult{
-		OffsetSeconds: offset,
-		Confidence:    confidence,
-		IsValid:       confidence > 0.5, // Lower threshold for energy-only
-	}, nil
+	return summary
 }

@@ -27,7 +27,7 @@ func NewContentDetector(config *config.ContentAwareConfig) *ContentDetector {
 	}
 }
 
-// DetectedContentType detects content type from AudioData using metadata and optionally acoustic analysis
+// DetectContentType detects content type from AudioData using metadata and optionally acoustic analysis
 func (cd *ContentDetector) DetectContentType(audioData *transcode.AudioData) config.ContentType {
 	logger := cd.logger.WithFields(logging.Fields{
 		"function": "DetectContentType",

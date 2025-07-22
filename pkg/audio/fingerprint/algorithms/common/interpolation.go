@@ -156,7 +156,8 @@ func (interp *Interpolator) lanczosInterpolate(data []float64, index float64) fl
 
 	a := 3.0 // Lanczos parameter
 	i := int(index)
-	frac := index - float64(i)
+	// TODO: unused
+	//frac := index - float64(i)
 
 	if i < int(a) {
 		return data[0]

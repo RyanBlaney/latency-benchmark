@@ -157,34 +157,39 @@ type PitchDetector struct {
 
 // NewPitchDetector creates a new pitch detector with default parameters
 func NewPitchDetector(sampleRate int) *PitchDetector {
-	return &PitchDetector{
-		params: PitchDetectionParams{
-			Method:            AutocorrelationYin,
-			SampleRate:        sampleRate,
-			WindowSize:        1024,
-			HopSize:           512,
-			MinFreq:           80.0,   // Low male voice
-			MaxFreq:           1000.0, // High female voice
-			YinThreshold:      0.15,
-			AutocorrThreshold: 0.3,
-			CepstralThreshold: 0.3,
-			MinConfidence:     0.5,
-			MinSalience:       0.1,
-			VoicingThreshold:  0.45,
-			MaxHarmonics:      10,
-			HarmonicTolerance: 0.1,
-			PreEmphasis:       true,
-			WindowFunction:    "hann",
-			ZeroPadding:       2,
-			MedianFilter:      3,
-			TemporalSmoothing: true,
-			OctaveCorrection:  true,
-		},
+	params := PitchDetectionParams{
+		Method:            AutocorrelationYin,
+		SampleRate:        sampleRate,
+		WindowSize:        1024,
+		HopSize:           512,
+		MinFreq:           80.0,   // Low male voice
+		MaxFreq:           1000.0, // High female voice
+		YinThreshold:      0.15,
+		AutocorrThreshold: 0.3,
+		CepstralThreshold: 0.3,
+		MinConfidence:     0.5,
+		MinSalience:       0.1,
+		VoicingThreshold:  0.45,
+		MaxHarmonics:      10,
+		HarmonicTolerance: 0.1,
+		PreEmphasis:       true,
+		WindowFunction:    "hann",
+		ZeroPadding:       2,
+		MedianFilter:      3,
+		TemporalSmoothing: true,
+		OctaveCorrection:  true,
+	}
+
+	detector := &PitchDetector{
 		fft:               spectral.NewFFT(),
 		autocorr:          stats.NewAutoCorrelation(2048),
 		pitchHistory:      make([]float64, 0),
 		confidenceHistory: make([]float64, 0),
 	}
+
+	detector.SetParameters(params)
+
+	return detector
 }
 
 // NewPitchDetectorWithParams creates a pitch detector with custom parameters
