@@ -157,13 +157,6 @@ func (aa *AlignmentAnalyzer) alignWithCrossCorrelation(query, reference [][]floa
 		return nil, fmt.Errorf("cross-correlation failed: %w", err)
 	}
 
-	fmt.Printf("DEBUG ALIGNMENT:\n")
-	fmt.Printf("  Raw peak lag (frames): %d\n", corrResult.PeakLag)
-	fmt.Printf("  Hop size: %d samples\n", aa.hopSize)
-	fmt.Printf("  Sample rate: %d Hz\n", result.SampleRate)
-	fmt.Printf("  Frame offset in samples: %d\n", corrResult.PeakLag*aa.hopSize)
-	fmt.Printf("  Frame offset in seconds: %.3f\n", float64(corrResult.PeakLag*aa.hopSize)/float64(result.SampleRate))
-
 	result.CrossCorrResult = corrResult
 
 	// Convert frame lag back to sample lag
@@ -183,12 +176,6 @@ func (aa *AlignmentAnalyzer) alignWithCrossCorrelation(query, reference [][]floa
 	result.Confidence = aa.calculateCorrelationConfidence(corrResult)
 	result.AlignmentQuality = corrResult.Sharpness
 	result.NoiseLevel = 1.0 - corrResult.SNR/20.0
-
-	fmt.Printf("DEBUG CORRELATION:\n")
-	fmt.Printf("  Peak correlation: %.3f\n", corrResult.PeakCorrelation)
-	fmt.Printf("  SNR: %.3f\n", corrResult.SNR)
-	fmt.Printf("  Sharpness: %.3f\n", corrResult.Sharpness)
-	fmt.Printf("  Calculated confidence: %.3f\n", aa.calculateCorrelationConfidence(corrResult))
 
 	return result, nil
 }
