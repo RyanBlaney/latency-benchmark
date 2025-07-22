@@ -271,7 +271,7 @@ func (h *Handler) ResolveMasterPlaylist(ctx context.Context, masterPlaylist *M3U
 			common.ErrCodeInvalidFormat, "variant playlist is still a master playlist", nil)
 	}
 
-	logger.Info("Master playlist resolved to media playlist", logging.Fields{
+	logger.Debug("Master playlist resolved to media playlist", logging.Fields{
 		"segments": len(mediaPlaylist.Segments),
 		"is_live":  mediaPlaylist.IsLive,
 	})
@@ -358,7 +358,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 	h.stats.SegmentsReceived = downloader.GetDownloadStats().SegmentsDownloaded
 	h.stats.BytesReceived = downloader.GetDownloadStats().BytesDownloaded
 
-	logger.Info("Audio download completed", logging.Fields{
+	logger.Debug("Audio download completed", logging.Fields{
 		"actual_duration": audioData.Duration.Seconds(),
 		"samples":         len(audioData.PCM),
 		"sample_rate":     audioData.SampleRate,

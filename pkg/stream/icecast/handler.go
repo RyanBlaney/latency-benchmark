@@ -119,7 +119,7 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	req.Header.Set("User-Agent", h.config.HTTP.UserAgent)
 	req.Header.Set("Accept", "*/*")
 
-	logger.Info("Attempting connection with minimal headers")
+	logger.Debug("Attempting connection with minimal headers")
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -178,7 +178,7 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 
 	h.response = resp
 
-	logger.Info("ICEcast connection successful", logging.Fields{
+	logger.Debug("ICEcast connection successful", logging.Fields{
 		"status_code":  resp.StatusCode,
 		"content_type": resp.Header.Get("Content-Type"),
 	})
@@ -231,7 +231,7 @@ func (h *Handler) Connect(ctx context.Context, url string) error {
 	h.stats.FirstByteTime = h.stats.ConnectionTime
 	h.connected = true
 
-	logger.Info("ICEcast handler connected successfully", logging.Fields{
+	logger.Debug("ICEcast handler connected successfully", logging.Fields{
 		"has_icy_metadata": h.icyMetaInt > 0,
 		"connection_time":  h.stats.ConnectionTime.Milliseconds(),
 		"headers_count":    len(headers),
@@ -577,7 +577,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 			common.ErrCodeMetadata, "failed to get metadata", err)
 	}
 
-	logger.Info("Starting duration-based audio reading using streaming downloader", logging.Fields{
+	logger.Debug("Starting duration-based audio reading using streaming downloader", logging.Fields{
 		"sample_rate":     metadata.SampleRate,
 		"channels":        metadata.Channels,
 		"target_duration": duration.Seconds(),
@@ -620,7 +620,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		}
 	}
 
-	logger.Info("ICEcast duration-based audio extraction completed using streaming downloader", logging.Fields{
+	logger.Debug("ICEcast duration-based audio extraction completed using streaming downloader", logging.Fields{
 		"actual_duration":  audioData.Duration.Seconds(),
 		"target_duration":  duration.Seconds(),
 		"samples":          len(audioData.PCM),

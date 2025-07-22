@@ -92,7 +92,7 @@ func (m *Manager) ExtractAudioParallel(ctx context.Context, urls []string, targe
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Info("Starting parallel audio extraction")
+	logger.Debug("Starting parallel audio extraction")
 
 	// Create overall timeout context
 	overallCtx, cancel := context.WithTimeout(ctx, m.config.OverallTimeout)
@@ -161,7 +161,7 @@ func (m *Manager) ExtractAudioParallel(ctx context.Context, urls []string, targe
 
 	maxTimeDiff := maxStartTime.Sub(minStartTime)
 
-	logger.Info("Parallel audio extraction completed", logging.Fields{
+	logger.Debug("Parallel audio extraction completed", logging.Fields{
 		"total_duration":     totalDuration.Milliseconds(),
 		"successful_streams": successCount,
 		"failed_streams":     failedCount,
@@ -259,7 +259,7 @@ func (m *Manager) ExtractAudioSequential(ctx context.Context, urls []string, tar
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Info("Starting sequential audio extraction")
+	logger.Debug("Starting sequential audio extraction")
 
 	globalStartTime := time.Now()
 	results := make([]*AudioExtractionResult, 0, len(urls))
@@ -292,7 +292,7 @@ func (m *Manager) ExtractAudioSequential(ctx context.Context, urls []string, tar
 		}
 	}
 
-	logger.Info("Sequential audio extraction completed", logging.Fields{
+	logger.Debug("Sequential audio extraction completed", logging.Fields{
 		"total_duration":     totalDuration.Milliseconds(),
 		"successful_streams": successCount,
 		"failed_streams":     failedCount,
