@@ -161,7 +161,7 @@ func ContentOptimizedFingerprintConfig(contentType config.ContentType) *Fingerpr
 	cfg := DefaultFingerprintConfig()
 
 	// Use content-optimized perceptual hash parameters
-	cfg.PerceptualHashParams = ContentOptimizedPerceptualHashParams(contentType)
+	cfg.PerceptualHashParams = extractors.ContentOptimizedPerceptualHashParams(contentType)
 
 	// Adjust other settings based on content type
 	switch contentType {
@@ -488,37 +488,6 @@ func (fg *FingerprintGenerator) generatePerceptualHashFallback(features *extract
 	})
 
 	return hash, nil
-}
-
-func ContentOptimizedPerceptualHashParams(contentType config.ContentType) *extractors.PerceptualHashParams {
-	params := extractors.DefaultPerceptualHashParams()
-
-	switch contentType {
-	case config.ContentNews, config.ContentTalk:
-		// For speech content, focus on MFCC and spectral features
-		params.HashType = extractors.PerceptualCombined
-		params.MaxCoefficients = 6  // Fewer MFCC coefficients for robustness
-		params.MFCCBins = 1.0       // Larger bins for more robustness
-		params.SpectralBins = 150.0 // Larger spectral bins
-
-	case config.ContentMusic:
-		// For music, include chroma and more detailed spectral analysis
-		params.HashType = extractors.PerceptualCombined
-		params.MaxCoefficients = 8
-		params.MFCCBins = 0.5
-		params.SpectralBins = 100.0
-
-	case config.ContentSports:
-		// For sports, focus on temporal and energy characteristics
-		params.HashType = extractors.PerceptualTemporal
-		params.TemporalBins = 3.0  // Smaller bins for energy characteristics
-		params.MaxCoefficients = 4 // Fewer MFCC coefficients
-
-	default:
-		// Use defaults for mixed/unknown content
-	}
-
-	return &params
 }
 
 // extractCompactFeatures extracts the most important features compact hashing

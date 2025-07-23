@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 
@@ -39,6 +40,37 @@ type PerceptualHashParams struct {
 	RolloffThresholds    [2]float64 `json:"rolloff_thresholds"`    // [low/medium, medium/high]
 	DynamicsThresholds   [2]float64 `json:"dynamics_thresholds"`   // [compressed/normal, normal/dynamic]
 	SilenceThresholds    [2]float64 `json:"silence_thresholds"`    // [continuous/some, some/many]
+}
+
+func ContentOptimizedPerceptualHashParams(contentType config.ContentType) *PerceptualHashParams {
+	params := DefaultPerceptualHashParams()
+
+	switch contentType {
+	case config.ContentNews, config.ContentTalk:
+		// For speech content, focus on MFCC and spectral features
+		params.HashType = PerceptualCombined
+		params.MaxCoefficients = 6  // Fewer MFCC coefficients for robustness
+		params.MFCCBins = 1.0       // Larger bins for more robustness
+		params.SpectralBins = 150.0 // Larger spectral bins
+
+	case config.ContentMusic:
+		// For music, include chroma and more detailed spectral analysis
+		params.HashType = PerceptualCombined
+		params.MaxCoefficients = 8
+		params.MFCCBins = 0.5
+		params.SpectralBins = 100.0
+
+	case config.ContentSports:
+		// For sports, focus on temporal and energy characteristics
+		params.HashType = PerceptualTemporal
+		params.TemporalBins = 3.0  // Smaller bins for energy characteristics
+		params.MaxCoefficients = 4 // Fewer MFCC coefficients
+
+	default:
+		// Use defaults for mixed/unknown content
+	}
+
+	return &params
 }
 
 // PerceptualHashResult contains the generated hash and metadata
