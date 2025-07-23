@@ -24,6 +24,7 @@ type AudioFingerprint struct {
 	Timestamp        time.Time                     `json:"timestamp"`
 	Duration         time.Duration                 `json:"duration"`
 	SampleRate       int                           `json:"sample_rate"`
+	HopSize          int                           `json:"hop_size"` // for alignment
 	Channels         int                           `json:"channels"`
 	Features         *extractors.ExtractedFeatures `json:"features"`
 	CompactHash      string                        `json:"compact_hash"` // shortened and quantized
@@ -34,14 +35,16 @@ type AudioFingerprint struct {
 
 // FingerprintConfig holds configuration for fingerprint generation
 type FingerprintConfig struct {
-	WindowSize          int                        `json:"window_size"`
-	HopSize             int                        `json:"hop_size"`
-	EnableContentDetect bool                       `json:"enable_content_detect"`
-	HashResolution      HashResolution             `json:"hash_resolution"`
-	PerceptualHashTypes []PerceptualHashType       `json:"perceptual_hash_types"`
-	FeatureConfig       *config.FeatureConfig      `json:"feature_config"`
-	ContentConfig       *config.ContentAwareConfig `json:"content_config"`
-	Quantization        int                        `json:"quantization"` // How many decimals to quantize features (only affects compact hash)
+	WindowSize           int                              `json:"window_size"`
+	HopSize              int                              `json:"hop_size"`
+	EnableContentDetect  bool                             `json:"enable_content_detect"`
+	HashResolution       HashResolution                   `json:"hash_resolution"`
+	FeatureConfig        *config.FeatureConfig            `json:"feature_config"`
+	ContentConfig        *config.ContentAwareConfig       `json:"content_config"`
+	Quantization         int                              `json:"quantization"` // How many decimals to quantize features (only affects compact hash)
+	PerceptualHashTypes  []PerceptualHashType             `json:"perceptual_hash_types"`
+	UsePerceptualHashing bool                             `json:"use_perceptual_hashing"`
+	PerceptualHashParams *extractors.PerceptualHashParams `json:"perceptual_hash_params"`
 }
 
 // HashResolution defines the resolution of the hash
@@ -54,14 +57,14 @@ const (
 )
 
 // PerceptualHashType defines different types of perceptual hashes
-type PerceptualHashType string
+type PerceptualHashType = extractors.PerceptualHashType
 
 const (
-	HashSpectral PerceptualHashType = "spectral"
-	HashTemporal PerceptualHashType = "temporal"
-	HashMFCC     PerceptualHashType = "mfcc"
-	HashChroma   PerceptualHashType = "chroma"
-	HashCombined PerceptualHashType = "combined"
+	HashSpectral = extractors.PerceptualSpectral
+	HashTemporal = extractors.PerceptualTemporal
+	HashMFCC     = extractors.PerceptualMFCC
+	HashChroma   = extractors.PerceptualChroma
+	HashCombined = extractors.PerceptualCombined
 )
 
 // FingerprintGenerator generates audio fingerprints
@@ -70,6 +73,7 @@ type FingerprintGenerator struct {
 	extractorFactory *extractors.FeatureExtractorFactory
 	ContentDetector  *ContentDetector
 	spectralAnalyzer *analyzers.SpectralAnalyzer
+	perceptualHasher *extractors.PerceptualHasher
 	logger           logging.Logger
 }
 
@@ -83,11 +87,19 @@ func NewFingerprintGenerator(config *FingerprintConfig) *FingerprintGenerator {
 		"component": "fingerprint_generator",
 	})
 
+	var perceptualHasher *extractors.PerceptualHasher
+	if config.UsePerceptualHashing && config.PerceptualHashParams != nil {
+		perceptualHasher = extractors.NewPerceptualHasherWithParams(*config.PerceptualHashParams)
+	} else if config.UsePerceptualHashing {
+		perceptualHasher = extractors.NewPerceptualHasher()
+	}
+
 	return &FingerprintGenerator{
 		config:           config,
 		extractorFactory: extractors.NewFeatureExtractorFactory(),
 		spectralAnalyzer: analyzers.NewSpectralAnalyzer(44100), // Will be updated with actual sample rate
 		ContentDetector:  NewContentDetector(config.ContentConfig),
+		perceptualHasher: perceptualHasher,
 		logger:           logger,
 	}
 }
@@ -126,12 +138,63 @@ func DefaultFingerprintConfig() *FingerprintConfig {
 			DefaultContentType:     config.ContentUnknown,
 			AutoDetectThreshold:    2.0,
 		},
-		Quantization: 3,
+		Quantization:         3,
+		UsePerceptualHashing: true, // Most accurate method
+		PerceptualHashParams: &extractors.PerceptualHashParams{
+			HashType:             extractors.PerceptualCombined, // Will be changed
+			BinSize:              1.0,
+			MaxCoefficients:      8,
+			UseCoarseQuant:       true,
+			HashLength:           16,
+			SpectralBins:         100.0,
+			TemporalBins:         5.0,
+			MFCCBins:             0.5,
+			BrightnessThresholds: [2]float64{1000, 2500},
+			RolloffThresholds:    [2]float64{3000, 7000},
+			DynamicsThresholds:   [2]float64{20, 40},
+			SilenceThresholds:    [2]float64{0.1, 0.3},
+		},
 	}
 }
 
+func ContentOptimizedFingerprintConfig(contentType config.ContentType) *FingerprintConfig {
+	cfg := DefaultFingerprintConfig()
+
+	// Use content-optimized perceptual hash parameters
+	cfg.PerceptualHashParams = ContentOptimizedPerceptualHashParams(contentType)
+
+	// Adjust other settings based on content type
+	switch contentType {
+	case config.ContentNews, config.ContentTalk:
+		cfg.PerceptualHashTypes = []PerceptualHashType{
+			HashSpectral,
+			HashMFCC,
+			HashCombined,
+		}
+
+	case config.ContentMusic:
+		cfg.PerceptualHashTypes = []PerceptualHashType{
+			HashSpectral,
+			HashMFCC,
+			HashChroma,
+			HashCombined,
+		}
+
+	case config.ContentSports:
+		cfg.PerceptualHashTypes = []PerceptualHashType{
+			HashTemporal,
+			HashSpectral,
+			HashCombined,
+		}
+
+	default:
+		// Use all hash types for unknown content
+	}
+
+	return cfg
+}
+
 // GenerateFingerprint generates a complete audio fingerprint from audio data
-// TODO: signature with content type
 func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioData) (*AudioFingerprint, error) {
 	if audioData == nil {
 		return nil, fmt.Errorf("audio data cannot be nil")
@@ -210,6 +273,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 		Timestamp:        time.Now(),
 		Duration:         calculateDuration(audioData),
 		SampleRate:       audioData.SampleRate,
+		HopSize:          fg.config.FeatureConfig.HopSize,
 		Channels:         audioData.Channels,
 		Features:         features,
 		PerceptualHashes: make(map[string]string),
@@ -303,7 +367,72 @@ func (fg *FingerprintGenerator) generateHashes(fingerprint *AudioFingerprint) er
 	detailedHasher.Write(detailedData)
 	fingerprint.DetailedHash = hex.EncodeToString(detailedHasher.Sum(nil))
 
-	// Generte compact hash from key features
+	if fg.config.UsePerceptualHashing && fg.perceptualHasher != nil {
+		// Use perceptual hashing for robustness
+		result, err := fg.perceptualHasher.GenerateHash(fingerprint.Features)
+		if err != nil {
+			fg.logger.Warn("Failed to generate perceptual hash, falling back to traditional method", logging.Fields{
+				"error": err.Error(),
+			})
+			// Fall back to traditional method
+			fg.generateCompactHashFallback(fingerprint)
+		} else {
+			fingerprint.CompactHash = result.Hash
+			fg.logger.Info("Generated perceptual compact hash", logging.Fields{
+				"hash":          result.Hash,
+				"hash_type":     result.HashType,
+				"feature_count": result.FeatureCount,
+				"bin_count":     result.BinCount,
+				"robustness":    result.Robustness,
+			})
+		}
+	} else {
+		// Use traditional cryptographic hashing
+		fg.generateCompactHashFallback(fingerprint)
+	}
+
+	// Generate perceptual hashes for different feature types
+	for _, hashType := range fg.config.PerceptualHashTypes {
+		if fg.perceptualHasher != nil {
+			// Create a hasher for this specific type
+			params := *fg.config.PerceptualHashParams
+			params.HashType = extractors.PerceptualHashType(hashType)
+			typeHasher := extractors.NewPerceptualHasherWithParams(params)
+
+			result, err := typeHasher.GenerateHash(fingerprint.Features)
+			if err != nil {
+				fg.logger.Warn("Failed to generate perceptual hash", logging.Fields{
+					"hash_type": hashType,
+					"error":     err.Error(),
+				})
+				continue
+			}
+			fingerprint.PerceptualHashes[string(hashType)] = result.Hash
+
+			fg.logger.Debug("Generated perceptual hash type", logging.Fields{
+				"hash_type":     hashType,
+				"hash":          result.Hash,
+				"feature_count": result.FeatureCount,
+				"robustness":    result.Robustness,
+			})
+		} else {
+			// Fall back to traditional method
+			hash, err := fg.generatePerceptualHashFallback(fingerprint.Features, hashType)
+			if err != nil {
+				fg.logger.Warn("Failed to generate fallback perceptual hash", logging.Fields{
+					"hash_type": hashType,
+					"error":     err.Error(),
+				})
+				continue
+			}
+			fingerprint.PerceptualHashes[string(hashType)] = hash
+		}
+	}
+
+	return nil
+}
+
+func (fg *FingerprintGenerator) generateCompactHashFallback(fingerprint *AudioFingerprint) {
 	compactData := fg.extractCompactFeatures(fingerprint.Features)
 	compactHasher := sha256.New()
 	compactHasher.Write(compactData)
@@ -321,20 +450,75 @@ func (fg *FingerprintGenerator) generateHashes(fingerprint *AudioFingerprint) er
 		fingerprint.CompactHash = fullCompactHash[:32] // Default: medium
 	}
 
-	// Generate perceptual hashes
-	for _, hashType := range fg.config.PerceptualHashTypes {
-		hash, err := fg.generatePerceptualHash(fingerprint.Features, hashType)
-		if err != nil {
-			fg.logger.Warn("Failed to generate perceptual hash", logging.Fields{
-				"hash_type": hashType,
-				"error":     err.Error(),
-			})
-			continue
-		}
-		fingerprint.PerceptualHashes[string(hashType)] = hash
+	fg.logger.Debug("Generated traditional compact hash", logging.Fields{
+		"hash": fingerprint.CompactHash,
+	})
+}
+
+func (fg *FingerprintGenerator) generatePerceptualHashFallback(features *extractors.ExtractedFeatures, hashType PerceptualHashType) (string, error) {
+	var hashData []byte
+
+	switch hashType {
+	case HashSpectral:
+		hashData = fg.generateSpectralHash(features)
+	case HashTemporal:
+		hashData = fg.generateTemporalHash(features)
+	case HashMFCC:
+		hashData = fg.generateMFCCHash(features)
+	case HashChroma:
+		hashData = fg.generateChromaHash(features)
+	case HashCombined:
+		hashData = fg.generateCombinedHash(features)
+	default:
+		return "", fmt.Errorf("unsupported hash type: %s", hashType)
 	}
 
-	return nil
+	if len(hashData) == 0 {
+		return "", fmt.Errorf("no data available for hash type: %s", hashType)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(hashData)
+	hash := hex.EncodeToString(hasher.Sum(nil))[:32] // 128-bit hash
+
+	fg.logger.Debug("Generated fallback perceptual hash", logging.Fields{
+		"hash_type": hashType,
+		"hash":      hash,
+		"method":    "traditional_cryptographic",
+	})
+
+	return hash, nil
+}
+
+func ContentOptimizedPerceptualHashParams(contentType config.ContentType) *extractors.PerceptualHashParams {
+	params := extractors.DefaultPerceptualHashParams()
+
+	switch contentType {
+	case config.ContentNews, config.ContentTalk:
+		// For speech content, focus on MFCC and spectral features
+		params.HashType = extractors.PerceptualCombined
+		params.MaxCoefficients = 6  // Fewer MFCC coefficients for robustness
+		params.MFCCBins = 1.0       // Larger bins for more robustness
+		params.SpectralBins = 150.0 // Larger spectral bins
+
+	case config.ContentMusic:
+		// For music, include chroma and more detailed spectral analysis
+		params.HashType = extractors.PerceptualCombined
+		params.MaxCoefficients = 8
+		params.MFCCBins = 0.5
+		params.SpectralBins = 100.0
+
+	case config.ContentSports:
+		// For sports, focus on temporal and energy characteristics
+		params.HashType = extractors.PerceptualTemporal
+		params.TemporalBins = 3.0  // Smaller bins for energy characteristics
+		params.MaxCoefficients = 4 // Fewer MFCC coefficients
+
+	default:
+		// Use defaults for mixed/unknown content
+	}
+
+	return &params
 }
 
 // extractCompactFeatures extracts the most important features compact hashing
@@ -369,37 +553,6 @@ func (fg *FingerprintGenerator) extractCompactFeatures(features *extractors.Extr
 	// Convert to JSON for consistent hashing
 	data, _ := json.Marshal(compactFeatures)
 	return data
-}
-
-// generatePerceptualHash generates perceptual hashes based on feature type
-func (fg *FingerprintGenerator) generatePerceptualHash(features *extractors.ExtractedFeatures, hashType PerceptualHashType) (string, error) {
-	var hashData []byte
-
-	switch hashType {
-	case HashSpectral:
-		hashData = fg.generateSpectralHash(features)
-	case HashTemporal:
-		hashData = fg.generateTemporalHash(features)
-	case HashMFCC:
-		hashData = fg.generateMFCCHash(features)
-	case HashChroma:
-		hashData = fg.generateChromaHash(features)
-	case HashCombined:
-		hashData = fg.generateCombinedHash(features)
-	default:
-		err := fmt.Errorf("unsupported hash type: %s", hashType)
-		fg.logger.Error(err, "Unsupported hash type")
-		return "", err
-	}
-
-	if len(hashData) == 0 {
-		err := fmt.Errorf("no data available for hash type: %s", hashType)
-		return "", err
-	}
-
-	hasher := sha256.New()
-	hasher.Write(hashData)
-	return hex.EncodeToString(hasher.Sum(nil))[:32], nil // 128-bit hash
 }
 
 // generateSpectralHash creates hash from spectral features

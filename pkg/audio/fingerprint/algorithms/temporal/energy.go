@@ -25,7 +25,7 @@ func NewEnergy(frameSize, hopSize, sampleRate int) *Energy {
 // ComputeShortTimeEnergy calculates short-time energy for overlapping frames
 // This is the critical function for your alignment needs
 func (e *Energy) ComputeShortTimeEnergy(signal []float64) []float64 {
-	if len(signal) < e.frameSize {
+	if len(signal) < e.frameSize || e.hopSize <= 0 || e.frameSize <= 0 {
 		return []float64{}
 	}
 
@@ -157,13 +157,16 @@ func (e *Energy) ComputeEnergyRatio(energies1, energies2 []float64) []float64 {
 
 // ComputeLoudnessRange calculates loudness range (EBU R128 style)
 func (e *Energy) ComputeLoudnessRange(signal []float64) float64 {
-	if len(signal) == 0 {
+	if len(signal) == 0 || e.sampleRate <= 0 {
 		return 0.0
 	}
 
 	// Calculate momentary loudness values (400ms windows)
 	windowSize := int(0.4 * float64(e.sampleRate)) // 400ms
 	hopSize := windowSize / 4                      // 25% overlap
+	if hopSize <= 0 {
+		hopSize = 1
+	}
 
 	// Temporarily adjust parameters for loudness calculation
 	origFrameSize := e.frameSize

@@ -1,9 +1,5 @@
 package extractors
 
-import (
-	"math"
-)
-
 // ExtractedFeatures holds the core features needed for MVP
 // Organized by content type requirements: speech (news/talk), music, sports, mixed, general
 type ExtractedFeatures struct {
@@ -140,58 +136,4 @@ type FormantData struct {
 type OnsetEvent struct {
 	Time     float64 `json:"time"`     // Onset time (seconds)
 	Strength float64 `json:"strength"` // Onset strength
-}
-
-// Utility functions for basic calculations
-
-// calculateZeroCrossingRate computes zero crossing rate for a signal frame
-// WHY: ZCR is a simple measure of signal noisiness and frequency content
-// High ZCR = noisy/high-freq content, Low ZCR = tonal content
-func calculateZeroCrossingRate(pcm []float64) float64 {
-	if len(pcm) <= 1 {
-		return 0
-	}
-	crossings := 0
-	for i := 1; i < len(pcm); i++ {
-		if (pcm[i-1] >= 0 && pcm[i] < 0) || (pcm[i-1] < 0 && pcm[i] >= 0) {
-			crossings++
-		}
-	}
-	return float64(crossings) / float64(len(pcm)-1)
-}
-
-// calculateRMSEnergy computes root-mean-square energy
-// WHY: RMS provides perceptually meaningful measure of signal strength
-func calculateRMSEnergy(pcm []float64) float64 {
-	if len(pcm) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, sample := range pcm {
-		sum += sample * sample
-	}
-	return math.Sqrt(sum / float64(len(pcm)))
-}
-
-// calculateSpectralCentroid computes spectral centroid from magnitude spectrum
-// WHY: Spectral centroid indicates brightness - center of mass of spectrum
-func calculateSpectralCentroid(magnitude []float64, sampleRate int) float64 {
-	if len(magnitude) == 0 {
-		return 0
-	}
-
-	weightedSum := 0.0
-	magnitudeSum := 0.0
-	freqResolution := float64(sampleRate) / float64(2*(len(magnitude)-1))
-
-	for i, mag := range magnitude {
-		freq := float64(i) * freqResolution
-		weightedSum += freq * mag
-		magnitudeSum += mag
-	}
-
-	if magnitudeSum == 0 {
-		return 0
-	}
-	return weightedSum / magnitudeSum
 }
