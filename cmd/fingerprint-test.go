@@ -309,7 +309,7 @@ func loadStreamURL(ctx context.Context, url string) (*common.AudioData, error) {
 
 func generateFingerprint(audioData *common.AudioData, url string) (*fingerprint.AudioFingerprint, error) {
 	// Create fingerprint generator with EXACT working parameters
-	fingerprintConfig := fingerprint.DefaultFingerprintConfig()
+	fingerprintConfig := fingerprint.ContentOptimizedFingerprintConfig(config.ContentType(ftContentType))
 
 	// FIX: Use the EXACT parameters that worked before
 	fingerprintConfig.WindowSize = 1024 // Was 2048

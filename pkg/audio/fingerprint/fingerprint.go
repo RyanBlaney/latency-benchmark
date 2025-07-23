@@ -289,9 +289,11 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 	// Add metadata
 	addMetadata(fingerprint, audioData, extractor, fg.config)
 
+	hashLength := min(16, len(fingerprint.DetailedHash))
+
 	logger.Info("Fingerprint generation completed", logging.Fields{
 		"fingerprint_id": fingerprint.ID,
-		"compact_hash":   fingerprint.CompactHash[:16] + "...", // show first 16 characters
+		"compact_hash":   fingerprint.CompactHash[:hashLength] + "...", // show first 16 characters
 		"content_type":   fingerprint.ContentType,
 	})
 

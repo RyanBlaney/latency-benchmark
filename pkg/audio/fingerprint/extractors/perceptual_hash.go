@@ -49,9 +49,16 @@ func ContentOptimizedPerceptualHashParams(contentType config.ContentType) *Perce
 	case config.ContentNews, config.ContentTalk:
 		// For speech content, focus on MFCC and spectral features
 		params.HashType = PerceptualCombined
-		params.MaxCoefficients = 6  // Fewer MFCC coefficients for robustness
-		params.MFCCBins = 1.0       // Larger bins for more robustness
-		params.SpectralBins = 150.0 // Larger spectral bins
+		params.MaxCoefficients = 4
+		params.MFCCBins = 0.3
+		params.SpectralBins = 25.0
+		params.TemporalBins = 2.0
+		params.HashLength = 20
+		params.UseCoarseQuant = false
+		params.BrightnessThresholds = [2]float64{800, 3500}
+		params.RolloffThresholds = [2]float64{2000, 8000}
+		params.DynamicsThresholds = [2]float64{15, 45}
+		params.SilenceThresholds = [2]float64{0.05, 0.25}
 
 	case config.ContentMusic:
 		// For music, include chroma and more detailed spectral analysis
