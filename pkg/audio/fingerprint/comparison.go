@@ -204,7 +204,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 
 	result.ProcessingTime = time.Since(startTime)
 
-	logger.Info("Fingerprint comparison completed", logging.Fields{
+	logger.Debug("Fingerprint comparison completed", logging.Fields{
 		"overall_similarity": result.OverallSimilarity,
 		"hash_similarity":    result.HashSimilarity,
 		"feature_similarity": result.FeatureSimilarity,
@@ -549,7 +549,7 @@ func (fc *FingerprintComparator) FindBestMatches(query *AudioFingerprint, candid
 		"candiates": len(candidates),
 	})
 
-	logger.Info("Finding best matches")
+	logger.Debug("Finding best matches")
 
 	var matches []*Match
 
@@ -598,7 +598,7 @@ func (fc *FingerprintComparator) FindBestMatches(query *AudioFingerprint, candid
 		match.Rank = i + 1
 	}
 
-	logger.Info("Best matches found", logging.Fields{
+	logger.Debug("Best matches found", logging.Fields{
 		"total_matches": len(matches),
 		"threshold":     fc.config.SimilarityThreshold,
 	})
@@ -733,7 +733,7 @@ func (fc *FingerprintComparator) calculateHashSimilarityWithAlignment(fp1, fp2 *
 			rawSim := extractors.ComparePerceptualHashes(fp1.CompactHash, fp2.CompactHash)
 			compactSim = fc.applyAlignmentBoost(rawSim, alignmentBoost)
 
-			fc.logger.Info("Alignment-aware perceptual compact hash comparison", logging.Fields{
+			fc.logger.Debug("Alignment-aware perceptual compact hash comparison", logging.Fields{
 				"hash1":              fp1.CompactHash,
 				"hash2":              fp2.CompactHash,
 				"raw_similarity":     rawSim,
@@ -780,7 +780,7 @@ func (fc *FingerprintComparator) calculateHashSimilarityWithAlignment(fp1, fp2 *
 
 			similarities = append(similarities, boostedSim)
 
-			fc.logger.Info("Alignment-aware perceptual hash type comparison", logging.Fields{
+			fc.logger.Debug("Alignment-aware perceptual hash type comparison", logging.Fields{
 				"type":               hashType,
 				"hash1":              hash1,
 				"hash2":              hash2,
@@ -1030,7 +1030,7 @@ func (fc *FingerprintComparator) compareMFCCSequences(mfcc1, mfcc2 [][]float64) 
 // compareMFCCWithDTW uses DTW for alignment-aware MFCC comparison
 func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) float64 {
 	if len(mfcc1) == 0 || len(mfcc2) == 0 {
-		fc.logger.Info("DTW: Empty MFCC input", logging.Fields{
+		fc.logger.Debug("DTW: Empty MFCC input", logging.Fields{
 			"mfcc1_len": len(mfcc1),
 			"mfcc2_len": len(mfcc2),
 		})
@@ -1042,14 +1042,14 @@ func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) fl
 	vectors2 := fc.prepareMFCCVectorsForDTW(mfcc2)
 
 	if len(vectors1) == 0 || len(vectors2) == 0 {
-		fc.logger.Info("DTW: Empty vectors after preparation", logging.Fields{
+		fc.logger.Debug("DTW: Empty vectors after preparation", logging.Fields{
 			"vectors1_len": len(vectors1),
 			"vectors2_len": len(vectors2),
 		})
 		return 0.0
 	}
 
-	fc.logger.Info("DTW: Input prepared", logging.Fields{
+	fc.logger.Debug("DTW: Input prepared", logging.Fields{
 		"vectors1_frames": len(vectors1),
 		"vectors2_frames": len(vectors2),
 		"vector_dim":      len(vectors1[0]),
@@ -1058,7 +1058,7 @@ func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) fl
 	// Create DTW analyzer with reasonable constraints
 	constraintBand := max(len(vectors1), len(vectors2)) / 4 // 25% constraint band
 
-	fc.logger.Info("DTW: Creating analyzer", logging.Fields{
+	fc.logger.Debug("DTW: Creating analyzer", logging.Fields{
 		"constraint_band": constraintBand,
 		"step_pattern":    "symmetric",
 		"distance_metric": "EuclideanDistance",
@@ -1073,13 +1073,13 @@ func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) fl
 	// Perform DTW alignment on vector sequences
 	result, err := dtwAnalyzer.Align(vectors1, vectors2)
 	if err != nil {
-		fc.logger.Info("DTW: Alignment failed", logging.Fields{
+		fc.logger.Warn("DTW: Alignment failed", logging.Fields{
 			"error": err.Error(),
 		})
 		return 0.0
 	}
 
-	fc.logger.Info("DTW: Alignment succeeded", logging.Fields{
+	fc.logger.Debug("DTW: Alignment succeeded", logging.Fields{
 		"raw_distance": result.Distance,
 		"query_length": result.QueryLength,
 		"ref_length":   result.RefLength,
@@ -1120,7 +1120,7 @@ func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) fl
 	expectedMaxDistance := 10.0 * vectorDim
 	similarity5 := math.Max(0.0, 1.0-(result.Distance/expectedMaxDistance))
 
-	fc.logger.Info("DTW: Distance to similarity conversion", logging.Fields{
+	fc.logger.Debug("DTW: Distance to similarity conversion", logging.Fields{
 		"raw_distance":        result.Distance,
 		"max_len":             maxLen,
 		"vector_dim":          vectorDim,
@@ -1156,7 +1156,7 @@ func (fc *FingerprintComparator) compareMFCCWithDTW(mfcc1, mfcc2 [][]float64) fl
 
 	finalSimilarity := math.Max(0.0, math.Min(1.0, bestSimilarity))
 
-	fc.logger.Info("DTW: Final similarity selection", logging.Fields{
+	fc.logger.Debug("DTW: Final similarity selection", logging.Fields{
 		"chosen_similarity": finalSimilarity,
 		"method_used":       "best_candidate",
 	})
@@ -1768,7 +1768,7 @@ func (fc *FingerprintComparator) BatchCompare(query *AudioFingerprint, candidate
 		"candidates": len(candidates),
 	})
 
-	logger.Info("Starting batch comparison")
+	logger.Debug("Starting batch comparison")
 
 	results := make([]*SimilarityResult, 0, len(candidates))
 
@@ -1795,7 +1795,7 @@ func (fc *FingerprintComparator) BatchCompare(query *AudioFingerprint, candidate
 		results = append(results, result)
 	}
 
-	logger.Info("Batch comparison completed", logging.Fields{
+	logger.Debug("Batch comparison completed", logging.Fields{
 		"successful_comparisons": len(results),
 		"total_candidates":       len(candidates),
 	})
