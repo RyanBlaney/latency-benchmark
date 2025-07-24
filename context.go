@@ -17,30 +17,27 @@ import (
 // Context holds the application context and configuration
 type Context struct {
 	// CLI arguments
-	ConfigFile          string // Application configuration file (optional)
-	BroadcastConfigFile string // Broadcast groups configuration file (required)
-	OutputFile          string
-	OutputFormat        string
-	Timeout             time.Duration
-	SegmentDuration     time.Duration
-	MaxConcurrent       int
-	Verbose             bool
-	Quiet               bool
-	DetailedAnalysis    bool
-	SkipFingerprint     bool
+	ConfigFile       string
+	OutputFile       string
+	OutputFormat     string
+	Timeout          time.Duration
+	SegmentDuration  time.Duration
+	MaxConcurrent    int
+	Verbose          bool
+	Quiet            bool
+	DetailedAnalysis bool
+	SkipFingerprint  bool
 
 	// Runtime context
-	Logger          logging.Logger
-	Config          *BenchmarkConfig
-	BroadcastConfig *BroadcastConfig
+	Logger logging.Logger
+	Config *BenchmarkConfig
 }
 
 // BenchmarkApp handles the benchmark application lifecycle
 type BenchmarkApp struct {
-	ctx             *Context
-	config          *BenchmarkConfig
-	broadcastConfig *BroadcastConfig
-	logger          logging.Logger
+	ctx    *Context
+	config *BenchmarkConfig
+	logger logging.Logger
 }
 
 // NewBenchmarkApp creates a new benchmark application
@@ -50,37 +47,34 @@ func NewBenchmarkApp(ctx *Context) (*BenchmarkApp, error) {
 	ctx.Logger = logger
 
 	// Load configuration
-	config, broadcastConfig, err := loadAndMergeConfig(ctx)
+	config, err := loadAndMergeConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 	ctx.Config = config
-	ctx.BroadcastConfig = broadcastConfig
 
-	logger.Info("Benchmark application initialized", map[string]interface{}{
-		"app_config_file":       ctx.ConfigFile,
-		"broadcast_config_file": ctx.BroadcastConfigFile,
-		"output_format":         ctx.OutputFormat,
-		"timeout":               ctx.Timeout.Seconds(),
-		"broadcast_groups":      len(broadcastConfig.GetEnabledBroadcastGroups()),
+	logger.LogInfo("Benchmark application initialized", map[string]interface{}{
+		"config_file":     ctx.ConfigFile,
+		"output_format":   ctx.OutputFormat,
+		"timeout":         ctx.Timeout.Seconds(),
+		"broadcast_groups": len(config.BroadcastGroups),
 	})
 
 	return &BenchmarkApp{
-		ctx:             ctx,
-		config:          config,
-		broadcastConfig: broadcastConfig,
-		logger:          logger,
+		ctx:    ctx,
+		config: config,
+		logger: logger,
 	}, nil
 }
 
 // Run executes the benchmark
 func (app *BenchmarkApp) Run(ctx context.Context) error {
-	app.logger.Info("Starting CDN benchmark execution", map[string]interface{}{
-		"enabled_groups": len(app.broadcastConfig.GetEnabledBroadcastGroups()),
+	app.logger.LogInfo("Starting CDN benchmark execution", map[string]interface{}{
+		"enabled_groups": len(app.config.GetEnabledBroadcastGroups()),
 	})
 
 	// Create and run benchmark orchestrator
-	orchestrator, err := benchmark.NewOrchestrator(app.config, app.broadcastConfig, app.logger)
+	orchestrator, err := benchmark.NewOrchestrator(app.config, app.logger)
 	if err != nil {
 		return fmt.Errorf("failed to create benchmark orchestrator: %w", err)
 	}
@@ -97,7 +91,7 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 	var insights []string
 
 	if app.ctx.DetailedAnalysis {
-		app.logger.Info("Generating detailed analytics", nil)
+		app.logger.LogInfo("Generating detailed analytics", nil)
 		metricsCalculator := benchmark.NewMetricsCalculator(app.logger)
 		performanceMetrics = metricsCalculator.CalculatePerformanceMetrics(summary)
 		qualityMetrics = metricsCalculator.CalculateQualityMetrics(summary)
@@ -125,51 +119,41 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 
 // setupLogging configures logging based on context
 func setupLogging(ctx *Context) logging.Logger {
-	// TODO: Create logger with appropriate level based on ctx.Verbose/ctx.Quiet
+	level := "info"
+	if ctx.Verbose {
+		level = "debug"
+	} else if ctx.Quiet {
+		level = "error"
+	}
+
+	// TODO: Create logger with appropriate level
 	// For now, return default logger
 	return logging.NewDefaultLogger()
 }
 
-// loadAndMergeConfig loads configuration from files and merges with CLI flags
-func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error) {
+// loadAndMergeConfig loads configuration from file and merges with CLI flags
+func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, error) {
 	// Load base configuration
 	baseConfig, err := configs.LoadConfig()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load base configuration: %w", err)
+		return nil, fmt.Errorf("failed to load base configuration: %w", err)
 	}
 
-	// Load benchmark-specific configuration from file (optional)
-	var benchmarkConfig *BenchmarkConfig
-	if ctx.ConfigFile != "" {
-		benchmarkConfig, err = loadBenchmarkConfigFromFile(ctx.ConfigFile)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load benchmark configuration: %w", err)
-		}
-	}
-
-	// Load broadcast groups configuration from file (required)
-	if ctx.BroadcastConfigFile == "" {
-		return nil, nil, fmt.Errorf("broadcast configuration file is required")
-	}
-
-	broadcastConfig, err := loadBroadcastConfigFromFile(ctx.BroadcastConfigFile)
+	// Load benchmark-specific configuration from file
+	benchmarkConfig, err := loadBenchmarkConfigFromFile(ctx.ConfigFile)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load broadcast configuration: %w", err)
+		return nil, fmt.Errorf("failed to load benchmark configuration: %w", err)
 	}
 
 	// Merge configurations
 	mergedConfig := mergeBenchmarkConfig(baseConfig, benchmarkConfig, ctx)
 
-	// Validate final configurations
+	// Validate final configuration
 	if err := mergedConfig.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid benchmark configuration: %w", err)
+		return nil, fmt.Errorf("invalid merged configuration: %w", err)
 	}
 
-	if err := broadcastConfig.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid broadcast configuration: %w", err)
-	}
-
-	return mergedConfig, broadcastConfig, nil
+	return mergedConfig, nil
 }
 
 // outputResults handles all result output
@@ -243,7 +227,7 @@ func (app *BenchmarkApp) writeToFile(data []byte) error {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
-	app.logger.Info("Results written to file", map[string]interface{}{
+	app.logger.LogInfo("Results written to file", map[string]interface{}{
 		"output_file": app.ctx.OutputFile,
 		"size_bytes":  len(data),
 	})
