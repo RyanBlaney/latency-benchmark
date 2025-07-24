@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/filters"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/spectral"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/speech"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/temporal"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/tonal"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 )
 

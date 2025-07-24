@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 var (

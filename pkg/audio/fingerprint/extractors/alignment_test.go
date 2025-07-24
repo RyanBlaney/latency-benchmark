@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"

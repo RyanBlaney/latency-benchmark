@@ -4,9 +4,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 // ContentDetector handles content type detection from metadata and audio analysis
