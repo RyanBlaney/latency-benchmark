@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
 )
 
 // AudioFingerprint represents a complete audio fingerprint

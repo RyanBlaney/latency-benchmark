@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
-	"github.com/tunein/cdn-benchmark-cli/pkg/transcode"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 )
 
 func calculateMean(values []float64) float64 {

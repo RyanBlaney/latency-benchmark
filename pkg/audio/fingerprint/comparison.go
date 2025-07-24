@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/stats"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"gonum.org/v1/gonum/floats"
@@ -1508,31 +1508,6 @@ func (fc *FingerprintComparator) calculateSimpleWeightedSimilarity(result *Simil
 	}
 
 	return math.Min(1.0, similarity)
-}
-
-// calculateAdaptiveSimilarity calculates similarity adaptively based on available data
-func (fc *FingerprintComparator) calculateAdaptiveSimilarity(result *SimilarityResult) float64 {
-	// Adapt weights based on data availability and quality
-	hashWeight := fc.hashWeight
-	featureWeight := fc.featureWeight
-
-	// If hash similarity is very high, increase its weight
-	if result.HashSimilarity > 0.9 {
-		hashWeight += 0.2
-		featureWeight -= 0.2
-	}
-
-	// If feature similarity is very reliable, increase its weight
-	if result.FeatureSimilarity > 0.8 && len(result.FeatureDistances) >= 3 {
-		featureWeight += 0.1
-		hashWeight -= 0.1
-	}
-
-	// Ensure weights are valid
-	hashWeight = math.Max(0.1, math.Min(0.9, hashWeight))
-	featureWeight = 1.0 - hashWeight
-
-	return hashWeight*result.HashSimilarity + featureWeight*result.FeatureSimilarity
 }
 
 // calculateQualityMetrics calculates quality metrics for the comparison

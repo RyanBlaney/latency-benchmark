@@ -42,7 +42,6 @@ func NewParser() *Parser {
 	return parser
 }
 
-// In parser.go, update NewConfigurableParser
 func NewConfigurableParser(config *ParserConfig) *ConfigurableParser {
 	if config == nil {
 		config = DefaultConfig().Parser
@@ -73,7 +72,7 @@ func (cp *ConfigurableParser) registerCustomTagHandlers() {
 				return nil
 			},
 		}
-		cp.Parser.RegisterTagHandler(handler)
+		cp.RegisterTagHandler(handler)
 	}
 }
 
