@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -37,11 +38,11 @@ func init() {
 	rootCmd.AddCommand(ftCmd)
 
 	ftCmd.Flags().BoolVarP(&ftVerbose, "verbose", "v", false, "verbose output")
-	ftCmd.Flags().DurationVarP(&ftSegmentDuration, "segment-duration", "t", time.Second*30, "audio segment duration")
-	ftCmd.Flags().DurationVarP(&ftTimeout, "timeout", "T", time.Second*120, "timeout for operations")
+	ftCmd.Flags().DurationVarP(&ftSegmentDuration, "segment-duration", "t", time.Second*240, "audio segment duration")
+	ftCmd.Flags().DurationVarP(&ftTimeout, "timeout", "T", time.Second*240, "timeout for operations")
 	ftCmd.Flags().StringVar(&ftContentType, "content-type", "news", "content type (music, news, talk, sports)")
-	ftCmd.Flags().Float64Var(&ftMinConfidence, "min-confidence", 0.4, "minimum confidence for valid alignment")
-	ftCmd.Flags().Float64Var(&ftMaxOffsetSec, "max-offset", 15.0, "maximum time offset for alignment (seconds)")
+	ftCmd.Flags().Float64Var(&ftMinConfidence, "min-confidence", 0.25, "minimum confidence for valid alignment")
+	ftCmd.Flags().Float64Var(&ftMaxOffsetSec, "max-offset", 190, "maximum time offset for alignment (seconds)")
 }
 
 type AudioStream struct {
@@ -85,8 +86,8 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	fmt.Printf("📥 Loading and Fingerprinting Streams\n")
 	fmt.Printf("=====================================\n")
 
-	stream1 := loadAndFingerprintStream(ctx, "stream_1", url1)
-	stream2 := loadAndFingerprintStream(ctx, "stream_2", url2)
+	stream1 := loadAudioStream(ctx, "stream_1", url1)
+	stream2 := loadAudioStream(ctx, "stream_2", url2)
 
 	if stream1.Error != nil {
 		return fmt.Errorf("failed to process stream 1: %v", stream1.Error)
@@ -95,10 +96,10 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to process stream 2: %v", stream2.Error)
 	}
 
-	fmt.Printf("✅ %s: %.1fs audio, fingerprint generated in %.0fms\n",
-		stream1.ID, stream1.AudioData.Duration.Seconds(), stream1.FingerprintTime.Seconds()*1000)
-	fmt.Printf("✅ %s: %.1fs audio, fingerprint generated in %.0fms\n",
-		stream2.ID, stream2.AudioData.Duration.Seconds(), stream2.FingerprintTime.Seconds()*1000)
+	fmt.Printf("✅ %s: %.1fs audio downloaded in %dms\n",
+		stream1.URL, stream1.AudioData.Duration.Seconds(), stream1.LoadTime.Milliseconds())
+	fmt.Printf("✅ %s: %.1fs audio downloaded in %dms\n",
+		stream2.URL, stream2.AudioData.Duration.Seconds(), stream2.LoadTime.Milliseconds())
 	fmt.Printf("\n")
 
 	// Step 2: Perform alignment detection
@@ -126,7 +127,32 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n")
 
-	// Step 3: Compare fingerprints with and without alignment
+	// Step 3: Truncate audio outside of aligned bounds
+	alignedAudio1, alignedAudio2, err := truncateToAlignedSegments(
+		stream1.AudioData, stream2.AudioData, alignmentFeatures)
+	if err != nil {
+		return fmt.Errorf("failed to truncate aligned segments: %v", err)
+	}
+
+	// Step 4: Fingerprinting
+	fmt.Printf("Fingerprint Generation\n")
+	fmt.Printf("=========================\n")
+
+	timer.StartEvent("fingerprinting")
+
+	stream1.Fingerprint, err = generateFingerprint(alignedAudio1, stream1.URL)
+	if err != nil {
+		return fmt.Errorf("failed to generate fingerprint for %s: %v", stream1.ID, err)
+	}
+
+	stream2.Fingerprint, err = generateFingerprint(alignedAudio2, stream2.URL)
+	if err != nil {
+		return fmt.Errorf("failed to generate fingerprint for %s: %v", stream2.ID, err)
+	}
+
+	timer.EndEvent("fingerprinting")
+
+	// Step 5: Compare fingerprints
 	fmt.Printf("🔍 Fingerprint Comparison\n")
 	fmt.Printf("=========================\n")
 
@@ -135,12 +161,6 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	// Create comparator
 	comparisonConfig := fingerprint.ContentOptimizedComparisonConfig(parseContentType(ftContentType))
 	comparator := fingerprint.NewFingerprintComparator(comparisonConfig)
-
-	// Compare without alignment
-	resultNoAlign, err := comparator.Compare(stream1.Fingerprint, stream2.Fingerprint)
-	if err != nil {
-		return fmt.Errorf("comparison without alignment failed: %v", err)
-	}
 
 	// Compare with alignment (if available)
 	var resultWithAlign *fingerprint.SimilarityResult
@@ -156,17 +176,9 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 
 	timer.EndEvent("comparison")
 
-	// Display results
-	fmt.Printf("Without Alignment: similarity=%.3f, confidence=%.3f\n",
-		resultNoAlign.OverallSimilarity, resultNoAlign.Confidence)
-
 	if resultWithAlign != nil {
 		fmt.Printf("With Alignment:    similarity=%.3f, confidence=%.3f (offset=%.2fs)\n",
 			resultWithAlign.OverallSimilarity, resultWithAlign.Confidence, resultWithAlign.TemporalOffset)
-
-		improvement := resultWithAlign.OverallSimilarity - resultNoAlign.OverallSimilarity
-		fmt.Printf("Improvement:       +%.3f (%.1f%% better)\n",
-			improvement, improvement*100)
 	} else {
 		fmt.Printf("With Alignment:    skipped (no valid alignment)\n")
 	}
@@ -176,7 +188,7 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	if ftVerbose {
 		fmt.Printf("📊 Detailed Analysis\n")
 		fmt.Printf("====================\n")
-		printDetailedResults(resultNoAlign, resultWithAlign, stream1, stream2, alignmentFeatures)
+		printDetailedResults(resultWithAlign, stream1, stream2, alignmentFeatures)
 		fmt.Printf("\n")
 	}
 
@@ -196,10 +208,7 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	fmt.Printf("🎯 Verdict\n")
 	fmt.Printf("==========\n")
 
-	bestSimilarity := resultNoAlign.OverallSimilarity
-	if resultWithAlign != nil && resultWithAlign.OverallSimilarity > bestSimilarity {
-		bestSimilarity = resultWithAlign.OverallSimilarity
-	}
+	bestSimilarity := resultWithAlign.OverallSimilarity
 
 	if bestSimilarity > 0.8 {
 		fmt.Printf("✅ STRONG MATCH: Streams are very likely from the same source (%.1f%% similar)\n", bestSimilarity*100)
@@ -209,14 +218,18 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 		fmt.Printf("❌ NO MATCH: Streams appear to be different sources (%.1f%% similar)\n", bestSimilarity*100)
 	}
 
-	if resultWithAlign != nil && resultWithAlign.OverallSimilarity > resultNoAlign.OverallSimilarity+0.1 {
-		fmt.Printf("💡 Temporal alignment significantly improved matching!\n")
-	}
-
 	return nil
 }
 
-func loadAndFingerprintStream(ctx context.Context, id, url string) *AudioStream {
+func loadAudio(ctx context.Context, input string) (*common.AudioData, error) {
+	if isLocalFile(input) {
+		return loadLocalFile(input)
+	} else {
+		return loadStreamURL(ctx, input)
+	}
+}
+
+func loadAudioStream(ctx context.Context, id, url string) *AudioStream {
 	stream := &AudioStream{ID: id, URL: url}
 
 	// Load audio
@@ -229,25 +242,8 @@ func loadAndFingerprintStream(ctx context.Context, id, url string) *AudioStream 
 	stream.AudioData = audioData
 	stream.LoadTime = time.Since(loadStart)
 
-	// Generate fingerprint
-	fingerprintStart := time.Now()
-	fp, err := generateFingerprint(audioData, url)
-	if err != nil {
-		stream.Error = fmt.Errorf("failed to generate fingerprint: %w", err)
-		return stream
-	}
-	stream.Fingerprint = fp
-	stream.FingerprintTime = time.Since(fingerprintStart)
-
 	return stream
-}
 
-func loadAudio(ctx context.Context, input string) (*common.AudioData, error) {
-	if isLocalFile(input) {
-		return loadLocalFile(input)
-	} else {
-		return loadStreamURL(ctx, input)
-	}
 }
 
 func loadLocalFile(filePath string) (*common.AudioData, error) {
@@ -364,7 +360,7 @@ func detectAlignment(stream1, stream2 *AudioStream) (*extractors.AlignmentFeatur
 		stream1.AudioData.SampleRate)
 }
 
-func printDetailedResults(resultNoAlign, resultWithAlign *fingerprint.SimilarityResult,
+func printDetailedResults(resultWithAlign *fingerprint.SimilarityResult,
 	stream1, stream2 *AudioStream, alignmentFeatures *extractors.AlignmentFeatures) {
 
 	fmt.Printf("Stream Details:\n")
@@ -374,14 +370,6 @@ func printDetailedResults(resultNoAlign, resultWithAlign *fingerprint.Similarity
 	fmt.Printf("  %s: %.1fs, %dHz, %d channels\n",
 		stream2.ID, stream2.AudioData.Duration.Seconds(),
 		stream2.AudioData.SampleRate, stream2.AudioData.Channels)
-	fmt.Printf("\n")
-
-	fmt.Printf("Feature Breakdown (no alignment):\n")
-	for feature, distance := range resultNoAlign.FeatureDistances {
-		similarity := 1.0 - distance
-		fmt.Printf("  %s: %.3f\n", feature, similarity)
-	}
-	fmt.Printf("  Hash similarity: %.3f\n", resultNoAlign.HashSimilarity)
 	fmt.Printf("\n")
 
 	if resultWithAlign != nil {
@@ -457,4 +445,78 @@ func isLocalFile(input string) bool {
 		strings.HasPrefix(input, "./") ||
 		strings.HasPrefix(input, "../") ||
 		(!strings.HasPrefix(input, "http://") && !strings.HasPrefix(input, "https://"))
+}
+
+func truncateToAlignedSegments(audio1, audio2 *common.AudioData, alignment *extractors.AlignmentFeatures) (*common.AudioData, *common.AudioData, error) {
+	offsetSeconds := alignment.TemporalOffset
+	sampleRate := audio1.SampleRate
+	offsetSamples := int(math.Abs(offsetSeconds) * float64(sampleRate))
+
+	var aligned1, aligned2 *common.AudioData
+
+	if offsetSeconds > 0 {
+		// Stream 2 is ahead, trim beginning of stream 2
+		start2 := offsetSamples
+		if start2 >= len(audio2.PCM) {
+			return nil, nil, fmt.Errorf("offset too large")
+		}
+
+		// Find common length after alignment
+		remaining2 := len(audio2.PCM) - start2
+		commonLength := min(len(audio1.PCM), remaining2)
+
+		aligned1 = &common.AudioData{
+			PCM:        audio1.PCM[:commonLength],
+			SampleRate: audio1.SampleRate,
+			Channels:   audio1.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+
+		aligned2 = &common.AudioData{
+			PCM:        audio2.PCM[start2 : start2+commonLength],
+			SampleRate: audio2.SampleRate,
+			Channels:   audio2.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+	} else if offsetSeconds < 0 {
+		// Stream 1 is ahead, trim beginning of stream 1
+		start1 := offsetSamples
+		if start1 >= len(audio1.PCM) {
+			return nil, nil, fmt.Errorf("offset too large")
+		}
+
+		remaining1 := len(audio1.PCM) - start1
+		commonLength := min(remaining1, len(audio2.PCM))
+
+		aligned1 = &common.AudioData{
+			PCM:        audio1.PCM[start1 : start1+commonLength],
+			SampleRate: audio1.SampleRate,
+			Channels:   audio1.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+
+		aligned2 = &common.AudioData{
+			PCM:        audio2.PCM[:commonLength],
+			SampleRate: audio2.SampleRate,
+			Channels:   audio2.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+	} else {
+		// No offset, just trim to same length
+		commonLength := min(len(audio1.PCM), len(audio2.PCM))
+		aligned1 = &common.AudioData{
+			PCM:        audio1.PCM[:commonLength],
+			SampleRate: audio1.SampleRate,
+			Channels:   audio1.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+		aligned2 = &common.AudioData{
+			PCM:        audio2.PCM[:commonLength],
+			SampleRate: audio2.SampleRate,
+			Channels:   audio2.Channels,
+			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
+		}
+	}
+
+	return aligned1, aligned2, nil
 }

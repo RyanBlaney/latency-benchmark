@@ -314,6 +314,37 @@ func (mc *MetricsCalculator) calculateStats(data []float64) *LatencyStats {
 	}
 	stats.StdDev = math.Sqrt(sumSquaredDiffs / float64(len(data)))
 
+	// Clean up any infinite or NaN values for JSON serialization
+	stats = mc.sanitizeStats(stats)
+
+	return stats
+}
+
+// sanitizeStats removes infinite and NaN values to prevent JSON serialization errors
+func (mc *MetricsCalculator) sanitizeStats(stats *LatencyStats) *LatencyStats {
+	// Replace any infinite or NaN values with safe defaults
+	if math.IsInf(stats.Mean, 0) || math.IsNaN(stats.Mean) {
+		stats.Mean = 0
+	}
+	if math.IsInf(stats.Median, 0) || math.IsNaN(stats.Median) {
+		stats.Median = 0
+	}
+	if math.IsInf(stats.P95, 0) || math.IsNaN(stats.P95) {
+		stats.P95 = 0
+	}
+	if math.IsInf(stats.P99, 0) || math.IsNaN(stats.P99) {
+		stats.P99 = 0
+	}
+	if math.IsInf(stats.Min, 0) || math.IsNaN(stats.Min) {
+		stats.Min = 0
+	}
+	if math.IsInf(stats.Max, 0) || math.IsNaN(stats.Max) {
+		stats.Max = 0
+	}
+	if math.IsInf(stats.StdDev, 0) || math.IsNaN(stats.StdDev) {
+		stats.StdDev = 0
+	}
+
 	return stats
 }
 

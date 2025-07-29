@@ -15,7 +15,7 @@ func setDefaults(v *viper.Viper) {
 		v.Set("stream.connection_timeout", 10*time.Second)
 	}
 	if !v.IsSet("stream.read_timeout") {
-		v.Set("stream.read_timeout", 30*time.Second)
+		v.Set("stream.read_timeout", 90*time.Second)
 	}
 	if !v.IsSet("stream.buffer_size") {
 		v.Set("stream.buffer_size", 8192)
@@ -32,7 +32,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Global test defaults
 	if !v.IsSet("test.timeout") {
-		v.Set("test.timeout", 30*time.Second)
+		v.Set("test.timeout", 90*time.Second)
 	}
 	if !v.IsSet("test.retry_attempts") {
 		v.Set("test.retry_attempts", 3)
@@ -192,7 +192,7 @@ func setHLSDefaults(v *viper.Viper) {
 
 	// HLS audio defaults
 	if !v.IsSet("hls.audio.sample_duration") {
-		v.Set("hls.audio.sample_duration", 30*time.Second)
+		v.Set("hls.audio.sample_duration", 90*time.Second)
 	}
 	if !v.IsSet("hls.audio.buffer_duration") {
 		v.Set("hls.audio.buffer_duration", 2*time.Second)
@@ -292,13 +292,13 @@ func setICEcastDefaults(v *viper.Viper) {
 		v.Set("icecast.audio.buffer_duration", 2*time.Second)
 	}
 	if !v.IsSet("icecast.audio.sample_duration") {
-		v.Set("icecast.audio.sample_duration", 30*time.Second)
+		v.Set("icecast.audio.sample_duration", 90*time.Second)
 	}
 	if !v.IsSet("icecast.audio.max_read_attempts") {
 		v.Set("icecast.audio.max_read_attempts", 10)
 	}
 	if !v.IsSet("icecast.audio.read_timeout") {
-		v.Set("icecast.audio.read_timeout", 30*time.Second)
+		v.Set("icecast.audio.read_timeout", 90*time.Second)
 	}
 	if !v.IsSet("icecast.audio.handle_icy_meta") {
 		v.Set("icecast.audio.handle_icy_meta", true)
@@ -364,7 +364,7 @@ func GetDefaultConfig() *Config {
 // GetDefaultTestConfig returns default test execution settings
 func GetDefaultTestConfig() TestConfig {
 	return TestConfig{
-		Timeout:        30 * time.Second,
+		Timeout:        90 * time.Second,
 		RetryAttempts:  3,
 		RetryDelay:     5 * time.Second,
 		Concurrent:     false,
@@ -376,7 +376,7 @@ func GetDefaultTestConfig() TestConfig {
 func GetDefaultStreamConfig() StreamConfig {
 	return StreamConfig{
 		ConnectionTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
+		ReadTimeout:       90 * time.Second,
 		BufferSize:        8192,
 		MaxRedirects:      3,
 		UserAgent:         "TuneIn-CDN-Benchmark/1.0",
@@ -471,7 +471,7 @@ func GetDefaultProfiles() map[string]TestProfile {
 			Description: "Fast connectivity and basic quality check",
 			Streams:     []StreamEndpoint{},
 			Regions:     []string{"local"},
-			Duration:    30 * time.Second,
+			Duration:    90 * time.Second,
 			Metrics:     []string{"latency", "connectivity", "basic_quality"},
 			Thresholds:  GetDefaultQualityConfig(),
 			Tags: map[string]string{

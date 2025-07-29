@@ -94,8 +94,7 @@ func NewFingerprintComparator(cfg *config.ComparisonConfig) *FingerprintComparat
 
 	case "precise":
 		internalMethod = methodPearson
-		hashWeight = 0.2
-		featureWeight = 0.8
+		featureWeight = 1
 
 	case "auto":
 		internalMethod = methodAdaptive
@@ -896,7 +895,7 @@ func (fc *FingerprintComparator) calculateFeatureSimilarity(fp1, fp2 *AudioFinge
 	return fc.calculateWeightedMean(similarities, weights), nil
 }
 
-// CompareMFCC compares MFCC features using GoNum statistical functions
+// compareMFCC compares MFCC features using GoNum statistical functions
 func (fc *FingerprintComparator) compareMFCC(mfcc1, mfcc2 [][]float64, contentType1, contentType2 config.ContentType) (float64, float64) {
 	if len(mfcc1) == 0 || len(mfcc2) == 0 {
 		return 0.0, 1.0
@@ -1440,13 +1439,25 @@ func (fc *FingerprintComparator) calculateWeightedMean(values, weights []float64
 // calculateOverallSimilarity combines hash and feature similarities
 // TODO: rename and change type
 func (fc *FingerprintComparator) calculateOverallSimilarity(result *SimilarityResult) float64 {
-	switch fc.internalMethod {
-	case methodAdaptive:
-		return fc.calculateWeightedFeatureSimilarity(result)
-	default:
-		// Default weighted combination
-		return fc.calculateSimpleWeightedSimilarity(result)
+	/* 	switch fc.internalMethod {
+	   	case methodAdaptive:
+	   		return fc.calculateWeightedFeatureSimilarity(result)
+	   	default:
+	   		// Default weighted combination
+	   		return fc.calculateSimpleWeightedSimilarity(result)
+	   	} */
+
+	// For alignment-aware comparisons, emphasize features over hashes
+	if result.AlignmentApplied {
+		// Give much more weight to features when alignment is applied
+		hashWeight := 0.1    // Reduced from ~0.3
+		featureWeight := 0.9 // Increased from ~0.7
+
+		return hashWeight*result.HashSimilarity + featureWeight*result.FeatureSimilarity
 	}
+
+	// Use normal weights for non-aligned comparisons
+	return fc.hashWeight*result.HashSimilarity + fc.featureWeight*result.FeatureSimilarity
 }
 
 func (fc *FingerprintComparator) calculateWeightedFeatureSimilarity(result *SimilarityResult) float64 {

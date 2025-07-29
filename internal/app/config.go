@@ -13,7 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Type aliases for the config types now in latency package
 type BenchmarkConfig = latency.BenchmarkConfig
 type BroadcastConfig = latency.BroadcastConfig
 type BenchmarkSettings = latency.BenchmarkSettings
@@ -200,7 +199,7 @@ func applyBenchmarkDefaults(settings *BenchmarkSettings) {
 		settings.MaxConcurrentStreams = 4
 	}
 	if settings.AudioSegmentDuration == 0 {
-		settings.AudioSegmentDuration = 30 * time.Second
+		settings.AudioSegmentDuration = 90 * time.Second
 	}
 	if settings.MinAlignmentConfidence == 0 {
 		settings.MinAlignmentConfidence = 0.4
@@ -246,7 +245,7 @@ func GenerateExampleConfig(outputFile string) error {
 			OperationTimeout:           120 * time.Second,
 			MaxConcurrentBroadcasts:    3,
 			MaxConcurrentStreams:       4,
-			AudioSegmentDuration:       30 * time.Second,
+			AudioSegmentDuration:       90 * time.Second,
 			MinAlignmentConfidence:     0.4,
 			MaxAlignmentOffset:         15.0,
 			MinFingerprintSimilarity:   0.6,

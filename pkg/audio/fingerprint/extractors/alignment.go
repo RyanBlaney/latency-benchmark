@@ -234,10 +234,10 @@ func (ae *AlignmentExtractor) performMultiFeatureAlignment(
 	})
 
 	// 1. MFCC-based DTW alignment (best for speech content)
-	if queryFeatures.MFCC != nil && referenceFeatures.MFCC != nil {
-		alignment := ae.alignWithFeatures("dtw_mfcc", queryFeatures.MFCC, referenceFeatures.MFCC, sampleRate, stats.AlignmentDTW)
-		alignments["dtw_mfcc"] = alignment
-	}
+	// if queryFeatures.MFCC != nil && referenceFeatures.MFCC != nil {
+	// alignment := ae.alignWithFeatures("dtw_mfcc", queryFeatures.MFCC, referenceFeatures.MFCC, sampleRate, stats.AlignmentDTW)
+	// alignments["dtw_mfcc"] = alignment
+	// }
 
 	// 2. Energy-based cross-correlation (fast, good for similar content)
 	if queryFeatures.EnergyFeatures != nil && referenceFeatures.EnergyFeatures != nil &&
@@ -252,15 +252,15 @@ func (ae *AlignmentExtractor) performMultiFeatureAlignment(
 	}
 
 	// 3. Spectral centroid alignment (good for timbral changes)
-	if queryFeatures.SpectralFeatures != nil && referenceFeatures.SpectralFeatures != nil &&
-		len(queryFeatures.SpectralFeatures.SpectralCentroid) > 0 && len(referenceFeatures.SpectralFeatures.SpectralCentroid) > 0 {
-
-		queryCentroid := ae.convertSpectralTo2D(queryFeatures.SpectralFeatures.SpectralCentroid)
-		refCentroid := ae.convertSpectralTo2D(referenceFeatures.SpectralFeatures.SpectralCentroid)
-
-		alignment := ae.alignWithFeatures("dtw_centroid", queryCentroid, refCentroid, sampleRate, stats.AlignmentDTW)
-		alignments["dtw_centroid"] = alignment
-	}
+	// if queryFeatures.SpectralFeatures != nil && referenceFeatures.SpectralFeatures != nil &&
+	// len(queryFeatures.SpectralFeatures.SpectralCentroid) > 0 && len(referenceFeatures.SpectralFeatures.SpectralCentroid) > 0 {
+	//
+	// queryCentroid := ae.convertSpectralTo2D(queryFeatures.SpectralFeatures.SpectralCentroid)
+	// refCentroid := ae.convertSpectralTo2D(referenceFeatures.SpectralFeatures.SpectralCentroid)
+	//
+	// alignment := ae.alignWithFeatures("dtw_centroid", queryCentroid, refCentroid, sampleRate, stats.AlignmentDTW)
+	// alignments["dtw_centroid"] = alignment
+	// }
 
 	// 4. Chroma alignment (good for harmonic content)
 	if queryFeatures.ChromaFeatures != nil && referenceFeatures.ChromaFeatures != nil &&
@@ -288,8 +288,10 @@ func (ae *AlignmentExtractor) alignWithFeatures(
 		"ref_frames":   len(referenceFeatures),
 	})
 
-	// Use frame-based lag for feature-space operations
+	// Clamp maxLagFrames to actual data bounds
+	minFrames := min(len(queryFeatures), len(referenceFeatures))
 	maxLagFrames := ae.maxLagSamples / ae.config.HopSize
+	maxLagFrames = min(maxLagFrames, minFrames-1)
 
 	logger.Info("Creating alignment analyzer", logging.Fields{
 		"maxLagSamples": ae.maxLagSamples,
@@ -333,10 +335,10 @@ func (ae *AlignmentExtractor) selectBestAlignment(alignments map[string]*Alignme
 
 	// Define priority weights for different feature types
 	weights := map[string]float64{
-		"dtw_mfcc":     1.0, // Highest priority for speech content
-		"corr_energy":  0.8, // Good general-purpose alignment
-		"dtw_chroma":   0.7, // Good for harmonic content
-		"dtw_centroid": 0.6, // Lower priority but still useful
+		// "dtw_mfcc":     1.0, // Highest priority for speech content
+		"corr_energy": 1.0, // Good general-purpose alignment (was 0.8, now the only active)
+		"dtw_chroma":  0.7, // Good for harmonic content
+		// "dtw_centroid": 0.6, // Lower priority but still useful
 	}
 
 	for featureType, alignment := range alignments {

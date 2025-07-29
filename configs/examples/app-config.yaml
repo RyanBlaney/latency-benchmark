@@ -1,0 +1,192 @@
+# TuneIn CDN Benchmark - Simple Application Configuration
+# Based on working production setup
+
+# Application settings
+verbose: true
+log_level: info
+output_format: json
+
+# Test configuration
+test:
+  timeout: 5m
+  retry_attempts: 3
+  retry_delay: 10s
+  concurrent: true
+  max_concurrency: 8
+
+# Stream handling (global defaults)
+stream:
+  connection_timeout: 15s
+  read_timeout: 90s
+  buffer_size: 16384
+  max_redirects: 5
+  user_agent: "TuneIn-CDN-Benchmark-Prod/1.0"
+  headers:
+    "X-Forwarded-For": "10.0.0.1"
+    "Cache-Control": "no-cache"
+    "Accept-Encoding": "gzip, deflate"
+
+# Audio processing (high quality)
+audio:
+  sample_rate: 48000
+  channels: 2
+  buffer_duration: 2s
+  window_size: 4096
+  overlap: 0.75
+  window_function: "hamming"
+  fft_size: 4096
+  mel_bins: 256
+
+# Quality thresholds
+quality:
+  min_similarity: 0.85
+  max_latency: 15s
+  min_bitrate: 256
+  max_dropouts: 1
+  buffer_health: 0.95
+
+# Output configuration
+output:
+  precision: 4
+  include_metadata: true
+  timestamps: true
+  colors: true
+  pager: false
+
+# HLS-specific configuration
+hls:
+  parser:
+    strict_mode: false
+    max_segment_analysis: 15
+    ignore_unknown_tags: false
+    validate_uris: true
+    custom_tag_handlers: {}
+
+  metadata_extractor:
+    enable_url_patterns: true
+    enable_header_mappings: true
+    enable_segment_analysis: true
+    default_values:
+      codec: "aac"
+      channels: 2
+      sample_rate: 48000
+      bitrate: 320
+
+  detection:
+    url_patterns:
+      - '\.m3u8$'
+      - '/playlist\.m3u8'
+      - '/master\.m3u8'
+      - '/index\.m3u8'
+      - '/live\.m3u8'
+    content_types:
+      - "application/vnd.apple.mpegurl"
+      - "application/x-mpegurl"
+      - "vnd.apple.mpegurl"
+    required_headers: []
+    timeout_seconds: 10
+
+  http:
+    user_agent: "TuneIn-CDN-Benchmark-HLS/2.0"
+    accept_header: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain,*/*"
+    connection_timeout: 10s
+    read_timeout: 90s
+    max_redirects: 3
+    buffer_size: 32768
+    custom_headers: {}
+
+  audio:
+    sample_duration: 60s
+    buffer_duration: 3s
+    max_segments: 20
+    follow_live: true
+    analyze_segments: true
+
+# ICEcast-specific configuration
+icecast:
+  metadata_extractor:
+    enable_header_mappings: true
+    enable_icy_metadata: true
+    icy_metadata_timeout: 15s
+    default_values:
+      codec: "mp3"
+      channels: 2
+      sample_rate: 44100
+
+  detection:
+    url_patterns:
+      - '\.mp3$'
+      - '\.aac$'
+      - '\.ogg$'
+      - "/stream$"
+      - "/listen$"
+      - "/audio$"
+      - "/radio$"
+      - ":8000/"
+      - ":8080/"
+    content_types:
+      - "audio/mpeg"
+      - "audio/mp3"
+      - "audio/aac"
+      - "audio/ogg"
+      - "application/ogg"
+    timeout_seconds: 15
+    required_headers: []
+    common_ports: ["8000", "8080", "8443", "9000"]
+
+  http:
+    user_agent: "TuneIn-CDN-Benchmark-ICEcast/1.0"
+    accept_header: "audio/*, application/ogg, */*"
+    connection_timeout: 45s
+    read_timeout: 90s
+    max_redirects: 3
+    custom_headers: {}
+    request_icy_meta: true
+
+  audio:
+    buffer_size: 4096
+    buffer_duration: 2s
+    sample_duration: 60s
+    max_read_attempts: 10
+    read_timeout: 90s
+    handle_icy_meta: true
+    metadata_interval: 8192
+
+# CDN Benchmark-specific settings
+benchmark:
+  # Execution timeouts
+  benchmark_timeout: 30m
+  operation_timeout: 120s
+
+  # Concurrency control
+  max_concurrent_broadcasts: 3
+  max_concurrent_streams: 4
+
+  # Audio analysis parameters
+  audio_segment_duration: 90s
+  min_alignment_confidence: 0.3
+  max_alignment_offset: 35.0
+  min_fingerprint_similarity: 0.5
+
+  # Analysis options
+  enable_detailed_analysis: false
+  skip_fingerprint_comparison: false
+
+  # Error handling
+  max_retries: 2
+  retry_delay: 5s
+  fail_fast: false
+
+  # Stream validation
+  validate_hls_structure: true
+  validate_icecast_metadata: true
+  validate_audio_format: true
+  validate_bitrate_consistency: true
+  min_health_score: 0.7
+
+  # Output formatting
+  output_format: "json"
+  include_raw_data: false
+  include_feature_breakdown: false
+  pretty_print: true
+  generate_summary: true

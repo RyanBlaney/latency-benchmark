@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strconv"
 	"strings"
@@ -14,13 +15,13 @@ import (
 
 // Formatter interface for different output formats
 type Formatter interface {
-	Format(data interface{}, prettyPrint bool) ([]byte, error)
+	Format(data any, prettyPrint bool) ([]byte, error)
 }
 
 // JSONFormatter formats output as JSON
 type JSONFormatter struct{}
 
-func (f *JSONFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error) {
+func (f *JSONFormatter) Format(data any, prettyPrint bool) ([]byte, error) {
 	if prettyPrint {
 		return json.MarshalIndent(data, "", "  ")
 	}
@@ -30,14 +31,14 @@ func (f *JSONFormatter) Format(data interface{}, prettyPrint bool) ([]byte, erro
 // YAMLFormatter formats output as YAML
 type YAMLFormatter struct{}
 
-func (f *YAMLFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error) {
+func (f *YAMLFormatter) Format(data any, prettyPrint bool) ([]byte, error) {
 	return yaml.Marshal(data)
 }
 
 // CSVFormatter formats output as CSV (simplified for benchmark results)
 type CSVFormatter struct{}
 
-func (f *CSVFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error) {
+func (f *CSVFormatter) Format(data any, prettyPrint bool) ([]byte, error) {
 	// For CSV, we'll extract key metrics into a tabular format
 	// This is a simplified implementation that focuses on the most important metrics
 
@@ -62,8 +63,8 @@ func (f *CSVFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error
 	records = append(records, headers)
 
 	// Extract data from the input (assumes it's our benchmark output structure)
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		if summaryInterface, exists := dataMap["benchmark_summary"]; exists {
+	if dataMap, ok := data.(map[string]any); ok {
+		if _, exists := dataMap["benchmark_summary"]; exists {
 			// This would need to be properly implemented based on the actual data structure
 			// For now, we'll create a placeholder CSV format
 			records = append(records, []string{
@@ -105,7 +106,7 @@ func (f *CSVFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error
 // TableFormatter formats output as a human-readable table
 type TableFormatter struct{}
 
-func (f *TableFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error) {
+func (f *TableFormatter) Format(data any, prettyPrint bool) ([]byte, error) {
 	var result strings.Builder
 
 	// This is a simplified table formatter
@@ -115,8 +116,8 @@ func (f *TableFormatter) Format(data interface{}, prettyPrint bool) ([]byte, err
 	result.WriteString("=====================\n\n")
 
 	// Extract and format key information
-	if dataMap, ok := data.(map[string]interface{}); ok {
-		if summaryInterface, exists := dataMap["benchmark_summary"]; exists {
+	if dataMap, ok := data.(map[string]any); ok {
+		if _, exists := dataMap["benchmark_summary"]; exists {
 			result.WriteString("Summary Information:\n")
 			result.WriteString("-------------------\n")
 
@@ -174,8 +175,8 @@ func FormatPercentage(value float64) string {
 }
 
 // ExtractFlattenedData extracts data from nested structures for tabular output
-func ExtractFlattenedData(data interface{}, prefix string) map[string]interface{} {
-	result := make(map[string]interface{})
+func ExtractFlattenedData(data any, prefix string) map[string]any {
+	result := make(map[string]any)
 
 	v := reflect.ValueOf(data)
 	if v.Kind() == reflect.Ptr {
@@ -199,9 +200,7 @@ func ExtractFlattenedData(data interface{}, prefix string) map[string]interface{
 			// Recursively flatten nested structs
 			if field.Kind() == reflect.Struct || (field.Kind() == reflect.Ptr && field.Elem().Kind() == reflect.Struct) {
 				nested := ExtractFlattenedData(value, key+"_")
-				for k, v := range nested {
-					result[k] = v
-				}
+				maps.Copy(result, nested)
 			} else {
 				result[key] = value
 			}
@@ -214,9 +213,7 @@ func ExtractFlattenedData(data interface{}, prefix string) map[string]interface{
 			flatKey := prefix + strings.ToLower(keyStr)
 			if reflect.ValueOf(value).Kind() == reflect.Struct {
 				nested := ExtractFlattenedData(value, flatKey+"_")
-				for k, v := range nested {
-					result[k] = v
-				}
+				maps.Copy(result, nested)
 			} else {
 				result[flatKey] = value
 			}
@@ -229,7 +226,7 @@ func ExtractFlattenedData(data interface{}, prefix string) map[string]interface{
 }
 
 // ConvertToStringMap converts various data types to string for CSV/table output
-func ConvertToStringMap(data map[string]interface{}) map[string]string {
+func ConvertToStringMap(data map[string]any) map[string]string {
 	result := make(map[string]string)
 
 	for key, value := range data {
@@ -240,7 +237,7 @@ func ConvertToStringMap(data map[string]interface{}) map[string]string {
 }
 
 // ConvertValueToString converts a single value to string representation
-func ConvertValueToString(value interface{}) string {
+func ConvertValueToString(value any) string {
 	if value == nil {
 		return ""
 	}
@@ -265,7 +262,6 @@ func ConvertValueToString(value interface{}) string {
 	}
 }
 
-// CreatePipelineFormatter creates a formatter pipeline for complex output
 type PipelineFormatter struct {
 	formatters []Formatter
 }
@@ -274,7 +270,7 @@ func NewPipelineFormatter(formatters ...Formatter) *PipelineFormatter {
 	return &PipelineFormatter{formatters: formatters}
 }
 
-func (pf *PipelineFormatter) Format(data interface{}, prettyPrint bool) ([]byte, error) {
+func (pf *PipelineFormatter) Format(data any, prettyPrint bool) ([]byte, error) {
 	currentData := data
 
 	for i, formatter := range pf.formatters {

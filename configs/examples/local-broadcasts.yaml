@@ -1,0 +1,43 @@
+version: "1.0"
+environment: "test"
+updated_at: "2025-01-25T10:30:00Z"
+description: "TuneIn CDN benchmark - synchronized local files for testing"
+
+broadcast_groups:
+  msnbc_news_local:
+    name: "MSNBC News (Local Files)"
+    description: "MSNBC synchronized audio files for CDN latency testing"
+    content_type: "news"
+    enabled: true
+    streams:
+      # Treat first file as HLS source
+      hls_source:
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_source_90s.wav"
+        type: "hls" # Keep original type for validation
+        role: "source"
+        content_type: "news"
+        enabled: true
+
+      # Treat second file as HLS CDN
+      hls_cdn:
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_cdn_90s.wav"
+        type: "hls" # Keep original type for validation
+        role: "cdn"
+        content_type: "news"
+        enabled: true
+
+      # Treat third file as ICEcast source
+      icecast_source:
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_source_90s.wav"
+        type: "icecast" # Keep original type for validation
+        role: "source"
+        content_type: "news"
+        enabled: true
+
+      # Treat fourth file as ICEcast CDN
+      icecast_cdn:
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_cdn_90s.wav"
+        type: "icecast" # Keep original type for validation
+        role: "cdn"
+        content_type: "news"
+        enabled: true

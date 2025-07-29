@@ -131,7 +131,7 @@ func DefaultConfig() *Config {
 			BufferSize:        16384,
 		},
 		Audio: &AudioConfig{
-			SampleDuration:  30 * time.Second,
+			SampleDuration:  90 * time.Second,
 			BufferDuration:  2 * time.Second,
 			MaxSegments:     10,
 			FollowLive:      false,

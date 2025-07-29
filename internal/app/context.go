@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/configs"
@@ -57,7 +60,7 @@ func NewBenchmarkApp(ctx *Context) (*BenchmarkApp, error) {
 	ctx.Config = config
 	ctx.BroadcastConfig = broadcastConfig
 
-	logger.Info("Benchmark application initialized", map[string]interface{}{
+	logger.Info("Benchmark application initialized", logging.Fields{
 		"app_config_file":       ctx.ConfigFile,
 		"broadcast_config_file": ctx.BroadcastConfigFile,
 		"output_format":         ctx.OutputFormat,
@@ -75,7 +78,7 @@ func NewBenchmarkApp(ctx *Context) (*BenchmarkApp, error) {
 
 // Run executes the benchmark
 func (app *BenchmarkApp) Run(ctx context.Context) error {
-	app.logger.Info("Starting CDN benchmark execution", map[string]interface{}{
+	app.logger.Info("Starting CDN benchmark execution", logging.Fields{
 		"enabled_groups": len(app.broadcastConfig.GetEnabledBroadcastGroups()),
 	})
 
@@ -97,7 +100,7 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 	var insights []string
 
 	if app.ctx.DetailedAnalysis {
-		app.logger.Info("Generating detailed analytics", nil)
+		app.logger.Info("Generating detailed analytics")
 		metricsCalculator := benchmark.NewMetricsCalculator(app.logger)
 		performanceMetrics = metricsCalculator.CalculatePerformanceMetrics(summary)
 		qualityMetrics = metricsCalculator.CalculateQualityMetrics(summary)
@@ -174,11 +177,11 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 
 // outputResults handles all result output
 func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, performance *benchmark.PerformanceMetrics, quality *benchmark.QualityMetrics, reliability *benchmark.ReliabilityMetrics, insights []string) error {
-	// Create comprehensive output structure
-	outputData := map[string]interface{}{
-		"benchmark_summary": summary,
+	// Create clean output structure (exclude raw data)
+	outputData := map[string]any{
+		"benchmark_summary": cleanBenchmarkSummary(summary),
 		"timestamp":         time.Now(),
-		"configuration": map[string]interface{}{
+		"configuration": map[string]any{
 			"segment_duration":  app.ctx.SegmentDuration.Seconds(),
 			"timeout":           app.ctx.Timeout.Seconds(),
 			"detailed_analysis": app.ctx.DetailedAnalysis,
@@ -186,7 +189,7 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 		},
 	}
 
-	// Add detailed metrics if available
+	// Add detailed metrics if available (but clean them)
 	if performance != nil {
 		outputData["performance_metrics"] = performance
 	}
@@ -218,7 +221,14 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 	// Format data
 	formattedData, err := formatter.Format(outputData, true)
 	if err != nil {
-		return fmt.Errorf("failed to format output data: %w", err)
+		// If JSON formatting fails due to infinite values, try to sanitize the data
+		if strings.Contains(err.Error(), "unsupported value") {
+			sanitizedData := sanitizeForJSON(outputData)
+			formattedData, err = formatter.Format(sanitizedData, true)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to format output data: %w", err)
+		}
 	}
 
 	// Write to file or stdout
@@ -228,6 +238,144 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 
 	_, err = os.Stdout.Write(formattedData)
 	return err
+}
+
+// cleanBenchmarkSummary removes raw data from the benchmark summary
+func cleanBenchmarkSummary(summary *latency.BenchmarkSummary) map[string]any {
+	cleanSummary := map[string]any{
+		"start_time":              summary.StartTime,
+		"end_time":                summary.EndTime,
+		"total_duration":          summary.TotalDuration.Seconds(),
+		"successful_broadcasts":   summary.SuccessfulBroadcasts,
+		"failed_broadcasts":       summary.FailedBroadcasts,
+		"overall_health_score":    summary.OverallHealthScore,
+		"average_latency_metrics": summary.AverageLatencyMetrics,
+		"broadcast_measurements":  make(map[string]any),
+	}
+
+	// Clean broadcast measurements (remove raw audio and fingerprint data)
+	for name, broadcast := range summary.BroadcastMeasurements {
+		cleanBroadcast := map[string]any{
+			"group_name":              broadcast.Group.Name,
+			"content_type":            broadcast.Group.ContentType,
+			"total_benchmark_time":    broadcast.TotalBenchmarkTime.Seconds(),
+			"liveness_metrics":        broadcast.LivenessMetrics,
+			"overall_validation":      broadcast.OverallValidation,
+			"stream_measurements":     cleanStreamMeasurements(broadcast.StreamMeasurements),
+			"alignment_measurements":  cleanAlignmentMeasurements(broadcast.AlignmentMeasurements),
+			"fingerprint_comparisons": cleanFingerprintComparisons(broadcast.FingerprintComparisons),
+		}
+
+		if broadcast.Error != nil {
+			cleanBroadcast["error"] = broadcast.Error.Error()
+		}
+
+		cleanSummary["broadcast_measurements"].(map[string]any)[name] = cleanBroadcast
+	}
+
+	return cleanSummary
+}
+
+// cleanStreamMeasurements removes raw audio and fingerprint data
+func cleanStreamMeasurements(measurements map[string]*latency.StreamMeasurement) map[string]any {
+	clean := make(map[string]any)
+
+	for name, measurement := range measurements {
+		cleanMeasurement := map[string]any{
+			"endpoint": map[string]any{
+				"url":          measurement.Endpoint.URL,
+				"type":         measurement.Endpoint.Type,
+				"role":         measurement.Endpoint.Role,
+				"content_type": measurement.Endpoint.ContentType,
+				"enabled":      measurement.Endpoint.Enabled,
+			},
+			"time_to_first_byte":    measurement.TimeToFirstByte.Milliseconds(),
+			"audio_extraction_time": measurement.AudioExtractionTime.Milliseconds(),
+			"fingerprint_time":      measurement.FingerprintTime.Milliseconds(),
+			"total_processing_time": measurement.TotalProcessingTime.Milliseconds(),
+			"stream_validation":     measurement.StreamValidation,
+			"timestamp":             measurement.Timestamp,
+		}
+
+		// Add audio duration but not raw PCM data
+		if measurement.AudioData != nil {
+			cleanMeasurement["audio_duration_seconds"] = measurement.AudioData.Duration.Seconds()
+		}
+
+		if measurement.Error != nil {
+			cleanMeasurement["error"] = measurement.Error.Error()
+		}
+
+		clean[name] = cleanMeasurement
+	}
+
+	return clean
+}
+
+// cleanAlignmentMeasurements removes raw audio data from alignment results
+func cleanAlignmentMeasurements(measurements map[string]*latency.AlignmentMeasurement) map[string]any {
+	clean := make(map[string]any)
+
+	for name, measurement := range measurements {
+		cleanMeasurement := map[string]any{
+			"latency_seconds":    measurement.LatencySeconds,
+			"is_valid_alignment": measurement.IsValidAlignment,
+			"comparison_time":    measurement.ComparisonTime.Milliseconds(),
+			"timestamp":          measurement.Timestamp,
+		}
+
+		// Include alignment result but without raw feature data
+		if measurement.AlignmentResult != nil {
+			cleanMeasurement["alignment_result"] = map[string]any{
+				"temporal_offset":    measurement.AlignmentResult.TemporalOffset,
+				"offset_confidence":  measurement.AlignmentResult.OffsetConfidence,
+				"overall_similarity": measurement.AlignmentResult.OverallSimilarity,
+				"alignment_quality":  measurement.AlignmentResult.AlignmentQuality,
+				"time_stretch":       measurement.AlignmentResult.TimeStretch,
+				"method":             measurement.AlignmentResult.Method,
+			}
+		}
+
+		if measurement.Error != nil {
+			cleanMeasurement["error"] = measurement.Error.Error()
+		}
+
+		clean[name] = cleanMeasurement
+	}
+
+	return clean
+}
+
+// cleanFingerprintComparisons removes raw fingerprint data
+func cleanFingerprintComparisons(comparisons map[string]*latency.FingerprintComparison) map[string]any {
+	clean := make(map[string]any)
+
+	for name, comparison := range comparisons {
+		cleanComparison := map[string]any{
+			"is_valid_match":  comparison.IsValidMatch,
+			"comparison_time": comparison.ComparisonTime.Milliseconds(),
+			"timestamp":       comparison.Timestamp,
+		}
+
+		// Include similarity result but without raw feature data
+		if comparison.SimilarityResult != nil {
+			cleanComparison["similarity_result"] = map[string]any{
+				"overall_similarity": comparison.SimilarityResult.OverallSimilarity,
+				"confidence":         comparison.SimilarityResult.Confidence,
+				"hash_similarity":    comparison.SimilarityResult.HashSimilarity,
+				"temporal_offset":    comparison.SimilarityResult.TemporalOffset,
+				"feature_distances":  comparison.SimilarityResult.FeatureDistances,
+			}
+		}
+
+		if comparison.Error != nil {
+			cleanComparison["error"] = comparison.Error.Error()
+		}
+
+		clean[name] = cleanComparison
+	}
+
+	return clean
 }
 
 // writeToFile writes data to the specified output file
@@ -243,7 +391,7 @@ func (app *BenchmarkApp) writeToFile(data []byte) error {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
-	app.logger.Info("Results written to file", map[string]interface{}{
+	app.logger.Info("Results written to file", logging.Fields{
 		"output_file": app.ctx.OutputFile,
 		"size_bytes":  len(data),
 	})
@@ -332,4 +480,116 @@ func (app *BenchmarkApp) printSummary(summary *latency.BenchmarkSummary, insight
 	}
 
 	fmt.Printf("\n")
+}
+
+// sanitizeForJSON recursively cleans infinite and NaN values from any data structure
+func sanitizeForJSON(data any) any {
+	switch v := data.(type) {
+	case float64:
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			return 0.0
+		}
+		return v
+	case float32:
+		if math.IsInf(float64(v), 0) || math.IsNaN(float64(v)) {
+			return float32(0.0)
+		}
+		return v
+	case map[string]any:
+		result := make(map[string]any)
+		for k, val := range v {
+			result[k] = sanitizeForJSON(val)
+		}
+		return result
+	case []any:
+		result := make([]any, len(v))
+		for i, val := range v {
+			result[i] = sanitizeForJSON(val)
+		}
+		return result
+	case []float64:
+		result := make([]float64, len(v))
+		for i, val := range v {
+			if math.IsInf(val, 0) || math.IsNaN(val) {
+				result[i] = 0.0
+			} else {
+				result[i] = val
+			}
+		}
+		return result
+	default:
+		// Use reflection to handle structs and other complex types
+		return sanitizeWithReflection(data)
+	}
+}
+
+// sanitizeWithReflection uses reflection to sanitize struct fields
+func sanitizeWithReflection(data any) any {
+	if data == nil {
+		return nil
+	}
+
+	val := reflect.ValueOf(data)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return nil
+		}
+		val = val.Elem()
+	}
+
+	switch val.Kind() {
+	case reflect.Struct:
+		result := make(map[string]any)
+		typ := val.Type()
+		for i := 0; i < val.NumField(); i++ {
+			field := val.Field(i)
+			fieldType := typ.Field(i)
+
+			// Skip unexported fields
+			if !field.CanInterface() {
+				continue
+			}
+
+			// Get JSON tag name or use field name
+			jsonTag := fieldType.Tag.Get("json")
+			fieldName := fieldType.Name
+			if jsonTag != "" && jsonTag != "-" {
+				// Parse JSON tag (handle omitempty, etc.)
+				parts := strings.Split(jsonTag, ",")
+				if parts[0] != "" {
+					fieldName = parts[0]
+				}
+			}
+
+			result[fieldName] = sanitizeForJSON(field.Interface())
+		}
+		return result
+	case reflect.Slice:
+		result := make([]any, val.Len())
+		for i := 0; i < val.Len(); i++ {
+			result[i] = sanitizeForJSON(val.Index(i).Interface())
+		}
+		return result
+	case reflect.Map:
+		result := make(map[string]any)
+		for _, key := range val.MapKeys() {
+			keyStr := fmt.Sprintf("%v", key.Interface())
+			result[keyStr] = sanitizeForJSON(val.MapIndex(key).Interface())
+		}
+		return result
+	case reflect.Float64:
+		f := val.Float()
+		if math.IsInf(f, 0) || math.IsNaN(f) {
+			return 0.0
+		}
+		return f
+	case reflect.Float32:
+		f := val.Float()
+		if math.IsInf(f, 0) || math.IsNaN(f) {
+			return float32(0.0)
+		}
+		return float32(f)
+	default:
+		return val.Interface()
+	}
 }

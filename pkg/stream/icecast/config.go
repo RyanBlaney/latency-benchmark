@@ -131,7 +131,7 @@ func DefaultConfig() *Config {
 		},
 		Audio: &AudioConfig{
 			BufferSize:       4096,
-			SampleDuration:   30 * time.Second,
+			SampleDuration:   90 * time.Second,
 			MaxReadAttempts:  3,
 			ReadTimeout:      10 * time.Second,
 			HandleICYMeta:    true,
