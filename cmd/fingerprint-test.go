@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/analyzers"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
@@ -184,7 +185,6 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n")
 
-	// Step 4: Detailed breakdown (if verbose)
 	if ftVerbose {
 		fmt.Printf("📊 Detailed Analysis\n")
 		fmt.Printf("====================\n")
@@ -192,7 +192,7 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\n")
 	}
 
-	// Step 5: Final summary
+	// Step 6: Final summary
 	timer.EndEvent("total")
 
 	fmt.Printf("⏱️  Performance Summary\n")
@@ -204,7 +204,6 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Comparison:     %.0fms\n", timer.GetDuration("comparison").Seconds()*1000)
 	fmt.Printf("\n")
 
-	// Final verdict
 	fmt.Printf("🎯 Verdict\n")
 	fmt.Printf("==========\n")
 
@@ -351,11 +350,39 @@ func detectAlignment(stream1, stream2 *AudioStream) (*extractors.AlignmentFeatur
 	featureConfig := createFeatureConfig(contentType, stream1.AudioData.SampleRate)
 	alignmentConfig := config.AlignmentConfigForContent(contentType)
 
+	featureExtractor, err := extractors.NewFeatureExtractorFactory().CreateExtractor(contentType, *featureConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create feature extractor: %v", err)
+	}
+
+	analyzer := analyzers.NewSpectralAnalyzer(featureConfig.SampleRate)
+	analyzers.DefaultWindowConfig()
+
+	spectrogram1, err := analyzer.ComputeSTFTWithWindow(stream1.AudioData.PCM, featureConfig.WindowSize, featureConfig.HopSize, analyzers.WindowHann)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute STFT for %s: %v", stream1.ID, err)
+	}
+
+	spectrogram2, err := analyzer.ComputeSTFTWithWindow(stream2.AudioData.PCM, featureConfig.WindowSize, featureConfig.HopSize, analyzers.WindowHann)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute STFT for %s: %v", stream1.ID, err)
+	}
+
+	stream1Features, err := featureExtractor.ExtractFeatures(spectrogram1, stream1.AudioData.PCM, featureConfig.SampleRate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract features for %s: %v", stream1.ID, err)
+	}
+
+	stream2Features, err := featureExtractor.ExtractFeatures(spectrogram2, stream2.AudioData.PCM, featureConfig.SampleRate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract features for %s: %v", stream2.ID, err)
+	}
+
 	alignmentExtractor := extractors.NewAlignmentExtractorWithMaxLag(
 		featureConfig, alignmentConfig, ftMaxOffsetSec)
 
 	return alignmentExtractor.ExtractAlignmentFeatures(
-		stream1.Fingerprint.Features, stream2.Fingerprint.Features,
+		stream1Features, stream2Features,
 		stream1.AudioData.PCM, stream2.AudioData.PCM,
 		stream1.AudioData.SampleRate)
 }
@@ -410,6 +437,7 @@ func parseContentType(contentTypeStr string) config.ContentType {
 	}
 }
 
+// TODO: feature config by content type
 func createFeatureConfig(contentType config.ContentType, sampleRate int) *config.FeatureConfig {
 	featureConfig := &config.FeatureConfig{
 		WindowSize: 1024,
