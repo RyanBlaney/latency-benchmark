@@ -147,7 +147,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 		"fp2_id":   fp2.ID,
 	})
 
-	logger.Debug("Startin fingerprint comparison")
+	logger.Info("Startin fingerprint comparison")
 
 	// Initialize result
 	result := &SimilarityResult{
@@ -160,7 +160,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 
 	// Apply content filtering
 	if fc.config.EnableContentFilter && !result.ContentTypeMatch {
-		logger.Debug("Content types don't match, applying penalty")
+		logger.Info("Content types don't match, applying penalty")
 		result.OverallSimilarity = 0.0
 		result.Confidence = 0.1
 		result.ProcessingTime = time.Since(startTime)
@@ -176,14 +176,23 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 	result.HashSimilarity = hashSimilarity
 
 	// Early exit if hash filtering is enabled and similarity is too low
-	if fc.config.SimilarityThreshold > 0.5 && hashSimilarity < fc.config.SimilarityThreshold*0.5 {
-		logger.Debug("Hash similarity too low, early exit")
+	earlyExitThreshold := 0.005 // Only exit if hash similarity is extremely low (1%)
+	if hashSimilarity < earlyExitThreshold {
+		logger.Warn("Hash similarity extremely low, early exit", logging.Fields{
+			"hash_similarity": hashSimilarity,
+			"threshold":       earlyExitThreshold,
+		})
 		result.OverallSimilarity = hashSimilarity
 		result.FeatureSimilarity = 0.0
-		result.Confidence = 0.3
+		result.Confidence = 0.2
 		result.ProcessingTime = time.Since(startTime)
 		return result, nil
 	}
+
+	logger.Info("Proceeding to feature comparison", logging.Fields{
+		"hash_similarity":      hashSimilarity,
+		"early_exit_threshold": earlyExitThreshold,
+	})
 
 	// Calculate feature similarity
 	featureSimilarity, err := fc.calculateFeatureSimilarity(fp1, fp2, result)
@@ -203,7 +212,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 
 	result.ProcessingTime = time.Since(startTime)
 
-	logger.Debug("Fingerprint comparison completed", logging.Fields{
+	logger.Info("Fingerprint comparison completed", logging.Fields{
 		"overall_similarity": result.OverallSimilarity,
 		"hash_similarity":    result.HashSimilarity,
 		"feature_similarity": result.FeatureSimilarity,
@@ -213,327 +222,6 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 	})
 
 	return result, nil
-}
-
-// calculateAlignmentBoost determines how much to boost hash similarity based on alignment quality
-func (fc *FingerprintComparator) calculateAlignmentBoost(alignment *extractors.AlignmentFeatures) float64 {
-	if alignment == nil {
-		return 0.0
-	}
-
-	// Base boost on alignment confidence and overall similarity
-	baseBoost := alignment.OffsetConfidence * 0.3                // Max 30% boost from confidence
-	similarityBoost := (alignment.OverallSimilarity - 0.5) * 0.4 // Up to 20% boost from similarity > 50%
-
-	// Additional boost if alignment quality is very high
-	qualityBoost := 0.0
-	if alignment.AlignmentQuality > 0.8 {
-		qualityBoost = 0.1
-	} else if alignment.AlignmentQuality > 0.6 {
-		qualityBoost = 0.05
-	}
-
-	totalBoost := baseBoost + math.Max(0, similarityBoost) + qualityBoost
-
-	// Cap the maximum boost at 50%
-	return math.Min(0.5, math.Max(0.0, totalBoost))
-}
-
-// applyAlignmentBoost applies the alignment boost to a similarity score
-func (fc *FingerprintComparator) applyAlignmentBoost(rawSimilarity, boost float64) float64 {
-	if boost <= 0 {
-		return rawSimilarity
-	}
-
-	// Apply boost using a smooth function that preserves the 0-1 range
-	// The boost is stronger for medium similarities and weaker for very high/low ones
-
-	// For very low similarities (< 0.1), apply minimal boost
-	if rawSimilarity < 0.1 {
-		boost *= 0.3
-	}
-
-	// For very high similarities (> 0.9), apply minimal boost
-	if rawSimilarity > 0.9 {
-		boost *= 0.2
-	}
-
-	// Apply boost: new_sim = old_sim + boost * (1 - old_sim)
-	// This ensures we never exceed 1.0 and the boost effect diminishes as similarity approaches 1
-	boostedSim := rawSimilarity + boost*(1.0-rawSimilarity)
-
-	return math.Min(1.0, boostedSim)
-}
-
-func (fc *FingerprintComparator) CompareWithAlignment(fp1, fp2 *AudioFingerprint, alignment *extractors.AlignmentFeatures, alignmentConf *config.AlignmentConfig) (*SimilarityResult, error) {
-	if fp1 == nil || fp2 == nil {
-		return nil, fmt.Errorf("fingerprints cannot be nil")
-	}
-
-	startTime := time.Now()
-	logger := fc.logger.WithFields(logging.Fields{
-		"function":      "CompareWithAlignment",
-		"method":        fc.config.Method,
-		"fp1_id":        fp1.ID,
-		"fp2_id":        fp2.ID,
-		"has_alignment": alignment != nil,
-	})
-
-	if alignment != nil {
-		logger = logger.WithFields(logging.Fields{
-			"temporal_offset":      alignment.TemporalOffset,
-			"alignment_confidence": alignment.OffsetConfidence,
-		})
-	}
-
-	logger.Debug("Starting fingerprint comparison with alignment")
-
-	result := &SimilarityResult{
-		PerceptualHashMatches: make(map[string]float64),
-		FeatureDistances:      make(map[string]float64),
-		Metadata:              make(map[string]any),
-		AlignmentApplied:      alignment != nil,
-	}
-
-	if alignment != nil {
-		result.TemporalOffset = alignment.TemporalOffset
-	}
-
-	result.ContentTypeMatch = fp1.ContentType == fp2.ContentType
-
-	// Apply content filtering
-	if fc.config.EnableContentFilter && !result.ContentTypeMatch {
-		logger.Debug("Content types don't match, applying penalty")
-		result.OverallSimilarity = 0.0
-		result.Confidence = 0.1
-		result.ProcessingTime = time.Since(startTime)
-		return result, nil
-	}
-
-	// Use alignment-aware hash similarity calculation
-	hashSimilarity, err := fc.calculateHashSimilarityWithAlignment(fp1, fp2, alignment)
-	if err != nil {
-		logger.Error(err, "Failed to calculate alignment-aware hash similarity")
-		hashSimilarity = 0.0
-	}
-	result.HashSimilarity = hashSimilarity
-
-	// Modified early exit condition - be more lenient when we have good alignment
-	hasGoodAlignment := alignment != nil && alignment.OffsetConfidence >= 0.3 && alignment.OverallSimilarity > 0.7
-	earlyExitThreshold := fc.config.SimilarityThreshold * 0.5
-	if hasGoodAlignment {
-		earlyExitThreshold *= 0.5 // Lower threshold when we have good alignment
-	}
-
-	if fc.config.SimilarityThreshold > 0.5 && hashSimilarity < earlyExitThreshold {
-		logger.Debug("Hash similarity too low, early exit", logging.Fields{
-			"hash_similarity":    hashSimilarity,
-			"threshold":          earlyExitThreshold,
-			"has_good_alignment": hasGoodAlignment,
-		})
-		result.OverallSimilarity = hashSimilarity
-		result.FeatureSimilarity = 0.0
-		result.Confidence = 0.3
-		result.ProcessingTime = time.Since(startTime)
-		return result, nil
-	}
-
-	// Calculate feature similarity with alignment
-	featureSimilarity, err := fc.calculateFeatureSimilarityWithAlignment(fp1, fp2, result, alignment)
-	if err != nil {
-		logger.Error(err, "Failed to calculate feature similarity")
-		featureSimilarity = 0.0
-	}
-	result.FeatureSimilarity = featureSimilarity
-
-	result.OverallSimilarity = fc.calculateOverallSimilarity(result)
-
-	if fc.config.EnableDetailedMetrics {
-		result.QualityMetrics = fc.calculateQualityMetrics(fp1, fp2, result)
-	}
-
-	result.Confidence = fc.calculateConfidence(result)
-	result.ProcessingTime = time.Since(startTime)
-
-	logger.Info("Fingerprint comparison completed", logging.Fields{
-		"overall_similarity":  result.OverallSimilarity,
-		"hash_similarity":     result.HashSimilarity,
-		"feature_similarity":  result.FeatureSimilarity,
-		"content_type_match":  result.ContentTypeMatch,
-		"confidence":          result.Confidence,
-		"alignment_applied":   result.AlignmentApplied,
-		"processing_time":     result.ProcessingTime,
-		"mfcc_similarity":     result.FeatureDistances["mfcc"],
-		"spectral_similarity": result.FeatureDistances["spectral"],
-	})
-
-	return result, nil
-}
-
-func (fc *FingerprintComparator) calculateFeatureSimilarityWithAlignment(fp1, fp2 *AudioFingerprint, result *SimilarityResult, alignment *extractors.AlignmentFeatures) (float64, error) {
-	if fp1.Features == nil || fp2.Features == nil {
-		err := fmt.Errorf("features cannot be nil")
-		fc.logger.Error(err, "Features cannot be nil", logging.Fields{
-			"function": "calculateFeatureSimilarityWithAlignment",
-		})
-		return 0.0, err
-	}
-
-	features1 := fp1.Features
-	features2 := fp2.Features
-
-	var similarities []float64
-	var weights []float64
-
-	// Get feature weights
-	featureWeights := fc.getEffectiveWeights(fp1)
-
-	// Compare MFCC features with optional alignment
-	if len(features1.MFCC) > 0 && len(features2.MFCC) > 0 {
-		var mfccSim, distance float64
-
-		sampleRate := min(fp1.SampleRate, fp2.SampleRate)
-		hopSize := min(fp1.HopSize, fp2.HopSize)
-
-		if alignment != nil {
-			// Use alignment-aware MFCC comparison
-			mfccSim, distance = fc.compareMFCCWithAlignment(
-				features1.MFCC, features2.MFCC,
-				fp1.ContentType, fp2.ContentType,
-				alignment.TemporalOffset, hopSize, sampleRate)
-		} else {
-			// Use standard MFCC comparison
-			mfccSim, distance = fc.compareMFCC(features1.MFCC, features2.MFCC, fp1.ContentType, fp2.ContentType)
-		}
-
-		similarities = append(similarities, mfccSim)
-		weights = append(weights, featureWeights["mfcc"])
-		result.FeatureDistances["mfcc"] = distance
-	}
-
-	// Compare spectral features
-	if features1.SpectralFeatures != nil && features2.SpectralFeatures != nil {
-		spectralSim, distance := fc.compareSpectralFeatures(features1.SpectralFeatures, features2.SpectralFeatures)
-		similarities = append(similarities, spectralSim)
-		weights = append(weights, featureWeights["spectral"])
-		result.FeatureDistances["spectral"] = distance
-	}
-
-	// Compare chroma features
-	if len(features1.ChromaFeatures) > 0 && len(features2.ChromaFeatures) > 0 {
-		chromaSim, distance := fc.compareChromaFeatures(features1.ChromaFeatures, features2.ChromaFeatures)
-		similarities = append(similarities, chromaSim)
-		weights = append(weights, featureWeights["chroma"])
-		result.FeatureDistances["chroma"] = distance
-	}
-
-	// Compare temporal features
-	if features1.TemporalFeatures != nil && features2.TemporalFeatures != nil {
-		temporalSim, distance := fc.compareTemporalFeatures(features1.TemporalFeatures, features2.TemporalFeatures)
-		similarities = append(similarities, temporalSim)
-		weights = append(weights, featureWeights["temporal"])
-		result.FeatureDistances["temporal"] = distance
-	}
-
-	// Compare speech features
-	if features1.SpeechFeatures != nil && features2.SpeechFeatures != nil {
-		speechSim, distance := fc.compareSpeechFeatures(features1.SpeechFeatures, features2.SpeechFeatures)
-		similarities = append(similarities, speechSim)
-		weights = append(weights, featureWeights["speech"])
-		result.FeatureDistances["speech"] = distance
-	}
-
-	// Compare harmonic features
-	if features1.HarmonicFeatures != nil && features2.HarmonicFeatures != nil {
-		harmonicSim, distance := fc.compareHarmonicFeatures(features1.HarmonicFeatures, features2.HarmonicFeatures)
-		similarities = append(similarities, harmonicSim)
-		weights = append(weights, featureWeights["harmonic"])
-		result.FeatureDistances["harmonic"] = distance
-	}
-
-	if len(similarities) == 0 {
-		err := fmt.Errorf("no comparable features found")
-		fc.logger.Error(err, "No comparable features found", logging.Fields{
-			"function": "calculateFeatureSimilarityWithAlignment",
-		})
-		return 0.0, err
-	}
-
-	weightedMean := fc.calculateWeightedMean(similarities, weights)
-
-	return weightedMean, nil
-}
-
-func (fc *FingerprintComparator) compareMFCCWithAlignment(mfcc1, mfcc2 [][]float64, contentType1, contentType2 config.ContentType, temporalOffset float64, hopSize int, sampleRate int) (float64, float64) {
-	if len(mfcc1) == 0 || len(mfcc2) == 0 {
-		return 0.0, 1.0
-	}
-
-	// Apply temporal alignment by shifting MFCC frames
-	alignedMFCC1, alignedMFCC2 := fc.applyTemporalAlignment(mfcc1, mfcc2, temporalOffset, hopSize, sampleRate)
-
-	if len(alignedMFCC1) == 0 || len(alignedMFCC2) == 0 {
-		return 0.0, 1.0
-	}
-
-	// Now proceed with normal MFCC comparison on aligned features
-	return fc.compareMFCC(alignedMFCC1, alignedMFCC2, contentType1, contentType2)
-}
-
-func (fc *FingerprintComparator) applyTemporalAlignment(mfcc1, mfcc2 [][]float64, temporalOffsetSeconds float64, hopSize int, sampleRate int) ([][]float64, [][]float64) {
-	// Convert temporal offset to frame offset
-	frameOffset := int(math.Round(temporalOffsetSeconds * float64(sampleRate) / float64(hopSize)))
-
-	fc.logger.Debug("Applying temporal alignment", logging.Fields{
-		"temporal_offset_sec": temporalOffsetSeconds,
-		"frame_offset":        frameOffset,
-		"mfcc1_frames":        len(mfcc1),
-		"mfcc2_frames":        len(mfcc2),
-		"hop_size":            hopSize,
-		"sample_rate":         sampleRate,
-	})
-
-	var alignedMFCC1, alignedMFCC2 [][]float64
-
-	if frameOffset > 0 {
-		// mfcc2 is ahead, so shift mfcc1 forward (skip early frames of mfcc1)
-		if frameOffset < len(mfcc1) {
-			alignedMFCC1 = mfcc1[frameOffset:]
-		} else {
-			return nil, nil // Offset too large
-		}
-		alignedMFCC2 = mfcc2
-	} else if frameOffset < 0 {
-		// mfcc1 is ahead, so shift mfcc2 forward (skip early frames of mfcc2)
-		frameOffset = -frameOffset
-		if frameOffset < len(mfcc2) {
-			alignedMFCC2 = mfcc2[frameOffset:]
-		} else {
-			return nil, nil // Offset too large
-		}
-		alignedMFCC1 = mfcc1
-	} else {
-		// No offset needed
-		alignedMFCC1 = mfcc1
-		alignedMFCC2 = mfcc2
-	}
-
-	// Trim to same length
-	minLen := min(len(alignedMFCC1), len(alignedMFCC2))
-	if minLen == 0 {
-		return nil, nil
-	}
-
-	alignedMFCC1 = alignedMFCC1[:minLen]
-	alignedMFCC2 = alignedMFCC2[:minLen]
-
-	fc.logger.Debug("Alignment applied", logging.Fields{
-		"aligned_mfcc1_frames": len(alignedMFCC1),
-		"aligned_mfcc2_frames": len(alignedMFCC2),
-		"frames_trimmed":       frameOffset,
-	})
-
-	return alignedMFCC1, alignedMFCC2
 }
 
 // FindBestMatches find the best matches from a list candidates
@@ -614,10 +302,10 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 		var compactSim float64
 
 		// Check if these are perceptual hashes (shorter length indicates perceptual)
-		if len(fp1.CompactHash) <= 16 && len(fp2.CompactHash) <= 16 {
+		if len(fp1.CompactHash) <= 32 && len(fp2.CompactHash) <= 32 { // Changed from 16 to 32
 			// Use perceptual hash comparison
 			compactSim = extractors.ComparePerceptualHashes(fp1.CompactHash, fp2.CompactHash)
-			fc.logger.Info("Perceptual compact hash comparison", logging.Fields{
+			fc.logger.Info("Using perceptual hash comparison", logging.Fields{
 				"hash1":      fp1.CompactHash,
 				"hash2":      fp2.CompactHash,
 				"similarity": compactSim,
@@ -625,10 +313,10 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 		} else {
 			// Use traditional exact hash comparison
 			compactSim = fc.compareHashes(fp1.CompactHash, fp2.CompactHash)
-			fc.logger.Debug("Traditional hash comparison", logging.Fields{
-				"hash1_prefix": fp1.CompactHash[:min(8, len(fp1.CompactHash))],
-				"hash2_prefix": fp2.CompactHash[:min(8, len(fp2.CompactHash))],
-				"similarity":   compactSim,
+			fc.logger.Info("Using traditional hash comparison", logging.Fields{
+				"hash1_len":  len(fp1.CompactHash),
+				"hash2_len":  len(fp2.CompactHash),
+				"similarity": compactSim,
 			})
 		}
 
@@ -701,120 +389,6 @@ func (fc *FingerprintComparator) compareHashes(hash1, hash2 string) float64 {
 	}
 
 	return float64(matches) / float64(minLen)
-}
-
-func (fc *FingerprintComparator) calculateHashSimilarityWithAlignment(fp1, fp2 *AudioFingerprint, alignment *extractors.AlignmentFeatures) (float64, error) {
-	if alignment == nil || alignment.OffsetConfidence < 0.3 {
-		// Fall back to regular hash comparison if no good alignment
-		return fc.calculateHashSimilarity(fp1, fp2)
-	}
-
-	fc.logger.Debug("Using alignment-aware hash comparison", logging.Fields{
-		"temporal_offset":      alignment.TemporalOffset,
-		"alignment_confidence": alignment.OffsetConfidence,
-	})
-
-	similarities := make([]float64, 0)
-
-	// For perceptual hashes, we need to consider that they represent time-averaged features
-	// If alignment offset is small relative to the analysis window, hashes should be similar
-
-	// Calculate temporal similarity boost based on alignment confidence
-	alignmentBoost := fc.calculateAlignmentBoost(alignment)
-
-	// Compare compact hashes with alignment consideration
-	if fp1.CompactHash != "" && fp2.CompactHash != "" {
-		var compactSim float64
-
-		// Check if these are perceptual hashes (shorter length indicates perceptual)
-		if len(fp1.CompactHash) <= 16 && len(fp2.CompactHash) <= 16 {
-			// Use perceptual hash comparison with alignment boost
-			rawSim := extractors.ComparePerceptualHashes(fp1.CompactHash, fp2.CompactHash)
-			compactSim = fc.applyAlignmentBoost(rawSim, alignmentBoost)
-
-			fc.logger.Debug("Alignment-aware perceptual compact hash comparison", logging.Fields{
-				"hash1":              fp1.CompactHash,
-				"hash2":              fp2.CompactHash,
-				"raw_similarity":     rawSim,
-				"boosted_similarity": compactSim,
-				"alignment_boost":    alignmentBoost,
-			})
-		} else {
-			// Traditional exact hash comparison (less boost since these should be more stable)
-			rawSim := fc.compareHashes(fp1.CompactHash, fp2.CompactHash)
-			compactSim = fc.applyAlignmentBoost(rawSim, alignmentBoost*0.5) // Less boost for cryptographic hashes
-
-			fc.logger.Debug("Alignment-aware traditional hash comparison", logging.Fields{
-				"raw_similarity":     rawSim,
-				"boosted_similarity": compactSim,
-			})
-		}
-
-		similarities = append(similarities, compactSim)
-	}
-
-	// Compare perceptual hashes with alignment-aware scoring
-	for hashType, hash1 := range fp1.PerceptualHashes {
-		if hash2, exists := fp2.PerceptualHashes[hashType]; exists {
-			rawSim := extractors.ComparePerceptualHashes(hash1, hash2)
-
-			// Apply different boost levels based on hash type
-			var boostedSim float64
-			switch hashType {
-			case "combined":
-				// Combined hashes get full boost as they represent overall characteristics
-				boostedSim = fc.applyAlignmentBoost(rawSim, alignmentBoost)
-			case "mfcc":
-				// MFCC hashes are most sensitive to temporal alignment
-				boostedSim = fc.applyAlignmentBoost(rawSim, alignmentBoost*1.2)
-			case "spectral":
-				// Spectral hashes are somewhat stable across time
-				boostedSim = fc.applyAlignmentBoost(rawSim, alignmentBoost*0.8)
-			case "temporal":
-				// Temporal hashes might be most affected by different time windows
-				boostedSim = fc.applyAlignmentBoost(rawSim, alignmentBoost*1.5)
-			default:
-				boostedSim = fc.applyAlignmentBoost(rawSim, alignmentBoost)
-			}
-
-			similarities = append(similarities, boostedSim)
-
-			fc.logger.Debug("Alignment-aware perceptual hash type comparison", logging.Fields{
-				"type":               hashType,
-				"hash1":              hash1,
-				"hash2":              hash2,
-				"raw_similarity":     rawSim,
-				"boosted_similarity": boostedSim,
-				"boost_factor":       alignmentBoost,
-			})
-		}
-	}
-
-	if len(similarities) == 0 {
-		return 0.0, nil
-	}
-
-	// Weight perceptual hashes higher than compact hash when we have good alignment
-	if len(similarities) > 1 {
-		weights := make([]float64, len(similarities))
-		weights[0] = 0.15 // Compact hash gets even less weight when aligned
-		for i := 1; i < len(weights); i++ {
-			weights[i] = 0.85 / float64(len(weights)-1) // More weight to perceptual hashes
-		}
-
-		weightedSim := fc.calculateWeightedMean(similarities, weights)
-
-		fc.logger.Info("Alignment-aware weighted hash similarity", logging.Fields{
-			"individual_sims":   similarities,
-			"weights":           weights,
-			"final_sim":         weightedSim,
-			"alignment_applied": true,
-		})
-
-		return weightedSim, nil
-	}
-
-	return similarities[0], nil
 }
 
 // calculateFeatureSimilarity calculates similarity based on extracted features
@@ -1458,67 +1032,6 @@ func (fc *FingerprintComparator) calculateOverallSimilarity(result *SimilarityRe
 
 	// Use normal weights for non-aligned comparisons
 	return fc.hashWeight*result.HashSimilarity + fc.featureWeight*result.FeatureSimilarity
-}
-
-func (fc *FingerprintComparator) calculateWeightedFeatureSimilarity(result *SimilarityResult) float64 {
-	var totalWeight float64
-	var weightedSum float64
-
-	// Define feature weights based on their reliability and importance
-	featureWeights := map[string]float64{
-		"mfcc":     0.25, // MFCC features - good for speech content
-		"spectral": 0.20, // Spectral features - frequency domain
-		"temporal": 0.20, // Temporal features - time domain patterns
-		"speech":   0.15, // Speech-specific features
-		"harmonic": 0.15, // Harmonic content
-		"energy":   0.05, // Energy-based features (if present)
-	}
-
-	// Calculate weighted sum of available features
-	for featureName, similarity := range result.FeatureDistances {
-		if weight, exists := featureWeights[featureName]; exists {
-			weightedSum += similarity * weight
-			totalWeight += weight
-		}
-	}
-
-	// If we have alignment applied and good temporal alignment, boost the result
-	if result.AlignmentApplied && result.TemporalOffset != 0 {
-		// Get alignment confidence from metadata if available
-		alignmentConf := 0.0
-		if conf, ok := result.Metadata["alignment_confidence"].(float64); ok {
-			alignmentConf = conf
-		}
-
-		// Apply alignment boost if confidence is reasonable
-		if alignmentConf > 0.3 {
-			alignmentBoost := alignmentConf * 0.1 // Up to 10% boost
-			weightedSum += alignmentBoost
-		}
-	}
-
-	// Normalize by total weight used
-	if totalWeight > 0 {
-		return math.Min(1.0, weightedSum/totalWeight)
-	}
-
-	// Fallback to feature similarity if no individual features available
-	return result.FeatureSimilarity
-}
-
-// Alternative simpler approach - just use the weighted mean directly
-func (fc *FingerprintComparator) calculateSimpleWeightedSimilarity(result *SimilarityResult) float64 {
-	// This matches what your logs show as "WEIGHTED MEAN SIMILARITY"
-	// Use the FeatureSimilarity which should already be the weighted mean
-
-	// Apply content type penalty if needed
-	similarity := result.FeatureSimilarity
-
-	if !result.ContentTypeMatch && fc.config.EnableContentFilter {
-		similarity *= 0.8 // 20% penalty for content type mismatch
-	}
-
-	return math.Min(1.0, similarity)
 }
 
 // calculateQualityMetrics calculates quality metrics for the comparison

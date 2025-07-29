@@ -166,9 +166,9 @@ func runFingerprintTest(cmd *cobra.Command, args []string) error {
 	// Compare with alignment (if available)
 	var resultWithAlign *fingerprint.SimilarityResult
 	if alignmentFeatures != nil && alignmentFeatures.OffsetConfidence >= ftMinConfidence {
-		alignmentConfig := config.AlignmentConfigForContent(parseContentType(ftContentType))
-		resultWithAlign, err = comparator.CompareWithAlignment(
-			stream1.Fingerprint, stream2.Fingerprint, alignmentFeatures, alignmentConfig)
+		// alignmentConfig := config.AlignmentConfigForContent(parseContentType(ftContentType))
+		resultWithAlign, err = comparator.Compare(
+			stream1.Fingerprint, stream2.Fingerprint)
 		if err != nil {
 			fmt.Printf("⚠️  Comparison with alignment failed: %v\n", err)
 			resultWithAlign = nil
@@ -477,73 +477,80 @@ func isLocalFile(input string) bool {
 
 func truncateToAlignedSegments(audio1, audio2 *common.AudioData, alignment *extractors.AlignmentFeatures) (*common.AudioData, *common.AudioData, error) {
 	offsetSeconds := alignment.TemporalOffset
-	sampleRate := audio1.SampleRate
-	offsetSamples := int(math.Abs(offsetSeconds) * float64(sampleRate))
+	sampleRate := float64(audio1.SampleRate)
 
-	var aligned1, aligned2 *common.AudioData
+	// Convert to samples with proper rounding
+	offsetSamples := int(math.Round(math.Abs(offsetSeconds) * sampleRate))
+
+	fmt.Printf("DEBUG: Offset=%.2fs, OffsetSamples=%d\n", offsetSeconds, offsetSamples)
+	fmt.Printf("DEBUG: Audio1 len=%d samples (%.1fs), Audio2 len=%d samples (%.1fs)\n",
+		len(audio1.PCM), float64(len(audio1.PCM))/sampleRate,
+		len(audio2.PCM), float64(len(audio2.PCM))/sampleRate)
+
+	var start1, start2, commonLength int
 
 	if offsetSeconds > 0 {
-		// Stream 2 is ahead, trim beginning of stream 2
-		start2 := offsetSamples
+		// Stream 2 is ahead: skip beginning of stream 2, keep beginning of stream 1
+		start1 = 0
+		start2 = offsetSamples
+
 		if start2 >= len(audio2.PCM) {
-			return nil, nil, fmt.Errorf("offset too large")
+			return nil, nil, fmt.Errorf("offset too large: need to skip %d samples but audio2 only has %d", start2, len(audio2.PCM))
 		}
 
-		// Find common length after alignment
-		remaining2 := len(audio2.PCM) - start2
-		commonLength := min(len(audio1.PCM), remaining2)
+		// Calculate how much audio remains after skipping
+		remaining1 := len(audio1.PCM) - start1 // All of audio1
+		remaining2 := len(audio2.PCM) - start2 // Audio2 after skipping
+		commonLength = min(remaining1, remaining2)
 
-		aligned1 = &common.AudioData{
-			PCM:        audio1.PCM[:commonLength],
-			SampleRate: audio1.SampleRate,
-			Channels:   audio1.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
-
-		aligned2 = &common.AudioData{
-			PCM:        audio2.PCM[start2 : start2+commonLength],
-			SampleRate: audio2.SampleRate,
-			Channels:   audio2.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
 	} else if offsetSeconds < 0 {
-		// Stream 1 is ahead, trim beginning of stream 1
-		start1 := offsetSamples
+		// Stream 1 is ahead: skip beginning of stream 1, keep beginning of stream 2
+		start1 = offsetSamples
+		start2 = 0
+
 		if start1 >= len(audio1.PCM) {
-			return nil, nil, fmt.Errorf("offset too large")
+			return nil, nil, fmt.Errorf("offset too large: need to skip %d samples but audio1 only has %d", start1, len(audio1.PCM))
 		}
 
-		remaining1 := len(audio1.PCM) - start1
-		commonLength := min(remaining1, len(audio2.PCM))
+		remaining1 := len(audio1.PCM) - start1 // Audio1 after skipping
+		remaining2 := len(audio2.PCM) - start2 // All of audio2
+		commonLength = min(remaining1, remaining2)
 
-		aligned1 = &common.AudioData{
-			PCM:        audio1.PCM[start1 : start1+commonLength],
-			SampleRate: audio1.SampleRate,
-			Channels:   audio1.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
-
-		aligned2 = &common.AudioData{
-			PCM:        audio2.PCM[:commonLength],
-			SampleRate: audio2.SampleRate,
-			Channels:   audio2.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
 	} else {
-		// No offset, just trim to same length
-		commonLength := min(len(audio1.PCM), len(audio2.PCM))
-		aligned1 = &common.AudioData{
-			PCM:        audio1.PCM[:commonLength],
-			SampleRate: audio1.SampleRate,
-			Channels:   audio1.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
-		aligned2 = &common.AudioData{
-			PCM:        audio2.PCM[:commonLength],
-			SampleRate: audio2.SampleRate,
-			Channels:   audio2.Channels,
-			Duration:   time.Duration(float64(commonLength)/float64(sampleRate)) * time.Second,
-		}
+		// No offset
+		start1, start2 = 0, 0
+		commonLength = min(len(audio1.PCM), len(audio2.PCM))
+	}
+
+	if commonLength <= 0 {
+		return nil, nil, fmt.Errorf("no overlapping audio after alignment")
+	}
+
+	// Add some padding to ensure we get the best aligned portion
+	// Skip a bit more at the beginning and end to avoid edge effects
+	paddingSamples := int(0.5 * sampleRate) // 0.5 second padding
+	if commonLength > 2*paddingSamples {
+		start1 += paddingSamples
+		start2 += paddingSamples
+		commonLength -= 2 * paddingSamples
+	}
+
+	fmt.Printf("DEBUG: After alignment - start1=%d, start2=%d, commonLength=%d (%.1fs)\n",
+		start1, start2, commonLength, float64(commonLength)/sampleRate)
+
+	// Create aligned audio segments
+	aligned1 := &common.AudioData{
+		PCM:        audio1.PCM[start1 : start1+commonLength],
+		SampleRate: audio1.SampleRate,
+		Channels:   audio1.Channels,
+		Duration:   time.Duration(float64(commonLength) / sampleRate * float64(time.Second)),
+	}
+
+	aligned2 := &common.AudioData{
+		PCM:        audio2.PCM[start2 : start2+commonLength],
+		SampleRate: audio2.SampleRate,
+		Channels:   audio2.Channels,
+		Duration:   time.Duration(float64(commonLength) / sampleRate * float64(time.Second)),
 	}
 
 	return aligned1, aligned2, nil

@@ -118,7 +118,8 @@ func GetContentOptimizedComparisonConfig(contentType ContentType) *ComparisonCon
 
 	case ContentNews, ContentTalk:
 		config.SimilarityThreshold = 0.70 // Lower threshold for speech
-		config.Method = "fast"
+		config.EnableContentFilter = false
+		config.Method = "precise"
 
 	case ContentSports:
 		config.SimilarityThreshold = 0.75
@@ -172,7 +173,7 @@ func ComparisonConfigForContent(contentType ContentType) ComparisonConfig {
 	case ContentNews, ContentTalk:
 		return ComparisonConfig{
 			SimilarityThreshold: 0.70,
-			Method:              "fast",
+			Method:              "precise",
 		}
 	case ContentSports:
 		return ComparisonConfig{
