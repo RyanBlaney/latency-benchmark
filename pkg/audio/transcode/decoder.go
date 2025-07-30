@@ -150,7 +150,7 @@ func (d *Decoder) DecodeFile(filename string) (*AudioData, error) {
 		"filename":  filename,
 	})
 
-	logger.Info("Starting audio file decode")
+	logger.Debug("Starting audio file decode")
 
 	// Probe the file to get format info
 	metadata, err := d.probeAudioFile(filename)
@@ -550,7 +550,7 @@ func (d *Decoder) processFFmpegOutput(output []byte, inputMetadata *AudioMetadat
 	samplesPerChannel := len(samples) / d.config.TargetChannels
 	duration := time.Duration(samplesPerChannel) * time.Second / time.Duration(d.config.TargetSampleRate)
 
-	logger.Info("FFmpeg decode completed successfully", logging.Fields{
+	logger.Debug("FFmpeg decode completed successfully", logging.Fields{
 		"input_sample_rate":  inputMetadata.SampleRate,
 		"input_channels":     inputMetadata.Channels,
 		"input_codec":        inputMetadata.Codec,

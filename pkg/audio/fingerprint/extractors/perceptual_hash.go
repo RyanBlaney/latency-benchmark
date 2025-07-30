@@ -491,7 +491,7 @@ func (ph *PerceptualHasher) generateCombinedHash(features *ExtractedFeatures) (*
 		Robustness:   ph.estimateRobustness(featureCount, binCount),
 	}
 
-	ph.logger.Info("Generated combined perceptual hash", logging.Fields{
+	ph.logger.Debug("Generated combined perceptual hash", logging.Fields{
 		"hash":          hash,
 		"feature_count": featureCount,
 		"robustness":    result.Robustness,

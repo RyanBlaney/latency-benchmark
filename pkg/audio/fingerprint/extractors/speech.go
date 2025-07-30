@@ -151,7 +151,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 		"sample_rate":           sampleRate,
 	})
 
-	logger.Info("Extracting speech features using speech algorithms package")
+	logger.Debug("Extracting speech features...")
 
 	features := &ExtractedFeatures{
 		ExtractionMetadata: make(map[string]any),
@@ -166,7 +166,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 
 	// Step 2: Extract MFCC features (critical for speech)
 	if s.config.EnableMFCC {
-		logger.Info("Extracting MFCC features...")
+		logger.Debug("Extracting MFCC features...")
 		mfccFeatures, err := s.extractMFCCFeatures(spectrogram)
 		if err != nil {
 			logger.Error(err, "Failed to extract MFCC features")
@@ -177,7 +177,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 
 	// Step 3: Extract speech-specific features (high priority)
 	if s.config.EnableSpeechFeatures {
-		logger.Info("Extracting speech-specific features...")
+		logger.Debug("Extracting speech-specific features...")
 		speechFeatures, err := s.extractSpeechFeatures(preprocessedPCM)
 		if err != nil {
 			logger.Error(err, "Failed to extract speech features")
@@ -189,7 +189,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 	}
 
 	// Step 4: Extract spectral features
-	logger.Info("Extracting spectral features...")
+	logger.Debug("Extracting spectral features...")
 	spectralFeatures, err := s.extractSpectralFeatures(spectrogram, preprocessedPCM)
 	if err != nil {
 		logger.Error(err, "Failed to extract spectral features")
@@ -199,7 +199,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 
 	// Step 5: Extract temporal features
 	if s.config.EnableTemporalFeatures {
-		logger.Info("Extracting temporal features...")
+		logger.Debug("Extracting temporal features...")
 		temporalFeatures, err := s.extractTemporalFeatures(preprocessedPCM, sampleRate)
 		if err != nil {
 			logger.Error(err, "Failed to extract temporal features")
@@ -211,7 +211,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 	}
 
 	// Step 6: Extract energy features
-	logger.Info("Extracting energy features...")
+	logger.Debug("Extracting energy features...")
 	energyFeatures, err := s.extractEnergyFeatures(preprocessedPCM, spectrogram)
 	if err != nil {
 		logger.Error(err, "Failed to extract energy features")
@@ -220,7 +220,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 	features.EnergyFeatures = energyFeatures
 
 	// Step 7: Extract basic harmonic features (for voicing analysis)
-	logger.Info("Extracting harmonic features...")
+	logger.Debug("Extracting harmonic features...")
 	harmonicFeatures, err := s.extractHarmonicFeatures(preprocessedPCM)
 	if err != nil {
 		logger.Warn("Failed to extract harmonic features", logging.Fields{"error": err})
@@ -238,7 +238,7 @@ func (s *SpeechFeatureExtractor) ExtractFeatures(spectrogram *analyzers.Spectrog
 	features.ExtractionMetadata["spectrogram_frames"] = spectrogram.TimeFrames
 	features.ExtractionMetadata["optimization"] = "speech_optimized"
 
-	logger.Info("Speech feature extraction completed successfully")
+	logger.Debug("Speech feature extraction completed successfully")
 	return features, nil
 }
 

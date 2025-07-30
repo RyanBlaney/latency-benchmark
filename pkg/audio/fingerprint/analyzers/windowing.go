@@ -124,7 +124,7 @@ func (wg *WindowGenerator) Generate(config *WindowConfig) (*Window, error) {
 	// Cache the window
 	wg.cache[cacheKey] = window
 
-	logger.Info("Window generated successfully", logging.Fields{
+	logger.Debug("Window generated successfully", logging.Fields{
 		"energy":       window.Energy,
 		"power_gain":   window.PowerGain,
 		"noise_gain":   window.NoiseGain,

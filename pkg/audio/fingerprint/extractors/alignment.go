@@ -105,7 +105,7 @@ func NewAlignmentExtractorWithMaxLag(featureConf *config.FeatureConfig, alignmen
 	hopSize := featureConf.HopSize
 	maxLagFrames := maxLagSamples / hopSize
 
-	logger.Info("Alignment extractor configuration", logging.Fields{
+	logger.Debug("Alignment extractor configuration", logging.Fields{
 		"maxLagSeconds": maxLagSeconds,
 		"maxLagSamples": maxLagSamples,
 		"maxLagFrames":  maxLagFrames,
@@ -152,7 +152,7 @@ func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
 		"sample_rate":   sampleRate,
 	})
 
-	logger.Info("Starting alignment feature extraction")
+	logger.Debug("Starting alignment feature extraction")
 
 	result := &AlignmentFeatures{
 		FeatureSimilarity: make(map[string]float64),
@@ -207,7 +207,7 @@ func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
 		}
 	} */
 
-	logger.Info("Alignment feature extraction completed", logging.Fields{
+	logger.Debug("Alignment feature extraction completed", logging.Fields{
 		"best_method":     result.Method,
 		"temporal_offset": result.TemporalOffset,
 		"similarity":      result.OverallSimilarity,
@@ -372,7 +372,7 @@ func (ae *AlignmentExtractor) alignWithFeatures(
 	maxLagFrames := ae.maxLagSamples / ae.config.HopSize
 	maxLagFrames = min(maxLagFrames, minFrames-1)
 
-	logger.Info("Creating alignment analyzer", logging.Fields{
+	logger.Debug("Creating alignment analyzer", logging.Fields{
 		"maxLagSamples": ae.maxLagSamples,
 		"maxLagFrames":  maxLagFrames,
 		"hopSize":       ae.config.HopSize,
@@ -381,7 +381,7 @@ func (ae *AlignmentExtractor) alignWithFeatures(
 	// Create analyzer with FRAME-based lag
 	analyzer := stats.NewAlignmentAnalyzer(method, maxLagFrames, sampleRate, ae.config.HopSize, ae.config.WindowSize, ae.confidenceThresh)
 
-	logger.Info("Starting alignment computation")
+	logger.Debug("Starting alignment computation")
 
 	// Perform alignment
 	result, err := analyzer.AlignFeatures(queryFeatures, referenceFeatures, sampleRate)
@@ -394,7 +394,7 @@ func (ae *AlignmentExtractor) alignWithFeatures(
 		}
 	}
 
-	logger.Info("Alignment succeeded", logging.Fields{
+	logger.Debug("Alignment succeeded", logging.Fields{
 		"offset_seconds": result.OffsetSeconds,
 		"confidence":     result.Confidence,
 		"similarity":     result.Similarity,
@@ -572,7 +572,7 @@ func (ae *AlignmentExtractor) AlignAudioFiles(
 		},
 	}
 
-	logger.Info("Audio file alignment completed", logging.Fields{
+	logger.Debug("Audio file alignment completed", logging.Fields{
 		"offset_seconds": alignmentFeatures.TemporalOffset,
 		"similarity":     alignmentFeatures.OverallSimilarity,
 		"confidence":     alignmentFeatures.OffsetConfidence,

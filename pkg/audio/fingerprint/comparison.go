@@ -147,7 +147,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 		"fp2_id":   fp2.ID,
 	})
 
-	logger.Info("Startin fingerprint comparison")
+	logger.Debug("Starting fingerprint comparison")
 
 	// Initialize result
 	result := &SimilarityResult{
@@ -160,7 +160,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 
 	// Apply content filtering
 	if fc.config.EnableContentFilter && !result.ContentTypeMatch {
-		logger.Info("Content types don't match, applying penalty")
+		logger.Debug("Content types don't match, applying penalty")
 		result.OverallSimilarity = 0.0
 		result.Confidence = 0.1
 		result.ProcessingTime = time.Since(startTime)
@@ -189,7 +189,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 		return result, nil
 	}
 
-	logger.Info("Proceeding to feature comparison", logging.Fields{
+	logger.Debug("Proceeding to feature comparison", logging.Fields{
 		"hash_similarity":      hashSimilarity,
 		"early_exit_threshold": earlyExitThreshold,
 	})
@@ -305,7 +305,7 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 		if len(fp1.CompactHash) <= 32 && len(fp2.CompactHash) <= 32 { // Changed from 16 to 32
 			// Use perceptual hash comparison
 			compactSim = extractors.ComparePerceptualHashes(fp1.CompactHash, fp2.CompactHash)
-			fc.logger.Info("Using perceptual hash comparison", logging.Fields{
+			fc.logger.Debug("Using perceptual hash comparison", logging.Fields{
 				"hash1":      fp1.CompactHash,
 				"hash2":      fp2.CompactHash,
 				"similarity": compactSim,
@@ -313,7 +313,7 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 		} else {
 			// Use traditional exact hash comparison
 			compactSim = fc.compareHashes(fp1.CompactHash, fp2.CompactHash)
-			fc.logger.Info("Using traditional hash comparison", logging.Fields{
+			fc.logger.Debug("Using traditional hash comparison", logging.Fields{
 				"hash1_len":  len(fp1.CompactHash),
 				"hash2_len":  len(fp2.CompactHash),
 				"similarity": compactSim,
@@ -329,7 +329,7 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 			hashSim := extractors.ComparePerceptualHashes(hash1, hash2)
 			similarities = append(similarities, hashSim)
 
-			fc.logger.Info("Perceptual hash type comparison", logging.Fields{
+			fc.logger.Debug("Perceptual hash type comparison", logging.Fields{
 				"type":       hashType,
 				"hash1":      hash1,
 				"hash2":      hash2,
@@ -352,7 +352,7 @@ func (fc *FingerprintComparator) calculateHashSimilarity(fp1, fp2 *AudioFingerpr
 		}
 
 		weightedSim := fc.calculateWeightedMean(similarities, weights)
-		fc.logger.Info("Weighted hash similarity", logging.Fields{
+		fc.logger.Debug("Weighted hash similarity", logging.Fields{
 			"individual_sims": similarities,
 			"weights":         weights,
 			"final_sim":       weightedSim,
@@ -570,7 +570,7 @@ func (fc *FingerprintComparator) compareMFCCSequences(mfcc1, mfcc2 [][]float64) 
 			similarity := max(math.Abs(correlation))
 			similarities = append(similarities, similarity)
 
-			fc.logger.Info("MFCC coefficient correlation", logging.Fields{
+			fc.logger.Debug("MFCC coefficient correlation", logging.Fields{
 				"coefficient":     coeff,
 				"raw_correlation": result.PeakCorrelation,
 				"normalized_corr": correlation,

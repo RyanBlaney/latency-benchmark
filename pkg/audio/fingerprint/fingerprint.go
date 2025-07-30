@@ -207,7 +207,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 		"samples":     len(audioData.PCM),
 	})
 
-	logger.Info("Starting fingerprint generation")
+	logger.Debug("Starting fingerprint generation")
 
 	// Update spectral analyzer with correct sample rate
 	fg.spectralAnalyzer = analyzers.NewSpectralAnalyzer(audioData.SampleRate)
@@ -216,7 +216,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 	contentType := config.ContentUnknown
 	if fg.config.EnableContentDetect {
 		contentType = fg.ContentDetector.DetectContentType(audioData)
-		logger.Info("Content type detected", logging.Fields{
+		logger.Debug("Content type detected", logging.Fields{
 			"content_type": contentType,
 		})
 	}
@@ -228,7 +228,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 	hopSize := fg.config.FeatureConfig.HopSize
 	windowType := analyzers.WindowHann // Good default for audio analysis
 
-	logger.Info("STFT Configuration", logging.Fields{
+	logger.Debug("STFT Configuration", logging.Fields{
 		"window_size": windowSize,
 		"hop_size":    hopSize,
 		"pcm_length":  len(audioData.PCM),
@@ -243,7 +243,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 		logger.Error(err, "Failed to compute STFT")
 	}
 
-	logger.Info("STFT Debug Info", logging.Fields{
+	logger.Debug("STFT Debug Info", logging.Fields{
 		"pcm_length":     len(audioData.PCM),
 		"window_size":    windowSize,
 		"hop_size":       hopSize,
@@ -291,7 +291,7 @@ func (fg *FingerprintGenerator) GenerateFingerprint(audioData *transcode.AudioDa
 
 	hashLength := min(16, len(fingerprint.DetailedHash))
 
-	logger.Info("Fingerprint generation completed", logging.Fields{
+	logger.Debug("Fingerprint generation completed", logging.Fields{
 		"fingerprint_id": fingerprint.ID,
 		"compact_hash":   fingerprint.CompactHash[:hashLength] + "...", // show first 16 characters
 		"content_type":   fingerprint.ContentType,
@@ -380,7 +380,7 @@ func (fg *FingerprintGenerator) generateHashes(fingerprint *AudioFingerprint) er
 			fg.generateCompactHashFallback(fingerprint)
 		} else {
 			fingerprint.CompactHash = result.Hash
-			fg.logger.Info("Generated perceptual compact hash", logging.Fields{
+			fg.logger.Debug("Generated perceptual compact hash", logging.Fields{
 				"hash":          result.Hash,
 				"hash_type":     result.HashType,
 				"feature_count": result.FeatureCount,
