@@ -158,6 +158,8 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 		measurement.LatencySeconds = alignmentFeatures.TemporalOffset
 	}
 
+	measurement = e.TruncateToAlignment(ctx, measurement, alignmentExtractor)
+
 	e.logger.Info("Alignment measurement completed", map[string]any{
 		"stream1_url":        stream1.Endpoint.URL,
 		"stream2_url":        stream2.Endpoint.URL,
@@ -168,6 +170,71 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 	})
 
 	return measurement
+}
+
+// TruncateToAlignment truncates the audio data in both streams to the aligned portions
+func (e *MeasurementEngine) TruncateToAlignment(ctx context.Context, alignment *AlignmentMeasurement, extractor *extractors.AlignmentExtractor) *AlignmentMeasurement {
+	if alignment.Error != nil {
+		return alignment
+	}
+
+	if !alignment.IsValidAlignment {
+		alignment.Error = fmt.Errorf("cannot truncate: alignment is not valid (confidence %.3f < %.3f)",
+			alignment.AlignmentResult.OffsetConfidence, e.minAlignmentConf)
+		return alignment
+	}
+
+	e.logger.Info("Truncating streams to aligned segments", map[string]any{
+		"stream1_url":    alignment.Stream1.Endpoint.URL,
+		"stream2_url":    alignment.Stream2.Endpoint.URL,
+		"offset_seconds": alignment.AlignmentResult.TemporalOffset,
+		"original_len1":  len(alignment.Stream1.AudioData.PCM),
+		"original_len2":  len(alignment.Stream2.AudioData.PCM),
+	})
+
+	// Truncate PCM data using the alignment
+	alignedPCM1, alignedPCM2, err := extractor.TruncateToAlignmentPCM(
+		alignment.Stream1.AudioData.PCM,
+		alignment.Stream2.AudioData.PCM,
+		alignment.Stream1.AudioData.SampleRate,
+		alignment.AlignmentResult,
+	)
+
+	if err != nil {
+		alignment.Error = fmt.Errorf("truncation failed: %w", err)
+		return alignment
+	}
+
+	// Update AudioData with truncated PCM
+	sampleRate := float64(alignment.Stream1.AudioData.SampleRate)
+
+	// Update Stream1 AudioData
+	alignment.Stream1.AudioData = &common.AudioData{
+		PCM:        alignedPCM1,
+		SampleRate: alignment.Stream1.AudioData.SampleRate,
+		Channels:   alignment.Stream1.AudioData.Channels,
+		Duration:   time.Duration(float64(len(alignedPCM1)) / sampleRate * float64(time.Second)),
+	}
+
+	// Update Stream2 AudioData
+	alignment.Stream2.AudioData = &common.AudioData{
+		PCM:        alignedPCM2,
+		SampleRate: alignment.Stream2.AudioData.SampleRate,
+		Channels:   alignment.Stream2.AudioData.Channels,
+		Duration:   time.Duration(float64(len(alignedPCM2)) / sampleRate * float64(time.Second)),
+	}
+
+	e.logger.Info("Stream truncation completed", map[string]any{
+		"stream1_url":      alignment.Stream1.Endpoint.URL,
+		"stream2_url":      alignment.Stream2.Endpoint.URL,
+		"aligned_len1":     len(alignedPCM1),
+		"aligned_len2":     len(alignedPCM2),
+		"aligned_duration": alignment.Stream1.AudioData.Duration.Seconds(),
+		"samples_saved1":   len(alignment.Stream1.AudioData.PCM) - len(alignedPCM1),
+		"samples_saved2":   len(alignment.Stream2.AudioData.PCM) - len(alignedPCM2),
+	})
+
+	return alignment
 }
 
 // CompareFingerprintSimilarity compares fingerprint similarity between two streams
@@ -202,9 +269,8 @@ func (e *MeasurementEngine) CompareFingerprintSimilarity(ctx context.Context, st
 
 	// Compare with or without alignment
 	if alignmentFeatures != nil && alignmentFeatures.OffsetConfidence >= e.minAlignmentConf {
-		alignmentConfig := config.AlignmentConfigForContent(contentType)
-		result, err = comparator.CompareWithAlignment(
-			stream1.Fingerprint, stream2.Fingerprint, alignmentFeatures, alignmentConfig)
+		result, err = comparator.Compare(
+			stream1.Fingerprint, stream2.Fingerprint)
 	} else {
 		result, err = comparator.Compare(stream1.Fingerprint, stream2.Fingerprint)
 	}

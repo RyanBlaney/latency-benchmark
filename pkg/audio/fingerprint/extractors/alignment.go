@@ -197,14 +197,15 @@ func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
 	result.TimeStretch = ae.estimateTimeStretch(result.BestAlignment, result.QueryLength, result.ReferenceLength)
 
 	// Step 5: Analyze alignment consistency
-	if result.BestAlignment != nil && result.BestAlignment.Success {
+	// TODO: fix the bottleneck but ensure consistency
+	/* if result.BestAlignment != nil && result.BestAlignment.Success {
 		consistency, err := ae.analyzeConsistency(queryFeatures, referenceFeatures, sampleRate)
 		if err != nil {
 			logger.Warn("Failed to analyze alignment consistency", logging.Fields{"error": err})
 		} else {
 			result.Consistency = consistency
 		}
-	}
+	} */
 
 	logger.Info("Alignment feature extraction completed", logging.Fields{
 		"best_method":     result.Method,
@@ -214,6 +215,84 @@ func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
 	})
 
 	return result, nil
+}
+
+// TruncateToAlignmentPCM takes in the PCM audio and the `AlignmentFeatures` and purges all audio that doesn't align.
+// This is an essential step before fingerprinting.
+func (ae *AlignmentExtractor) TruncateToAlignmentPCM(pcm1, pcm2 []float64, sampleRate int, alignment *AlignmentFeatures) ([]float64, []float64, error) {
+	offsetSeconds := alignment.TemporalOffset
+	sampleRateFloat := float64(sampleRate)
+
+	// Convert to samples with proper rounding
+	offsetSamples := int(math.Round(math.Abs(offsetSeconds) * sampleRateFloat))
+
+	logger := ae.logger.WithFields(logging.Fields{
+		"function":    "ExtractAlignmentFeatures",
+		"pcm1_len":    len(pcm1),
+		"pcm2_len":    len(pcm2),
+		"sample_rate": sampleRate,
+	})
+
+	var start1, start2, commonLength int
+
+	if offsetSeconds > 0 {
+		// Stream 2 is ahead: skip beginning of stream 2, keep beginning of stream 1
+		start1 = 0
+		start2 = offsetSamples
+
+		if start2 >= len(pcm2) {
+			return nil, nil, fmt.Errorf("offset too large: need to skip %d samples but pcm2 only has %d", start2, len(pcm2))
+		}
+
+		// Calculate how much audio remains after skipping
+		remaining1 := len(pcm1) - start1 // All of pcm1
+		remaining2 := len(pcm2) - start2 // PCM2 after skipping
+		commonLength = min(remaining1, remaining2)
+
+	} else if offsetSeconds < 0 {
+		// Stream 1 is ahead: skip beginning of stream 1, keep beginning of stream 2
+		start1 = offsetSamples
+		start2 = 0
+
+		if start1 >= len(pcm1) {
+			return nil, nil, fmt.Errorf("offset too large: need to skip %d samples but pcm1 only has %d", start1, len(pcm1))
+		}
+
+		remaining1 := len(pcm1) - start1 // PCM1 after skipping
+		remaining2 := len(pcm2) - start2 // All of pcm2
+		commonLength = min(remaining1, remaining2)
+
+	} else {
+		// No offset
+		start1, start2 = 0, 0
+		commonLength = min(len(pcm1), len(pcm2))
+	}
+
+	if commonLength <= 0 {
+		return nil, nil, fmt.Errorf("no overlapping audio after alignment")
+	}
+
+	// Add some padding to ensure we get the best aligned portion
+	// Skip a bit more at the beginning and end to avoid edge effects
+	paddingSamples := int(0.5 * sampleRateFloat) // 0.5 second padding
+	if commonLength > 2*paddingSamples {
+		start1 += paddingSamples
+		start2 += paddingSamples
+		commonLength -= 2 * paddingSamples
+	}
+
+	logger.Debug("After alignment",
+		logging.Fields{
+			"start1":                                start1,
+			"start2":                                start2,
+			"common_length_" + string(commonLength): float64(commonLength) / sampleRateFloat,
+		})
+
+	// Return aligned PCM segments
+	alignedPCM1 := pcm1[start1 : start1+commonLength]
+	alignedPCM2 := pcm2[start2 : start2+commonLength]
+
+	return alignedPCM1, alignedPCM2, nil
 }
 
 // performMultiFeatureAlignment tries alignment with different feature types

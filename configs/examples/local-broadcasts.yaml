@@ -12,7 +12,7 @@ broadcast_groups:
     streams:
       # Treat first file as HLS source
       hls_source:
-        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_source_90s.wav"
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_source_240s.wav"
         type: "hls" # Keep original type for validation
         role: "source"
         content_type: "news"
@@ -20,7 +20,7 @@ broadcast_groups:
 
       # Treat second file as HLS CDN
       hls_cdn:
-        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_cdn_90s.wav"
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_hls_cdn_240s.wav"
         type: "hls" # Keep original type for validation
         role: "cdn"
         content_type: "news"
@@ -28,7 +28,7 @@ broadcast_groups:
 
       # Treat third file as ICEcast source
       icecast_source:
-        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_source_90s.wav"
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_source_240s.wav"
         type: "icecast" # Keep original type for validation
         role: "source"
         content_type: "news"
@@ -36,7 +36,7 @@ broadcast_groups:
 
       # Treat fourth file as ICEcast CDN
       icecast_cdn:
-        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_cdn_90s.wav"
+        url: "file:///Users/rblaney-x/Projects/CDN-Benchmark-Suite/cdn-benchmark-cli/test-audio/msnbc_icecast_cdn_240s.wav"
         type: "icecast" # Keep original type for validation
         role: "cdn"
         content_type: "news"

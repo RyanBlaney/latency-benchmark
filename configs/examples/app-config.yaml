@@ -33,14 +33,14 @@ audio:
   buffer_duration: 2s
   window_size: 4096
   overlap: 0.75
-  window_function: "hamming"
+  window_function: "hann"
   fft_size: 4096
   mel_bins: 256
 
 # Quality thresholds
 quality:
-  min_similarity: 0.85
-  max_latency: 15s
+  min_similarity: 0.75
+  max_latency: 200s
   min_bitrate: 256
   max_dropouts: 1
   buffer_health: 0.95
@@ -96,9 +96,9 @@ hls:
     custom_headers: {}
 
   audio:
-    sample_duration: 60s
+    sample_duration: 240s
     buffer_duration: 3s
-    max_segments: 20
+    max_segments: 50
     follow_live: true
     analyze_segments: true
 
@@ -146,7 +146,7 @@ icecast:
   audio:
     buffer_size: 4096
     buffer_duration: 2s
-    sample_duration: 60s
+    sample_duration: 240s
     max_read_attempts: 10
     read_timeout: 90s
     handle_icy_meta: true
@@ -163,9 +163,9 @@ benchmark:
   max_concurrent_streams: 4
 
   # Audio analysis parameters
-  audio_segment_duration: 90s
+  audio_segment_duration: 240s
   min_alignment_confidence: 0.3
-  max_alignment_offset: 35.0
+  max_alignment_offset: 200.0
   min_fingerprint_similarity: 0.5
 
   # Analysis options
