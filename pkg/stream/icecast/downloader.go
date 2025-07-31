@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
@@ -16,9 +17,16 @@ import (
 type AudioDownloader struct {
 	client        *http.Client
 	icecastConfig *Config
-	tempDir       string         // for storing temporary files
-	downloadStats *DownloadStats // To track performance metrics
+	tempDir       string
+	downloadStats *DownloadStats
 	config        *DownloadConfig
+}
+
+// QueryParamRule defines when and what query parameters to add
+type QueryParamRule struct {
+	HostPatterns []string          `json:"host_patterns"` // Host patterns to match (e.g., "cdnstream1.com", "soundstack", "adzwizz")
+	PathPatterns []string          `json:"path_patterns"` // Path patterns to match (optional)
+	QueryParams  map[string]string `json:"query_params"`  // Query parameters to add
 }
 
 // DownloadConfig contains configuration for audio downloading
@@ -28,12 +36,20 @@ type DownloadConfig struct {
 	MaxRetries       int           `json:"max_retries"`
 	TargetDuration   time.Duration `json:"target_duration"`
 	PreferredBitrate int           `json:"preferred_bitrate"`
-	// Audio processing options (used for fallback basic processing)
-	OutputSampleRate int    `json:"output_sample_rate"` // Target sample rate for basic processing
-	OutputChannels   int    `json:"output_channels"`    // Target channels (1=mono, 2=stereo)
-	NormalizePCM     bool   `json:"normalize_pcm"`      // Normalize PCM values
-	ResampleQuality  string `json:"resample_quality"`   // "fast", "medium", "high"
-	CleanupTempFiles bool   `json:"cleanup_temp_files"` // Clean up temporary files
+	OutputSampleRate int           `json:"output_sample_rate"`
+	OutputChannels   int           `json:"output_channels"`
+	NormalizePCM     bool          `json:"normalize_pcm"`
+	ResampleQuality  string        `json:"resample_quality"`
+	CleanupTempFiles bool          `json:"cleanup_temp_files"`
+	// ICEcast specific settings
+	InitialTimeout       time.Duration `json:"initial_timeout"`        // Timeout for first byte
+	StreamReadTimeout    time.Duration `json:"stream_read_timeout"`    // Timeout for individual reads
+	ConnectionKeepAlive  time.Duration `json:"connection_keep_alive"`  // Keep connection alive
+	MaxReconnectAttempts int           `json:"max_reconnect_attempts"` // Max reconnection attempts
+	ReconnectDelay       time.Duration `json:"reconnect_delay"`        // Delay between reconnects
+	// Query parameter configuration
+	QueryParamRules   []QueryParamRule  `json:"query_param_rules"`   // Rules for adding query parameters
+	GlobalQueryParams map[string]string `json:"global_query_params"` // Query parameters to add to all requests
 }
 
 // DownloadStats tracks download performance
@@ -45,6 +61,11 @@ type DownloadStats struct {
 	ErrorCount         int           `json:"error_count"`
 	AverageBitrate     float64       `json:"average_bitrate"`
 	AudioMetrics       *AudioMetrics `json:"audio_metrics,omitempty"`
+	// ICEcast specific stats
+	ConnectionAttempts int           `json:"connection_attempts"`
+	TimeToFirstByte    time.Duration `json:"time_to_first_byte"`
+	Reconnections      int           `json:"reconnections"`
+	LiveStartTime      *time.Time    `json:"live_start_time,omitempty"`
 }
 
 // AudioMetrics contains audio processing statistics
@@ -57,102 +78,177 @@ type AudioMetrics struct {
 	ClippingDetected bool    `json:"clipping_detected"`
 }
 
-// NewAudioDownloader creates a new ICEcast audio downloader
+// NewAudioDownloader creates a new ICEcast audio downloader optimized for live streaming
 func NewAudioDownloader(config *Config) *AudioDownloader {
 	if config == nil {
 		config = DefaultConfig()
 	}
 
+	// Create optimized HTTP client for ICEcast streaming
 	client := &http.Client{
-		Timeout: 0, // No timeout for streaming connections
+		Timeout: 0, // No global timeout for streaming
 		Transport: &http.Transport{
-			MaxIdleConns:       1,
-			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: false,
-			DisableKeepAlives:  false, // Allow keep-alives for streaming
+			MaxIdleConns:          10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 15 * time.Second, // Quick response headers
+			ExpectContinueTimeout: 1 * time.Second,
+			DisableCompression:    false,
+			DisableKeepAlives:     false,
+			MaxIdleConnsPerHost:   5,
 		},
 	}
 
-	// Create FFmpeg decoder optimized for news/talk content (typical for ICEcast)
+	now := time.Now()
 	return &AudioDownloader{
 		client:        client,
 		icecastConfig: config,
 		downloadStats: &DownloadStats{
-			AudioMetrics: &AudioMetrics{},
+			AudioMetrics:  &AudioMetrics{},
+			LiveStartTime: &now,
 		},
 		config: DefaultDownloadConfig(),
 	}
 }
 
-// DefaultDownloadConfig returns default download configuration
+// DefaultDownloadConfig returns default download configuration optimized for ICEcast
 func DefaultDownloadConfig() *DownloadConfig {
 	return &DownloadConfig{
-		MaxSegments:      10,
-		SegmentTimeout:   10 * time.Second,
-		MaxRetries:       3,
-		TargetDuration:   30 * time.Second,
-		PreferredBitrate: 128,
-		OutputSampleRate: 44100, // Standard for audio fingerprinting
-		OutputChannels:   1,     // Mono for fingerprinting (reduces processing)
-		NormalizePCM:     true,
-		ResampleQuality:  "medium",
-		CleanupTempFiles: true,
+		MaxSegments:          10,
+		SegmentTimeout:       10 * time.Second,
+		MaxRetries:           3,
+		TargetDuration:       240 * time.Second,
+		PreferredBitrate:     128,
+		OutputSampleRate:     44100,
+		OutputChannels:       1,
+		NormalizePCM:         true,
+		ResampleQuality:      "medium",
+		CleanupTempFiles:     true,
+		InitialTimeout:       30 * time.Second,        // 30s timeout for first byte
+		StreamReadTimeout:    10 * time.Second,        // 10s timeout for reads
+		ConnectionKeepAlive:  60 * time.Second,        // Keep connection alive
+		MaxReconnectAttempts: 3,                       // Max 3 reconnection attempts
+		ReconnectDelay:       5 * time.Second,         // 5s delay between reconnects
+		QueryParamRules:      []QueryParamRule{},      // Empty by default
+		GlobalQueryParams:    make(map[string]string), // Empty by default
 	}
 }
 
-// NewAudioDownloaderForContent creates a new ICEcast audio downloader optimized for specific content
-func NewAudioDownloaderForContent(config *Config, contentType string) *AudioDownloader {
-	if config == nil {
-		config = DefaultConfig()
-	}
+// DefaultSoundstackConfig returns a config with soundstack/adzwizz query parameters
+func DefaultSoundstackConfig() *DownloadConfig {
+	config := DefaultDownloadConfig()
 
-	client := &http.Client{
-		Timeout: 0, // No timeout for streaming connections
-		Transport: &http.Transport{
-			MaxIdleConns:       1,
-			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: false,
-			DisableKeepAlives:  false, // Allow keep-alives for streaming
+	// Add soundstack/adzwizz rule
+	config.QueryParamRules = []QueryParamRule{
+		{
+			HostPatterns: []string{"cdnstream1.com", "soundstack", "adzwizz"},
+			QueryParams: map[string]string{
+				"aw_0_1st.premium":           "true",
+				"partnerID":                  "BotTIStream",
+				"playerid":                   "BotTIStream",
+				"aw_0_1st.ads_partner_alias": "bot.TIStream",
+			},
 		},
 	}
 
-	return &AudioDownloader{
-		client:        client,
-		icecastConfig: config,
-		downloadStats: &DownloadStats{
-			AudioMetrics: &AudioMetrics{},
-		},
-	}
+	return config
 }
 
 // DownloadAudioSample downloads a continuous stream of audio for the specified duration
-func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, targetDuration time.Duration) (*common.AudioData, error) {
+func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, streamURL string, targetDuration time.Duration) (*common.AudioData, error) {
 	logger := logging.WithFields(logging.Fields{
 		"component":       "icecast_downloader",
 		"function":        "DownloadAudioSample",
-		"url":             url,
+		"url":             streamURL,
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Debug("Starting ICEcast streaming download")
+	logger.Debug("Starting ICEcast live stream download")
 
-	// Create a context with reasonable timeout (target duration + buffer)
-	downloadTimeout := targetDuration + (30 * time.Second)
+	// Apply configured query parameters
+	streamURL = d.applyQueryParamRules(streamURL)
+
+	var audioData *common.AudioData
+	var err error
+
+	// Try downloading with reconnection logic
+	for attempt := 0; attempt <= d.config.MaxReconnectAttempts; attempt++ {
+		d.downloadStats.ConnectionAttempts++
+
+		if attempt > 0 {
+			logger.Debug("Reconnecting to ICEcast stream", logging.Fields{
+				"attempt":      attempt + 1,
+				"max_attempts": d.config.MaxReconnectAttempts + 1,
+			})
+
+			// Wait before reconnecting
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(d.config.ReconnectDelay):
+			}
+		}
+
+		audioData, err = d.downloadStreamWithTimeout(ctx, streamURL, targetDuration, logger)
+		if err == nil {
+			logger.Debug("ICEcast stream download completed successfully", logging.Fields{
+				"attempt":  attempt + 1,
+				"samples":  len(audioData.PCM),
+				"duration": audioData.Duration.Seconds(),
+			})
+			return audioData, nil
+		}
+
+		logger.Warn("ICEcast download attempt failed", logging.Fields{
+			"attempt": attempt + 1,
+			"error":   err.Error(),
+		})
+
+		// If it's a context cancellation, don't retry
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		if attempt < d.config.MaxReconnectAttempts {
+			d.downloadStats.Reconnections++
+		}
+	}
+
+	return nil, fmt.Errorf("failed to download ICEcast stream after %d attempts: %w",
+		d.config.MaxReconnectAttempts+1, err)
+}
+
+// downloadStreamWithTimeout downloads the stream with proper timeout handling
+func (d *AudioDownloader) downloadStreamWithTimeout(ctx context.Context, streamURL string, targetDuration time.Duration, logger logging.Logger) (*common.AudioData, error) {
+	// FIX: Create a context with proper timeout for the entire download
+	// Target duration + reasonable buffer for connection/processing
+	downloadTimeout := targetDuration + (60 * time.Second) // Only 60s buffer, not 300s
 	downloadCtx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
+	logger.Debug("Establishing ICEcast connection", logging.Fields{
+		"timeout_seconds": downloadTimeout.Seconds(),
+		"target_duration": targetDuration.Seconds(),
+	})
+
 	// Create HTTP request for streaming
-	req, err := http.NewRequestWithContext(downloadCtx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", streamURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create streaming request: %w", err)
 	}
 
-	// Set headers for streaming
+	// Set headers optimized for ICEcast streaming
 	req.Header.Set("User-Agent", d.icecastConfig.HTTP.UserAgent)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Icy-MetaData", "1") // Request ICEcast metadata
 
-	logger.Debug("Establishing streaming connection")
+	// Start connection with timeout for initial response
+	connectionStart := time.Now()
+
+	// FIX: Use the main download context, not a separate initial context
+	logger.Debug("Connecting to ICEcast stream...")
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -164,101 +260,113 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, url string, t
 		return nil, fmt.Errorf("streaming request failed with status %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	logger.Debug("Streaming connection established", logging.Fields{
+	// Record time to first byte
+	ttfb := time.Since(connectionStart)
+	d.downloadStats.TimeToFirstByte = ttfb
+
+	logger.Debug("ICEcast connection established", logging.Fields{
 		"status_code":  resp.StatusCode,
 		"content_type": resp.Header.Get("Content-Type"),
-		"connection":   resp.Header.Get("Connection"),
+		"ttfb_ms":      ttfb.Milliseconds(),
+		"icy_br":       resp.Header.Get("icy-br"),
+		"icy_name":     resp.Header.Get("icy-name"),
 	})
 
-	// Calculate estimated bytes needed
-	// 128kbps = 16KB/s, add buffer for reliability
-	estimatedBytesPerSecond := 16000 // 128kbps / 8
-	estimatedTotalBytes := int(targetDuration.Seconds() * float64(estimatedBytesPerSecond))
-	bufferMultiplier := 1.5 // 50% buffer
-	targetBytes := int(float64(estimatedTotalBytes) * bufferMultiplier)
-
-	logger.Debug("Starting continuous audio download", logging.Fields{
-		"estimated_bytes_per_sec":  estimatedBytesPerSecond,
-		"estimated_total_bytes":    estimatedTotalBytes,
-		"target_bytes_with_buffer": targetBytes,
-	})
-
-	// Download audio data continuously
-	audioData, err := d.streamAudioData(resp, targetBytes, targetDuration, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stream audio data: %w", err)
-	}
-
-	logger.Debug("ICEcast streaming download completed", logging.Fields{
-		"bytes_downloaded": len(audioData),
-		"target_bytes":     targetBytes,
-		"efficiency":       fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
-	})
-
-	// Convert raw audio bytes using FFmpeg decoder
-	return d.processStreamedAudioWithFFmpeg(audioData, url, logger)
+	// Now use the same download context for streaming
+	return d.streamAudioDataOptimized(downloadCtx, resp, targetDuration, logger)
 }
 
-// streamAudioData continuously reads audio data from the stream
-func (d *AudioDownloader) streamAudioData(resp *http.Response, targetBytes int, targetDuration time.Duration, logger logging.Logger) ([]byte, error) {
-	var audioData []byte
+// streamAudioDataOptimized performs optimized continuous reading with proper timeout handling
+func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *http.Response, targetDuration time.Duration, logger logging.Logger) (*common.AudioData, error) {
+	// Calculate target bytes more accurately based on ICEcast bitrate
+	estimatedBitrate := 128 // Default
+	if icyBr := resp.Header.Get("icy-br"); icyBr != "" {
+		if br, err := fmt.Sscanf(icyBr, "%d", &estimatedBitrate); err == nil && br > 0 {
+			logger.Debug("Using ICEcast reported bitrate", logging.Fields{"bitrate": estimatedBitrate})
+		}
+	}
 
-	// Use larger buffer for streaming efficiency
-	bufferSize := 65536 // 64KB buffer for efficient streaming
-	bufferSize = max(d.icecastConfig.Audio.BufferSize, bufferSize)
+	bytesPerSecond := (estimatedBitrate * 1000) / 8 // Convert kbps to bytes/sec
+	targetBytes := int(targetDuration.Seconds() * float64(bytesPerSecond))
+	bufferMultiplier := 1.2 // 20% buffer
+	targetBytesWithBuffer := int(float64(targetBytes) * bufferMultiplier)
 
-	startTime := time.Now()
-	readCount := 0
-	totalReads := (targetBytes / bufferSize) + 5 // Estimate reads needed + buffer
-
-	logger.Debug("Starting streaming read loop", logging.Fields{
-		"buffer_size":     bufferSize,
-		"target_bytes":    targetBytes,
-		"estimated_reads": totalReads,
+	logger.Debug("Starting optimized ICEcast streaming", logging.Fields{
+		"estimated_bitrate_kbps": estimatedBitrate,
+		"bytes_per_second":       bytesPerSecond,
+		"target_bytes":           targetBytes,
+		"target_with_buffer":     targetBytesWithBuffer,
 	})
 
-	for len(audioData) < targetBytes {
-		// Check if we've exceeded our time budget
-		elapsed := time.Since(startTime)
-		if elapsed > targetDuration+(10*time.Second) {
-			logger.Debug("Streaming reached time limit", logging.Fields{
-				"elapsed":         elapsed.Seconds(),
-				"target_duration": targetDuration.Seconds(),
+	var audioData []byte
+	startTime := time.Now()
+	readCount := 0
+
+	// Use dynamic buffer size based on bitrate
+	baseBufferSize := 32768     // 32KB base
+	if bytesPerSecond > 20000 { // For higher bitrates
+		baseBufferSize = 65536 // 64KB
+	}
+	bufferSize := max(d.icecastConfig.Audio.BufferSize, baseBufferSize)
+
+	// Create a buffered reader for efficiency
+	reader := resp.Body
+
+	for len(audioData) < targetBytesWithBuffer {
+		select {
+		case <-ctx.Done():
+			logger.Debug("Streaming context cancelled", logging.Fields{
 				"bytes_collected": len(audioData),
+				"target_bytes":    targetBytesWithBuffer,
 			})
+			if len(audioData) < targetBytes/4 { // Less than 25% collected
+				return nil, ctx.Err()
+			}
+			// We have enough data, break and process
 			break
+		default:
 		}
 
 		readCount++
 		buffer := make([]byte, bufferSize)
 
-		// Set a reasonable read timeout
-		deadline := time.Now().Add(15 * time.Second)
-		if conn, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
-			conn.SetReadDeadline(deadline)
+		// Set read deadline for this specific read
+		readDeadline := time.Now().Add(d.config.StreamReadTimeout)
+		if conn, ok := reader.(interface{ SetReadDeadline(time.Time) error }); ok {
+			conn.SetReadDeadline(readDeadline)
 		}
 
-		n, err := resp.Body.Read(buffer)
+		n, err := reader.Read(buffer)
 
 		if err != nil {
+			elapsed := time.Since(startTime)
+
 			if err == io.EOF {
-				logger.Debug("Reached end of stream", logging.Fields{
+				logger.Debug("ICEcast stream ended", logging.Fields{
 					"bytes_collected": len(audioData),
-					"reads_completed": readCount,
+					"elapsed_seconds": elapsed.Seconds(),
 				})
 				break
 			}
 
-			// For streaming, some read errors are recoverable
+			// Log the error but check if we have enough data
 			logger.Warn("Read error during streaming", logging.Fields{
-				"error":        err.Error(),
-				"bytes_so_far": len(audioData),
-				"read_count":   readCount,
+				"error":           err.Error(),
+				"bytes_so_far":    len(audioData),
+				"read_count":      readCount,
+				"target_duration": targetDuration.Seconds(),
+				"elapsed_seconds": elapsed.Seconds(),
 			})
 
-			// If we have substantial data, we can continue
-			if len(audioData) > targetBytes/4 { // At least 25% of target
-				logger.Debug("Continuing with partial data due to read error")
+			// If we have substantial data and we're close to target duration, continue
+			minDataThreshold := targetBytes / 3    // At least 33% of target
+			minTimeThreshold := targetDuration / 2 // At least 50% of target time
+
+			if len(audioData) >= minDataThreshold && elapsed >= minTimeThreshold {
+				logger.Debug("Continuing with partial data due to read error", logging.Fields{
+					"data_ratio": fmt.Sprintf("%.1f%%", float64(len(audioData))/float64(targetBytes)*100),
+					"time_ratio": fmt.Sprintf("%.1f%%", elapsed.Seconds()/targetDuration.Seconds()*100),
+				})
 				break
 			}
 
@@ -268,51 +376,118 @@ func (d *AudioDownloader) streamAudioData(resp *http.Response, targetBytes int, 
 		if n > 0 {
 			audioData = append(audioData, buffer[:n]...)
 
-			// Log progress periodically
-			if readCount%20 == 0 || len(audioData) >= targetBytes {
+			// Log progress every 2 seconds of collection or every 50 reads
+			if readCount%50 == 0 || time.Since(startTime) >= time.Duration(len(audioData)/bytesPerSecond)*time.Second {
+				elapsed := time.Since(startTime)
 				progress := (float64(len(audioData)) / float64(targetBytes)) * 100
 				rate := float64(len(audioData)) / elapsed.Seconds() / 1024 // KB/s
+				estimatedTimeRemaining := (float64(targetBytes-len(audioData)) / float64(bytesPerSecond))
 
-				logger.Debug("Streaming progress", logging.Fields{
-					"bytes_collected": len(audioData),
-					"target_bytes":    targetBytes,
-					"progress_pct":    fmt.Sprintf("%.1f%%", progress),
-					"read_count":      readCount,
-					"rate_kbps":       fmt.Sprintf("%.1f", rate),
-					"elapsed_sec":     elapsed.Seconds(),
+				logger.Debug("ICEcast streaming progress", logging.Fields{
+					"bytes_collected":         len(audioData),
+					"target_bytes":            targetBytes,
+					"progress_pct":            fmt.Sprintf("%.1f%%", progress),
+					"rate_kbps":               fmt.Sprintf("%.1f", rate),
+					"elapsed_sec":             elapsed.Seconds(),
+					"estimated_remaining_sec": fmt.Sprintf("%.1f", estimatedTimeRemaining),
 				})
 			}
-		} else {
-			logger.Warn("Zero bytes read from stream", logging.Fields{
-				"read_count": readCount,
-			})
 		}
 
-		// Small delay to prevent overwhelming the stream
-		time.Sleep(1 * time.Millisecond)
+		// Check if we've collected enough data based on time
+		elapsed := time.Since(startTime)
+		if elapsed >= targetDuration && len(audioData) >= targetBytes/2 {
+			logger.Debug("Target duration reached with sufficient data", logging.Fields{
+				"elapsed_seconds": elapsed.Seconds(),
+				"target_duration": targetDuration.Seconds(),
+				"bytes_collected": len(audioData),
+			})
+			break
+		}
 	}
 
 	finalElapsed := time.Since(startTime)
 	d.downloadStats.BytesDownloaded += int64(len(audioData))
 	d.downloadStats.DownloadTime += finalElapsed
 
-	// Calculate bitrate if we have time data
+	// Calculate actual bitrate
 	if finalElapsed > 0 {
 		bitsDownloaded := float64(len(audioData)) * 8
 		seconds := finalElapsed.Seconds()
 		d.downloadStats.AverageBitrate = bitsDownloaded / seconds / 1000 // kbps
-
-		logger.Debug("Streaming read completed", logging.Fields{
-			"final_bytes":   len(audioData),
-			"target_bytes":  targetBytes,
-			"total_reads":   readCount,
-			"elapsed_sec":   finalElapsed.Seconds(),
-			"avg_rate_kbps": fmt.Sprintf("%.1f", d.downloadStats.AverageBitrate),
-			"efficiency":    fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
-		})
 	}
 
-	return audioData, nil
+	logger.Debug("ICEcast streaming collection completed", logging.Fields{
+		"final_bytes":   len(audioData),
+		"target_bytes":  targetBytes,
+		"total_reads":   readCount,
+		"elapsed_sec":   finalElapsed.Seconds(),
+		"avg_rate_kbps": fmt.Sprintf("%.1f", d.downloadStats.AverageBitrate),
+		"efficiency":    fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
+	})
+
+	// Process the collected audio data
+	return d.processStreamedAudioWithFFmpeg(audioData, resp.Request.URL.String(), logger)
+}
+
+// applyQueryParamRules applies configured query parameter rules to a URL
+func (d *AudioDownloader) applyQueryParamRules(targetURL string) string {
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return targetURL
+	}
+
+	query := parsedURL.Query()
+
+	// First apply global query parameters
+	for key, value := range d.config.GlobalQueryParams {
+		query.Set(key, value)
+	}
+
+	// Then apply rule-based query parameters
+	for _, rule := range d.config.QueryParamRules {
+		if d.matchesRule(parsedURL, rule) {
+			for key, value := range rule.QueryParams {
+				query.Set(key, value)
+			}
+		}
+	}
+
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String()
+}
+
+// matchesRule checks if a URL matches a query parameter rule
+func (d *AudioDownloader) matchesRule(parsedURL *url.URL, rule QueryParamRule) bool {
+	// Check host patterns
+	if len(rule.HostPatterns) > 0 {
+		hostMatched := false
+		for _, pattern := range rule.HostPatterns {
+			if strings.Contains(parsedURL.Host, pattern) {
+				hostMatched = true
+				break
+			}
+		}
+		if !hostMatched {
+			return false
+		}
+	}
+
+	// Check path patterns (if specified)
+	if len(rule.PathPatterns) > 0 {
+		pathMatched := false
+		for _, pattern := range rule.PathPatterns {
+			if strings.Contains(parsedURL.Path, pattern) {
+				pathMatched = true
+				break
+			}
+		}
+		if !pathMatched {
+			return false
+		}
+	}
+
+	return true
 }
 
 // processStreamedAudioWithFFmpeg converts streamed audio bytes using FFmpeg decoder
@@ -325,12 +500,38 @@ func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url 
 		"raw_bytes": len(audioBytes),
 	})
 
+	// FIX: Clean and validate the audio stream before decoding
+	cleanedAudio, err := d.cleanICEcastStream(audioBytes, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clean ICEcast stream: %w", err)
+	}
+
+	if len(cleanedAudio) == 0 {
+		return nil, fmt.Errorf("no valid audio data found after cleaning stream")
+	}
+
+	logger.Debug("Stream cleaned for decoding", logging.Fields{
+		"original_bytes": len(audioBytes),
+		"cleaned_bytes":  len(cleanedAudio),
+		"reduction_pct":  fmt.Sprintf("%.1f%%", float64(len(audioBytes)-len(cleanedAudio))/float64(len(audioBytes))*100),
+	})
+
 	decodeStartTime := time.Now()
 
-	// Use FFmpeg decoder to properly decode MP3 data
-	ad, err := d.icecastConfig.AudioDecoder.DecodeBytes(audioBytes)
+	// Use FFmpeg decoder to properly decode the cleaned data
+	ad, err := d.icecastConfig.AudioDecoder.DecodeBytes(cleanedAudio)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode streamed audio with FFmpeg: %w", err)
+		// If cleaning didn't work, try with original data as fallback
+		logger.Warn("Cleaned audio decode failed, trying original data", logging.Fields{
+			"cleaned_size":  len(cleanedAudio),
+			"original_size": len(audioBytes),
+			"error":         err.Error(),
+		})
+
+		ad, err = d.icecastConfig.AudioDecoder.DecodeBytes(audioBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode streamed audio with FFmpeg: %w", err)
+		}
 	}
 
 	var audioData *common.AudioData
@@ -352,33 +553,33 @@ func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url 
 		"decoded_duration":    audioData.Duration.Seconds(),
 		"decoded_channels":    audioData.Channels,
 		"decoded_sample_rate": audioData.SampleRate,
-		"decode_time":         d.downloadStats.DecodeTime,
+		"decode_time_ms":      d.downloadStats.DecodeTime.Milliseconds(),
 	})
 
-	// Convert from transcode.AudioData to common.AudioData
-	commonAudioData := &common.AudioData{
+	// Create final AudioData with proper metadata
+	finalAudioData := &common.AudioData{
 		PCM:        audioData.PCM,
 		SampleRate: audioData.SampleRate,
 		Channels:   audioData.Channels,
 		Duration:   audioData.Duration,
-		Timestamp:  time.Now(),
+		Timestamp:  *d.downloadStats.LiveStartTime,
 		Metadata:   d.convertMetadata(audioData.Metadata, url),
 	}
 
-	logger.Debug("Streamed audio processing completed with FFmpeg", logging.Fields{
-		"final_samples":         len(commonAudioData.PCM),
-		"final_duration_sec":    commonAudioData.Duration.Seconds(),
-		"final_sample_rate":     commonAudioData.SampleRate,
-		"final_channels":        commonAudioData.Channels,
-		"normalization_applied": audioData.Metadata != nil && audioData.Metadata.Headers["normalization_applied"] == "true",
+	logger.Debug("ICEcast streaming audio processing completed", logging.Fields{
+		"final_samples":      len(finalAudioData.PCM),
+		"final_duration_sec": finalAudioData.Duration.Seconds(),
+		"final_sample_rate":  finalAudioData.SampleRate,
+		"final_channels":     finalAudioData.Channels,
+		"live_start_time":    finalAudioData.Timestamp.Format(time.RFC3339),
 	})
 
-	return commonAudioData, nil
+	return finalAudioData, nil
 }
 
-// convertMetadata converts from transcode.StreamMetadata to common.StreamMetadata
-func (d *AudioDownloader) convertMetadata(transcodeMetadata *common.StreamMetadata, url string) *common.StreamMetadata {
-	if transcodeMetadata == nil {
+// convertMetadata converts metadata and ensures proper ICEcast metadata
+func (d *AudioDownloader) convertMetadata(metadata *common.StreamMetadata, url string) *common.StreamMetadata {
+	if metadata == nil {
 		// Create basic metadata if none provided
 		return &common.StreamMetadata{
 			URL:         url,
@@ -393,73 +594,32 @@ func (d *AudioDownloader) convertMetadata(transcodeMetadata *common.StreamMetada
 		}
 	}
 
-	// Convert transcode metadata to common metadata
-	headers := make(map[string]string)
-	if transcodeMetadata.Headers != nil {
-		maps.Copy(headers, transcodeMetadata.Headers)
-	}
-
-	return &common.StreamMetadata{
+	// Ensure ICEcast specific fields are set
+	result := &common.StreamMetadata{
 		URL:         url,
 		Type:        common.StreamTypeICEcast,
-		Format:      transcodeMetadata.Format,
-		Bitrate:     transcodeMetadata.Bitrate,
-		SampleRate:  transcodeMetadata.SampleRate,
-		Channels:    transcodeMetadata.Channels,
-		Codec:       transcodeMetadata.Codec,
-		ContentType: transcodeMetadata.ContentType,
-		Title:       transcodeMetadata.Title,
-		Artist:      transcodeMetadata.Artist,
-		Genre:       transcodeMetadata.Genre,
-		Station:     transcodeMetadata.Station,
-		Headers:     headers,
-		Timestamp:   time.Now(),
-	}
-}
-
-// Note: convertToPCM method removed - now using FFmpeg decoder instead
-
-// DownloadAudioSampleWithRetry downloads audio with automatic retry logic
-func (d *AudioDownloader) DownloadAudioSampleWithRetry(ctx context.Context, url string, targetDuration time.Duration, maxRetries int) (*common.AudioData, error) {
-	logger := logging.WithFields(logging.Fields{
-		"component":       "icecast_downloader",
-		"function":        "DownloadAudioSampleWithRetry",
-		"max_retries":     maxRetries,
-		"target_duration": targetDuration.Seconds(),
-	})
-
-	var lastErr error
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			logger.Debug("Retrying ICEcast download", logging.Fields{
-				"attempt":     attempt + 1,
-				"max_retries": maxRetries + 1,
-				"last_error":  lastErr.Error(),
-			})
-
-			// Wait a bit before retrying
-			time.Sleep(time.Duration(attempt) * time.Second)
-		}
-
-		audioData, err := d.DownloadAudioSample(ctx, url, targetDuration)
-		if err == nil {
-			if attempt > 0 {
-				logger.Debug("ICEcast download succeeded after retry", logging.Fields{
-					"successful_attempt": attempt + 1,
-				})
-			}
-			return audioData, nil
-		}
-
-		lastErr = err
-		logger.Warn("ICEcast download attempt failed", logging.Fields{
-			"attempt": attempt + 1,
-			"error":   err.Error(),
-		})
+		Format:      metadata.Format,
+		Bitrate:     metadata.Bitrate,
+		SampleRate:  metadata.SampleRate,
+		Channels:    metadata.Channels,
+		Codec:       metadata.Codec,
+		ContentType: metadata.ContentType,
+		Title:       metadata.Title,
+		Artist:      metadata.Artist,
+		Genre:       metadata.Genre,
+		Station:     metadata.Station,
+		Headers:     make(map[string]string),
+		Timestamp:   *d.downloadStats.LiveStartTime,
 	}
 
-	return nil, fmt.Errorf("failed after %d attempts, last error: %w", maxRetries+1, lastErr)
+	// Copy headers if they exist
+	if metadata.Headers != nil {
+		for k, v := range metadata.Headers {
+			result.Headers[k] = v
+		}
+	}
+
+	return result
 }
 
 // updateAudioMetrics calculates and updates audio quality metrics
@@ -501,4 +661,223 @@ func (d *AudioDownloader) updateAudioMetrics(audioData *common.AudioData) {
 	metrics.PeakAmplitude = peak
 	metrics.SilenceRatio = float64(silentSamples) / float64(len(audioData.PCM))
 	metrics.ClippingDetected = clipping
+}
+
+// GetDownloadStats returns the current download statistics
+func (d *AudioDownloader) GetDownloadStats() *DownloadStats {
+	return d.downloadStats
+}
+
+// DownloadAudioSampleWithRetry downloads audio with automatic retry logic (legacy method)
+func (d *AudioDownloader) DownloadAudioSampleWithRetry(ctx context.Context, url string, targetDuration time.Duration, maxRetries int) (*common.AudioData, error) {
+	// Update config with provided retry count
+	originalRetries := d.config.MaxReconnectAttempts
+	d.config.MaxReconnectAttempts = maxRetries
+	defer func() {
+		d.config.MaxReconnectAttempts = originalRetries
+	}()
+
+	return d.DownloadAudioSample(ctx, url, targetDuration)
+}
+
+// cleanICEcastStream removes ICY metadata, ads, and invalid data from the raw stream
+func (d *AudioDownloader) cleanICEcastStream(rawData []byte, logger logging.Logger) ([]byte, error) {
+	logger.Debug("Starting ICEcast stream cleaning")
+
+	var cleanedData []byte
+	pos := 0
+	validFrames := 0
+	skippedBytes := 0
+
+	for pos < len(rawData)-4 {
+		// Look for valid MP3 frame headers
+		if d.isValidMP3Frame(rawData[pos:]) {
+			// Found valid MP3 frame, extract it
+			frameSize := d.getMP3FrameSize(rawData[pos:])
+			if frameSize > 0 && pos+frameSize <= len(rawData) {
+				cleanedData = append(cleanedData, rawData[pos:pos+frameSize]...)
+				pos += frameSize
+				validFrames++
+				continue
+			}
+		}
+
+		// Look for valid AAC frame headers
+		if d.isValidAACFrame(rawData[pos:]) {
+			frameSize := d.getAACFrameSize(rawData[pos:])
+			if frameSize > 0 && pos+frameSize <= len(rawData) {
+				cleanedData = append(cleanedData, rawData[pos:pos+frameSize]...)
+				pos += frameSize
+				validFrames++
+				continue
+			}
+		}
+
+		// Skip invalid byte
+		pos++
+		skippedBytes++
+
+		// If we've skipped too many bytes without finding valid frames,
+		// try to find the next sync word
+		if skippedBytes > 1024 && validFrames == 0 {
+			syncPos := d.findNextSyncWord(rawData[pos:])
+			if syncPos > 0 {
+				pos += syncPos
+				skippedBytes = 0
+			}
+		}
+	}
+
+	logger.Debug("ICEcast stream cleaning completed", logging.Fields{
+		"original_size":  len(rawData),
+		"cleaned_size":   len(cleanedData),
+		"valid_frames":   validFrames,
+		"skipped_bytes":  skippedBytes,
+		"efficiency_pct": fmt.Sprintf("%.1f%%", float64(len(cleanedData))/float64(len(rawData))*100),
+	})
+
+	// If we couldn't find enough valid frames, return original data
+	// (maybe it's a format we don't recognize but FFmpeg can handle)
+	if validFrames < 10 {
+		logger.Warn("Few valid frames found, returning original data", logging.Fields{
+			"valid_frames": validFrames,
+		})
+		return rawData, nil
+	}
+
+	return cleanedData, nil
+}
+
+// isValidMP3Frame checks if data starts with a valid MP3 frame header
+func (d *AudioDownloader) isValidMP3Frame(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+
+	// Check for MP3 sync word (11 bits of 1s)
+	if data[0] != 0xFF {
+		return false
+	}
+
+	if (data[1] & 0xE0) != 0xE0 {
+		return false
+	}
+
+	// Check MPEG version (should not be reserved)
+	mpegVersion := (data[1] >> 3) & 0x03
+	if mpegVersion == 1 { // Reserved
+		return false
+	}
+
+	// Check layer (should not be reserved)
+	layer := (data[1] >> 1) & 0x03
+	if layer == 0 { // Reserved
+		return false
+	}
+
+	// Check bitrate (should not be free or reserved)
+	bitrate := (data[2] >> 4) & 0x0F
+	if bitrate == 0 || bitrate == 15 { // Free or reserved
+		return false
+	}
+
+	// Check sample rate (should not be reserved)
+	sampleRate := (data[2] >> 2) & 0x03
+	if sampleRate == 3 { // Reserved
+		return false
+	}
+
+	return true
+}
+
+// isValidAACFrame checks if data starts with a valid AAC ADTS frame header
+func (d *AudioDownloader) isValidAACFrame(data []byte) bool {
+	if len(data) < 7 {
+		return false
+	}
+
+	// Check for AAC ADTS sync word
+	if data[0] != 0xFF {
+		return false
+	}
+
+	if (data[1] & 0xF0) != 0xF0 {
+		return false
+	}
+
+	// Additional ADTS validation
+	if (data[1] & 0x06) != 0x00 { // Should be MPEG-4
+		return false
+	}
+
+	return true
+}
+
+// getMP3FrameSize calculates the size of an MP3 frame
+func (d *AudioDownloader) getMP3FrameSize(data []byte) int {
+	if len(data) < 4 || !d.isValidMP3Frame(data) {
+		return 0
+	}
+
+	// Extract header info
+	bitrate := (data[2] >> 4) & 0x0F
+	sampleRate := (data[2] >> 2) & 0x03
+	padding := (data[2] >> 1) & 0x01
+
+	// Bitrate table (simplified)
+	bitrateTable := map[int]int{
+		1: 32, 2: 40, 3: 48, 4: 56, 5: 64, 6: 80, 7: 96,
+		8: 112, 9: 128, 10: 160, 11: 192, 12: 224, 13: 256, 14: 320,
+	}
+
+	// Sample rate table (simplified for MPEG-1 Layer III)
+	sampleRateTable := map[int]int{0: 44100, 1: 48000, 2: 32000}
+
+	bitrateKbps := bitrateTable[int(bitrate)]
+	sampleRateHz := sampleRateTable[int(sampleRate)]
+
+	if bitrateKbps == 0 || sampleRateHz == 0 {
+		return 0
+	}
+
+	// Calculate frame size
+	frameSize := (144 * bitrateKbps * 1000) / sampleRateHz
+	if padding > 0 {
+		frameSize++
+	}
+
+	return frameSize
+}
+
+// getAACFrameSize calculates the size of an AAC ADTS frame
+func (d *AudioDownloader) getAACFrameSize(data []byte) int {
+	if len(data) < 7 || !d.isValidAACFrame(data) {
+		return 0
+	}
+
+	// Extract frame length from ADTS header
+	frameLength := ((int(data[3]) & 0x03) << 11) | (int(data[4]) << 3) | ((int(data[5]) >> 5) & 0x07)
+
+	if frameLength < 7 || frameLength > 8192 { // Reasonable bounds
+		return 0
+	}
+
+	return frameLength
+}
+
+// findNextSyncWord finds the position of the next potential MP3/AAC sync word
+func (d *AudioDownloader) findNextSyncWord(data []byte) int {
+	for i := 0; i < len(data)-1; i++ {
+		if data[i] == 0xFF {
+			// Check for MP3 sync
+			if (data[i+1] & 0xE0) == 0xE0 {
+				return i
+			}
+			// Check for AAC sync
+			if (data[i+1] & 0xF0) == 0xF0 {
+				return i
+			}
+		}
+	}
+	return -1
 }

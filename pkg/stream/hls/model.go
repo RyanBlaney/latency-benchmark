@@ -1,6 +1,8 @@
 package hls
 
-import "github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+import (
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+)
 
 // M3U8Playlist represents a parsed M3U8 playlist
 type M3U8Playlist struct {

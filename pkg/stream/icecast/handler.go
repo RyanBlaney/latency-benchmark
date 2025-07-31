@@ -354,7 +354,7 @@ func (h *Handler) readAudioWithFreshConnection() (*common.AudioData, error) {
 
 	// Create a background context with a reasonable timeout for audio reading
 	// This is NOT derived from the original context to avoid cancellation inheritance
-	audioTimeout := 30 * time.Second // Fixed timeout just for audio reading
+	audioTimeout := 300 * time.Second // Fixed timeout just for audio reading
 	audioCtx, cancel := context.WithTimeout(context.Background(), audioTimeout)
 	defer cancel()
 
@@ -554,9 +554,6 @@ func (h *Handler) readAudioDataFromResponse(resp *http.Response, logger logging.
 	return audioData, nil
 }
 
-// ReadAudioWithDuration reads audio data with a specified duration
-// For ICEcast streams, this accumulates audio data over time until target duration is reached
-// ReadAudioWithDuration reads audio data with a specified duration using the streaming downloader
 // ReadAudioWithDuration reads audio data with a specified duration using the streaming downloader
 func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
 	logger := logging.WithFields(logging.Fields{
@@ -584,13 +581,32 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		"connection_type": h.response.Header.Get("Connection"),
 	})
 
-	// Use the streaming downloader approach for all ICEcast streams
-	// This works for both Connection: Close and persistent connections
-	// Optimize for news/talk content since this is MSNBC
-	downloader := NewAudioDownloaderForContent(h.config, "news")
+	// FIX: Create a fresh downloader with proper timeout configuration
+	downloaderConfig := DefaultDownloadConfig()
+	downloaderConfig.TargetDuration = duration
+	// Ensure timeouts are appropriate for the duration
+	downloaderConfig.InitialTimeout = 30 * time.Second    // Keep reasonable
+	downloaderConfig.StreamReadTimeout = 15 * time.Second // Keep reasonable
 
-	// Add retry logic for robustness
-	audioData, err := downloader.DownloadAudioSampleWithRetry(ctx, h.url, duration, 2)
+	downloader := &AudioDownloader{
+		client:        h.client,
+		icecastConfig: h.config,
+		downloadStats: &DownloadStats{
+			AudioMetrics:  &AudioMetrics{},
+			LiveStartTime: &time.Time{},
+		},
+		config: downloaderConfig,
+	}
+	*downloader.downloadStats.LiveStartTime = time.Now()
+
+	// FIX: Use the original context directly, don't create new timeouts
+	logger.Debug("Starting audio download with configured timeouts", logging.Fields{
+		"initial_timeout_s": downloaderConfig.InitialTimeout.Seconds(),
+		"read_timeout_s":    downloaderConfig.StreamReadTimeout.Seconds(),
+		"target_duration_s": duration.Seconds(),
+	})
+
+	audioData, err := downloader.DownloadAudioSample(ctx, h.url, duration)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
 			common.ErrCodeDecoding, "failed to download audio using streaming approach", err)
@@ -620,7 +636,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		}
 	}
 
-	logger.Debug("ICEcast duration-based audio extraction completed using streaming downloader", logging.Fields{
+	logger.Debug("ICEcast duration-based audio extraction completed", logging.Fields{
 		"actual_duration":  audioData.Duration.Seconds(),
 		"target_duration":  duration.Seconds(),
 		"samples":          len(audioData.PCM),

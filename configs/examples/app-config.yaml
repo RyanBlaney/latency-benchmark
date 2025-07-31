@@ -8,7 +8,7 @@ output_format: json
 
 # Test configuration
 test:
-  timeout: 5m
+  timeout: 6m
   retry_attempts: 3
   retry_delay: 10s
   concurrent: true
@@ -17,7 +17,7 @@ test:
 # Stream handling (global defaults)
 stream:
   connection_timeout: 15s
-  read_timeout: 90s
+  read_timeout: 250s
   buffer_size: 16384
   max_redirects: 5
   user_agent: "TuneIn-CDN-Benchmark-Prod/1.0"
@@ -90,7 +90,7 @@ hls:
     user_agent: "TuneIn-CDN-Benchmark-HLS/2.0"
     accept_header: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain,*/*"
     connection_timeout: 10s
-    read_timeout: 90s
+    read_timeout: 250s
     max_redirects: 3
     buffer_size: 32768
     custom_headers: {}
@@ -138,7 +138,7 @@ icecast:
     user_agent: "TuneIn-CDN-Benchmark-ICEcast/1.0"
     accept_header: "audio/*, application/ogg, */*"
     connection_timeout: 45s
-    read_timeout: 90s
+    read_timeout: 250s
     max_redirects: 3
     custom_headers: {}
     request_icy_meta: true
@@ -148,7 +148,7 @@ icecast:
     buffer_duration: 2s
     sample_duration: 240s
     max_read_attempts: 10
-    read_timeout: 90s
+    read_timeout: 250s
     handle_icy_meta: true
     metadata_interval: 8192
 
@@ -156,7 +156,7 @@ icecast:
 benchmark:
   # Execution timeouts
   benchmark_timeout: 30m
-  operation_timeout: 120s
+  operation_timeout: 250s
 
   # Concurrency control
   max_concurrent_broadcasts: 3

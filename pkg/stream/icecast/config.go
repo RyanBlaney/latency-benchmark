@@ -124,7 +124,7 @@ func DefaultConfig() *Config {
 			UserAgent:         "TuneIn-CDN-Benchmark/1.0",
 			AcceptHeader:      "audio/*,*/*",
 			ConnectionTimeout: 15 * time.Second,
-			ReadTimeout:       30 * time.Second,
+			ReadTimeout:       300 * time.Second,
 			MaxRedirects:      5,
 			CustomHeaders:     make(map[string]string),
 			RequestICYMeta:    true,

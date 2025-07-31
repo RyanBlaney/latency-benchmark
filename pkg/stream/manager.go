@@ -60,8 +60,8 @@ func NewManager() *Manager {
 func NewManagerWithConfig(config *ManagerConfig) *Manager {
 	if config == nil {
 		config = &ManagerConfig{
-			StreamTimeout:        30 * time.Second,
-			OverallTimeout:       60 * time.Second,
+			StreamTimeout:        300 * time.Second,
+			OverallTimeout:       600 * time.Second,
 			MaxConcurrentStreams: 10,
 			ResultBufferSize:     10,
 		}

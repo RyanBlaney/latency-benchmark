@@ -45,7 +45,7 @@ func NewHandlerWithConfig(config *Config) *Handler {
 		Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
 		Transport: &http.Transport{
 			MaxIdleConns:       10,
-			IdleConnTimeout:    30 * time.Second,
+			IdleConnTimeout:    300 * time.Second,
 			DisableCompression: false,
 		},
 	}
@@ -310,17 +310,18 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 
 	// Create downloader with custom duration configuration
 	downloadConfig := &DownloadConfig{
-		MaxSegments:      10,
-		SegmentTimeout:   10 * time.Second,
-		MaxRetries:       3,
-		CacheSegments:    true,
-		TargetDuration:   duration, // Use the specified duration
-		PreferredBitrate: 128,
-		OutputSampleRate: 44100,
-		OutputChannels:   1,
-		NormalizePCM:     true,
-		ResampleQuality:  "medium",
-		CleanupTempFiles: true,
+		MaxSegments:        10,
+		SegmentTimeout:     10 * time.Second,
+		MaxRetries:         3,
+		MaxPlaylistRetries: 10,
+		CacheSegments:      true,
+		TargetDuration:     duration, // Use the specified duration
+		PreferredBitrate:   128,
+		OutputSampleRate:   44100,
+		OutputChannels:     1,
+		NormalizePCM:       true,
+		ResampleQuality:    "medium",
+		CleanupTempFiles:   true,
 	}
 
 	// Override with existing config values if available
@@ -345,7 +346,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		"target_duration":   duration.Seconds(),
 	})
 
-	audioData, err := downloader.DownloadAudioSample(ctx, mediaPlaylist, duration)
+	audioData, err := downloader.DownloadAudioSample(ctx, h.url, duration)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
 			common.ErrCodeDecoding, "failed to download audio sample", err)
@@ -440,7 +441,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	}
 
 	// Resolve master playlist to media playlist if needed
-	mediaPlaylist := h.playlist
+	/* mediaPlaylist := h.playlist
 	if h.playlist.IsMaster {
 		resolvedPlaylist, err := h.ResolveMasterPlaylist(ctx, h.playlist)
 		if err != nil {
@@ -448,11 +449,12 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 				common.ErrCodeInvalidFormat, "failed to resolve master playlist", err)
 		}
 		mediaPlaylist = resolvedPlaylist
-	}
+	} */
 
 	// Initialize downloader if not exists
 	if h.downloader == nil {
-		h.downloader = NewAudioDownloader(h.client, nil, h.config)
+		// TODO: pass download config
+		h.downloader = NewAudioDownloader(h.client, DefaultDownloadConfig(), h.config)
 		// Set the base URL for resolving relative segment URLs
 		h.downloader.SetBaseURL(h.url)
 	}
@@ -460,7 +462,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	// Download audio sample using configured duration
 	targetDuration := h.config.Audio.SampleDuration
 
-	audioData, err := h.downloader.DownloadAudioSample(ctx, mediaPlaylist, targetDuration)
+	audioData, err := h.downloader.DownloadAudioSample(ctx, h.url, targetDuration)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
 			common.ErrCodeDecoding, "failed to download audio sample", err)

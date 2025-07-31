@@ -190,7 +190,7 @@ func applyBenchmarkDefaults(settings *BenchmarkSettings) {
 		settings.BenchmarkTimeout = 30 * time.Minute
 	}
 	if settings.OperationTimeout == 0 {
-		settings.OperationTimeout = 120 * time.Second
+		settings.OperationTimeout = 300 * time.Second
 	}
 	if settings.MaxConcurrentBroadcasts == 0 {
 		settings.MaxConcurrentBroadcasts = 3
