@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -125,10 +126,10 @@ func DefaultDownloadConfig() *DownloadConfig {
 		ResampleQuality:      "medium",
 		CleanupTempFiles:     true,
 		InitialTimeout:       30 * time.Second,        // 30s timeout for first byte
-		StreamReadTimeout:    10 * time.Second,        // 10s timeout for reads
+		StreamReadTimeout:    30 * time.Second,        // 30s timeout for reads
 		ConnectionKeepAlive:  60 * time.Second,        // Keep connection alive
-		MaxReconnectAttempts: 3,                       // Max 3 reconnection attempts
-		ReconnectDelay:       5 * time.Second,         // 5s delay between reconnects
+		MaxReconnectAttempts: 5,                       // Max 3 reconnection attempts
+		ReconnectDelay:       2 * time.Second,         // 5s delay between reconnects
 		QueryParamRules:      []QueryParamRule{},      // Empty by default
 		GlobalQueryParams:    make(map[string]string), // Empty by default
 	}
@@ -222,7 +223,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, streamURL str
 func (d *AudioDownloader) downloadStreamWithTimeout(ctx context.Context, streamURL string, targetDuration time.Duration, logger logging.Logger) (*common.AudioData, error) {
 	// FIX: Create a context with proper timeout for the entire download
 	// Target duration + reasonable buffer for connection/processing
-	downloadTimeout := targetDuration + (60 * time.Second) // Only 60s buffer, not 300s
+	downloadTimeout := targetDuration + (180 * time.Second) // Only 60s buffer, not 300s
 	downloadCtx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
@@ -288,7 +289,7 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 
 	bytesPerSecond := (estimatedBitrate * 1000) / 8 // Convert kbps to bytes/sec
 	targetBytes := int(targetDuration.Seconds() * float64(bytesPerSecond))
-	bufferMultiplier := 1.2 // 20% buffer
+	bufferMultiplier := 1.5 // 50% buffer
 	targetBytesWithBuffer := int(float64(targetBytes) * bufferMultiplier)
 
 	logger.Debug("Starting optimized ICEcast streaming", logging.Fields{
@@ -312,6 +313,7 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 	// Create a buffered reader for efficiency
 	reader := resp.Body
 
+streamLoop:
 	for len(audioData) < targetBytesWithBuffer {
 		select {
 		case <-ctx.Done():
@@ -323,7 +325,7 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 				return nil, ctx.Err()
 			}
 			// We have enough data, break and process
-			break
+			break streamLoop
 		default:
 		}
 
@@ -359,8 +361,8 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 			})
 
 			// If we have substantial data and we're close to target duration, continue
-			minDataThreshold := targetBytes / 3    // At least 33% of target
-			minTimeThreshold := targetDuration / 2 // At least 50% of target time
+			minDataThreshold := int(float64(targetBytes) * 0.6) // At least 60% of target
+			minTimeThreshold := targetDuration * 70 / 100       // At least 70% of target time
 
 			if len(audioData) >= minDataThreshold && elapsed >= minTimeThreshold {
 				logger.Debug("Continuing with partial data due to read error", logging.Fields{
@@ -396,13 +398,41 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 
 		// Check if we've collected enough data based on time
 		elapsed := time.Since(startTime)
-		if elapsed >= targetDuration && len(audioData) >= targetBytes/2 {
-			logger.Debug("Target duration reached with sufficient data", logging.Fields{
-				"elapsed_seconds": elapsed.Seconds(),
-				"target_duration": targetDuration.Seconds(),
-				"bytes_collected": len(audioData),
+		// Exit when we've reached target duration AND have reasonable amount of data
+		if elapsed >= targetDuration {
+			minDataForTime := int(float64(targetBytes) * 0.7) // At least 70% of expected data
+			if len(audioData) >= minDataForTime {
+				logger.Info("Target duration reached with sufficient data", logging.Fields{
+					"elapsed_seconds":   elapsed.Seconds(),
+					"target_duration":   targetDuration.Seconds(),
+					"bytes_collected":   len(audioData),
+					"target_bytes":      targetBytes,
+					"data_completeness": fmt.Sprintf("%.1f%%", float64(len(audioData))/float64(targetBytes)*100),
+				})
+				break streamLoop
+			}
+		}
+
+		// FIX: Extended time allowance - allow up to 125% of target duration if we still need more data
+		maxDuration := targetDuration + (targetDuration / 4) // 125% of target duration
+		if elapsed >= maxDuration {
+			logger.Info("Maximum duration reached, stopping collection", logging.Fields{
+				"elapsed_seconds":   elapsed.Seconds(),
+				"max_duration":      maxDuration.Seconds(),
+				"bytes_collected":   len(audioData),
+				"data_completeness": fmt.Sprintf("%.1f%%", float64(len(audioData))/float64(targetBytes)*100),
 			})
-			break
+			break streamLoop
+		}
+
+		// Secondary condition: if we have significantly more data than expected, we can stop
+		if len(audioData) >= targetBytesWithBuffer {
+			logger.Info("Buffer threshold reached", logging.Fields{
+				"bytes_collected":    len(audioData),
+				"target_with_buffer": targetBytesWithBuffer,
+				"elapsed_seconds":    elapsed.Seconds(),
+			})
+			break streamLoop
 		}
 	}
 
@@ -417,13 +447,15 @@ func (d *AudioDownloader) streamAudioDataOptimized(ctx context.Context, resp *ht
 		d.downloadStats.AverageBitrate = bitsDownloaded / seconds / 1000 // kbps
 	}
 
-	logger.Debug("ICEcast streaming collection completed", logging.Fields{
-		"final_bytes":   len(audioData),
-		"target_bytes":  targetBytes,
-		"total_reads":   readCount,
-		"elapsed_sec":   finalElapsed.Seconds(),
-		"avg_rate_kbps": fmt.Sprintf("%.1f", d.downloadStats.AverageBitrate),
-		"efficiency":    fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
+	logger.Info("ICEcast streaming collection completed", logging.Fields{
+		"final_bytes":         len(audioData),
+		"target_bytes":        targetBytes,
+		"total_reads":         readCount,
+		"elapsed_sec":         finalElapsed.Seconds(),
+		"target_sec":          targetDuration.Seconds(),
+		"avg_rate_kbps":       fmt.Sprintf("%.1f", d.downloadStats.AverageBitrate),
+		"data_efficiency_pct": fmt.Sprintf("%.1f%%", (float64(len(audioData))/float64(targetBytes))*100),
+		"time_efficiency_pct": fmt.Sprintf("%.1f%%", finalElapsed.Seconds()/targetDuration.Seconds()*100),
 	})
 
 	// Process the collected audio data
@@ -614,9 +646,7 @@ func (d *AudioDownloader) convertMetadata(metadata *common.StreamMetadata, url s
 
 	// Copy headers if they exist
 	if metadata.Headers != nil {
-		for k, v := range metadata.Headers {
-			result.Headers[k] = v
-		}
+		maps.Copy(result.Headers, metadata.Headers)
 	}
 
 	return result
