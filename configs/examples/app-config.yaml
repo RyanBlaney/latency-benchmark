@@ -164,7 +164,7 @@ benchmark:
 
   # Audio analysis parameters
   audio_segment_duration: 240s
-  min_alignment_confidence: 0.3
+  min_alignment_confidence: 0.25
   max_alignment_offset: 200.0
   min_fingerprint_similarity: 0.5
 

@@ -221,7 +221,6 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, streamURL str
 
 // downloadStreamWithTimeout downloads the stream with proper timeout handling
 func (d *AudioDownloader) downloadStreamWithTimeout(ctx context.Context, streamURL string, targetDuration time.Duration, logger logging.Logger) (*common.AudioData, error) {
-	// FIX: Create a context with proper timeout for the entire download
 	// Target duration + reasonable buffer for connection/processing
 	downloadTimeout := targetDuration + (180 * time.Second) // Only 60s buffer, not 300s
 	downloadCtx, cancel := context.WithTimeout(ctx, downloadTimeout)
@@ -248,7 +247,6 @@ func (d *AudioDownloader) downloadStreamWithTimeout(ctx context.Context, streamU
 	// Start connection with timeout for initial response
 	connectionStart := time.Now()
 
-	// FIX: Use the main download context, not a separate initial context
 	logger.Debug("Connecting to ICEcast stream...")
 
 	resp, err := d.client.Do(req)

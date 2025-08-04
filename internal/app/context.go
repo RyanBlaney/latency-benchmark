@@ -60,7 +60,7 @@ func NewBenchmarkApp(ctx *Context) (*BenchmarkApp, error) {
 	ctx.Config = config
 	ctx.BroadcastConfig = broadcastConfig
 
-	logger.Info("Benchmark application initialized", logging.Fields{
+	logger.Debug("Benchmark application initialized", logging.Fields{
 		"app_config_file":       ctx.ConfigFile,
 		"broadcast_config_file": ctx.BroadcastConfigFile,
 		"output_format":         ctx.OutputFormat,
@@ -78,7 +78,7 @@ func NewBenchmarkApp(ctx *Context) (*BenchmarkApp, error) {
 
 // Run executes the benchmark
 func (app *BenchmarkApp) Run(ctx context.Context) error {
-	app.logger.Info("Starting CDN benchmark execution", logging.Fields{
+	app.logger.Debug("Starting CDN benchmark execution", logging.Fields{
 		"enabled_groups": len(app.broadcastConfig.GetEnabledBroadcastGroups()),
 	})
 
@@ -88,7 +88,7 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create benchmark orchestrator: %w", err)
 	}
 
-	summary, err := orchestrator.RunBenchmark(ctx)
+	summary, err := orchestrator.RunBenchmarkByIndex(ctx, 0) // DEPLOYMENT: The index will be the job's assigned index
 	if err != nil {
 		return fmt.Errorf("benchmark execution failed: %w", err)
 	}
@@ -97,25 +97,18 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 	var performanceMetrics *benchmark.PerformanceMetrics
 	var qualityMetrics *benchmark.QualityMetrics
 	var reliabilityMetrics *benchmark.ReliabilityMetrics
-	var insights []string
 
 	if app.ctx.DetailedAnalysis {
-		app.logger.Info("Generating detailed analytics")
+		app.logger.Debug("Generating detailed analytics")
 		metricsCalculator := benchmark.NewMetricsCalculator(app.logger)
 		performanceMetrics = metricsCalculator.CalculatePerformanceMetrics(summary)
 		qualityMetrics = metricsCalculator.CalculateQualityMetrics(summary)
 		reliabilityMetrics = metricsCalculator.CalculateReliabilityMetrics(summary)
-		insights = metricsCalculator.GenerateInsights(performanceMetrics, qualityMetrics, reliabilityMetrics)
 	}
 
 	// Output results
-	if err := app.outputResults(summary, performanceMetrics, qualityMetrics, reliabilityMetrics, insights); err != nil {
+	if err := app.outputResults(summary, performanceMetrics, qualityMetrics, reliabilityMetrics); err != nil {
 		return fmt.Errorf("failed to output results: %w", err)
-	}
-
-	// Print summary to console if not quiet
-	if !app.ctx.Quiet {
-		app.printSummary(summary, insights)
 	}
 
 	// Return error if all broadcasts failed
@@ -176,7 +169,7 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 }
 
 // outputResults handles all result output
-func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, performance *benchmark.PerformanceMetrics, quality *benchmark.QualityMetrics, reliability *benchmark.ReliabilityMetrics, insights []string) error {
+func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, performance *benchmark.PerformanceMetrics, quality *benchmark.QualityMetrics, reliability *benchmark.ReliabilityMetrics) error {
 	// Create clean output structure (exclude raw data)
 	outputData := map[string]any{
 		"benchmark_summary": cleanBenchmarkSummary(summary),
@@ -190,17 +183,14 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 	}
 
 	// Add detailed metrics if available (but clean them)
-	if performance != nil {
+	if performance != nil || app.config.Verbose {
 		outputData["performance_metrics"] = performance
 	}
-	if quality != nil {
+	if quality != nil || app.config.Verbose {
 		outputData["quality_metrics"] = quality
 	}
-	if reliability != nil {
+	if reliability != nil || app.config.Verbose {
 		outputData["reliability_metrics"] = reliability
-	}
-	if len(insights) > 0 {
-		outputData["insights"] = insights
 	}
 
 	// Create formatter
@@ -256,14 +246,14 @@ func cleanBenchmarkSummary(summary *latency.BenchmarkSummary) map[string]any {
 	// Clean broadcast measurements (remove raw audio and fingerprint data)
 	for name, broadcast := range summary.BroadcastMeasurements {
 		cleanBroadcast := map[string]any{
-			"group_name":              broadcast.Group.Name,
-			"content_type":            broadcast.Group.ContentType,
-			"total_benchmark_time":    broadcast.TotalBenchmarkTime.Seconds(),
-			"liveness_metrics":        broadcast.LivenessMetrics,
-			"overall_validation":      broadcast.OverallValidation,
-			"stream_measurements":     cleanStreamMeasurements(broadcast.StreamMeasurements),
-			"alignment_measurements":  cleanAlignmentMeasurements(broadcast.AlignmentMeasurements),
-			"fingerprint_comparisons": cleanFingerprintComparisons(broadcast.FingerprintComparisons),
+			"group_name":                   broadcast.Group.Name,
+			"content_type":                 broadcast.Group.ContentType,
+			"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
+			"liveness_metrics":             broadcast.LivenessMetrics,
+			"overall_validation":           broadcast.OverallValidation,
+			"stream_measurements":          cleanStreamMeasurements(broadcast.StreamMeasurements),
+			"alignment_measurements":       cleanAlignmentMeasurements(broadcast.AlignmentMeasurements),
+			"fingerprint_comparisons":      cleanFingerprintComparisons(broadcast.FingerprintComparisons),
 		}
 
 		if broadcast.Error != nil {
@@ -320,19 +310,19 @@ func cleanAlignmentMeasurements(measurements map[string]*latency.AlignmentMeasur
 		cleanMeasurement := map[string]any{
 			"latency_seconds":    measurement.LatencySeconds,
 			"is_valid_alignment": measurement.IsValidAlignment,
-			"comparison_time":    measurement.ComparisonTime.Milliseconds(),
+			"comparison_time_ms": measurement.ComparisonTime.Milliseconds(),
 			"timestamp":          measurement.Timestamp,
 		}
 
 		// Include alignment result but without raw feature data
 		if measurement.AlignmentResult != nil {
 			cleanMeasurement["alignment_result"] = map[string]any{
-				"temporal_offset":    measurement.AlignmentResult.TemporalOffset,
-				"offset_confidence":  measurement.AlignmentResult.OffsetConfidence,
-				"overall_similarity": measurement.AlignmentResult.OverallSimilarity,
-				"alignment_quality":  measurement.AlignmentResult.AlignmentQuality,
-				"time_stretch":       measurement.AlignmentResult.TimeStretch,
-				"method":             measurement.AlignmentResult.Method,
+				"temporal_offset_seconds": measurement.AlignmentResult.TemporalOffset,
+				"offset_confidence":       measurement.AlignmentResult.OffsetConfidence,
+				"overall_similarity":      measurement.AlignmentResult.OverallSimilarity,
+				"alignment_quality":       measurement.AlignmentResult.AlignmentQuality,
+				"time_stretch":            measurement.AlignmentResult.TimeStretch,
+				"method":                  measurement.AlignmentResult.Method,
 			}
 		}
 
@@ -352,19 +342,19 @@ func cleanFingerprintComparisons(comparisons map[string]*latency.FingerprintComp
 
 	for name, comparison := range comparisons {
 		cleanComparison := map[string]any{
-			"is_valid_match":  comparison.IsValidMatch,
-			"comparison_time": comparison.ComparisonTime.Milliseconds(),
-			"timestamp":       comparison.Timestamp,
+			"is_valid_match":     comparison.IsValidMatch,
+			"comparison_time_ms": comparison.ComparisonTime.Milliseconds(),
+			"timestamp":          comparison.Timestamp,
 		}
 
 		// Include similarity result but without raw feature data
 		if comparison.SimilarityResult != nil {
 			cleanComparison["similarity_result"] = map[string]any{
-				"overall_similarity": comparison.SimilarityResult.OverallSimilarity,
-				"confidence":         comparison.SimilarityResult.Confidence,
-				"hash_similarity":    comparison.SimilarityResult.HashSimilarity,
-				"temporal_offset":    comparison.SimilarityResult.TemporalOffset,
-				"feature_distances":  comparison.SimilarityResult.FeatureDistances,
+				"overall_similarity":      comparison.SimilarityResult.OverallSimilarity,
+				"confidence":              comparison.SimilarityResult.Confidence,
+				"hash_similarity":         comparison.SimilarityResult.HashSimilarity,
+				"temporal_offset_seconds": comparison.SimilarityResult.TemporalOffset,
+				"feature_distances":       comparison.SimilarityResult.FeatureDistances,
 			}
 		}
 
@@ -397,89 +387,6 @@ func (app *BenchmarkApp) writeToFile(data []byte) error {
 	})
 
 	return nil
-}
-
-// printSummary prints a human-readable summary to stdout
-func (app *BenchmarkApp) printSummary(summary *latency.BenchmarkSummary, insights []string) {
-	fmt.Printf("\n🎯 CDN BENCHMARK SUMMARY\n")
-	fmt.Printf("========================\n")
-	fmt.Printf("Total Duration:     %.1fs\n", summary.TotalDuration.Seconds())
-	fmt.Printf("Successful Groups:  %d\n", summary.SuccessfulBroadcasts)
-	fmt.Printf("Failed Groups:      %d\n", summary.FailedBroadcasts)
-	fmt.Printf("Overall Health:     %.1f%%\n", summary.OverallHealthScore*100)
-
-	if summary.AverageLatencyMetrics != nil && summary.SuccessfulBroadcasts > 0 {
-		fmt.Printf("\n📊 AVERAGE LATENCY METRICS\n")
-		fmt.Printf("==========================\n")
-
-		if summary.AverageLatencyMetrics.AvgCDNLatencyHLS > 0 {
-			fmt.Printf("HLS CDN Latency:    %.2fs\n", summary.AverageLatencyMetrics.AvgCDNLatencyHLS)
-		}
-
-		if summary.AverageLatencyMetrics.AvgCDNLatencyICEcast > 0 {
-			fmt.Printf("ICEcast CDN Latency: %.2fs\n", summary.AverageLatencyMetrics.AvgCDNLatencyICEcast)
-		}
-
-		if summary.AverageLatencyMetrics.AvgCrossProtocolLag > 0 {
-			fmt.Printf("Cross-Protocol Lag: %.2fs\n", summary.AverageLatencyMetrics.AvgCrossProtocolLag)
-		}
-
-		if summary.AverageLatencyMetrics.AvgTimeToFirstByte > 0 {
-			fmt.Printf("Avg TTFB:          %.0fms\n", summary.AverageLatencyMetrics.AvgTimeToFirstByte)
-		}
-	}
-
-	// Print per-broadcast results
-	fmt.Printf("\n📋 BROADCAST RESULTS\n")
-	fmt.Printf("====================\n")
-
-	for groupName, broadcast := range summary.BroadcastMeasurements {
-		status := "✅"
-		if broadcast.Error != nil {
-			status = "❌"
-		} else if broadcast.OverallValidation != nil && broadcast.OverallValidation.OverallHealthScore < 0.7 {
-			status = "⚠️"
-		}
-
-		fmt.Printf("%s %s", status, groupName)
-
-		if broadcast.Error != nil {
-			fmt.Printf(" - ERROR: %v\n", broadcast.Error)
-			continue
-		}
-
-		if broadcast.OverallValidation != nil {
-			fmt.Printf(" (Health: %.1f%%", broadcast.OverallValidation.OverallHealthScore*100)
-
-			if broadcast.LivenessMetrics != nil {
-				if broadcast.LivenessMetrics.CDNLatencyHLS != 0 {
-					fmt.Printf(", HLS: %.2fs", broadcast.LivenessMetrics.CDNLatencyHLS)
-				}
-				if broadcast.LivenessMetrics.CDNLatencyICEcast != 0 {
-					fmt.Printf(", ICEcast: %.2fs", broadcast.LivenessMetrics.CDNLatencyICEcast)
-				}
-			}
-			fmt.Printf(")\n")
-
-			// Show validation issues if any
-			if len(broadcast.OverallValidation.StreamValidityIssues) > 0 {
-				for _, issue := range broadcast.OverallValidation.StreamValidityIssues {
-					fmt.Printf("    ⚠️  %s\n", issue)
-				}
-			}
-		}
-	}
-
-	// Print insights if available
-	if len(insights) > 0 {
-		fmt.Printf("\n💡 INSIGHTS & RECOMMENDATIONS\n")
-		fmt.Printf("=============================\n")
-		for i, insight := range insights {
-			fmt.Printf("%d. %s\n", i+1, insight)
-		}
-	}
-
-	fmt.Printf("\n")
 }
 
 // sanitizeForJSON recursively cleans infinite and NaN values from any data structure

@@ -295,75 +295,46 @@ func GenerateExampleBroadcastConfig(outputFile string) error {
 		UpdatedAt:   time.Now(),
 		Description: "Example broadcast groups configuration",
 		BroadcastGroups: map[string]*latency.BroadcastGroup{
-			"msnbc_news": {
-				Name:        "MSNBC News",
-				Description: "MSNBC live news broadcast",
+			"news": {
+				Name:        "News",
+				Description: "Live News Broadcasts",
 				ContentType: "news",
 				Enabled:     true,
-				Streams: map[string]*latency.StreamEndpoint{
-					"hls_source": {
-						URL:         "https://source.example.com/msnbc/live.m3u8",
-						Type:        latency.StreamTypeHLS,
-						Role:        latency.StreamRoleSource,
-						ContentType: "news",
+				Broadcasts: map[string]*latency.Broadcast{
+					"msnbc_news": {
+						Name:        "MSNBC News",
+						Description: "MSNBC Live News Broadcast",
 						Enabled:     true,
-					},
-					"hls_cdn": {
-						URL:         "https://cdn.example.com/msnbc/live.m3u8",
-						Type:        latency.StreamTypeHLS,
-						Role:        latency.StreamRoleCDN,
-						ContentType: "news",
-						Enabled:     true,
-					},
-					"icecast_source": {
-						URL:         "https://source.example.com/msnbc/live.mp3",
-						Type:        latency.StreamTypeICEcast,
-						Role:        latency.StreamRoleSource,
-						ContentType: "news",
-						Enabled:     true,
-					},
-					"icecast_cdn": {
-						URL:         "https://cdn.example.com/msnbc/live.mp3",
-						Type:        latency.StreamTypeICEcast,
-						Role:        latency.StreamRoleCDN,
-						ContentType: "news",
-						Enabled:     true,
-					},
-				},
-			},
-			"kqed_music": {
-				Name:        "KQED Music",
-				Description: "KQED classical music stream",
-				ContentType: "music",
-				Enabled:     true,
-				Streams: map[string]*latency.StreamEndpoint{
-					"hls_source": {
-						URL:         "https://source.example.com/kqed/music.m3u8",
-						Type:        latency.StreamTypeHLS,
-						Role:        latency.StreamRoleSource,
-						ContentType: "music",
-						Enabled:     true,
-					},
-					"hls_cdn": {
-						URL:         "https://cdn.example.com/kqed/music.m3u8",
-						Type:        latency.StreamTypeHLS,
-						Role:        latency.StreamRoleCDN,
-						ContentType: "music",
-						Enabled:     true,
-					},
-					"icecast_source": {
-						URL:         "https://source.example.com/kqed/music.mp3",
-						Type:        latency.StreamTypeICEcast,
-						Role:        latency.StreamRoleSource,
-						ContentType: "music",
-						Enabled:     true,
-					},
-					"icecast_cdn": {
-						URL:         "https://cdn.example.com/kqed/music.mp3",
-						Type:        latency.StreamTypeICEcast,
-						Role:        latency.StreamRoleCDN,
-						ContentType: "music",
-						Enabled:     true,
+						Streams: map[string]*latency.StreamEndpoint{
+							"hls_source": {
+								URL:         "https://source.example.com/msnbc/live.m3u8",
+								Type:        latency.StreamTypeHLS,
+								Role:        latency.StreamRoleSource,
+								ContentType: "news",
+								Enabled:     true,
+							},
+							"hls_cdn": {
+								URL:         "https://cdn.example.com/msnbc/live.m3u8",
+								Type:        latency.StreamTypeHLS,
+								Role:        latency.StreamRoleCDN,
+								ContentType: "news",
+								Enabled:     true,
+							},
+							"icecast_source": {
+								URL:         "https://source.example.com/msnbc/live.mp3",
+								Type:        latency.StreamTypeICEcast,
+								Role:        latency.StreamRoleSource,
+								ContentType: "news",
+								Enabled:     true,
+							},
+							"icecast_cdn": {
+								URL:         "https://cdn.example.com/msnbc/live.mp3",
+								Type:        latency.StreamTypeICEcast,
+								Role:        latency.StreamRoleCDN,
+								ContentType: "news",
+								Enabled:     true,
+							},
+						},
 					},
 				},
 			},

@@ -59,25 +59,32 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 		"operation_timeout": o.benchmarkConfig.Benchmark.OperationTimeout.Seconds(),
 	})
 
-	// Create benchmark context with timeout
 	benchmarkCtx, cancel := context.WithTimeout(ctx, o.benchmarkConfig.Benchmark.BenchmarkTimeout)
 	defer cancel()
 
-	// Get enabled broadcast groups
-	enabledGroups := o.broadcastConfig.GetEnabledBroadcastGroups()
-	if len(enabledGroups) == 0 {
-		return nil, fmt.Errorf("no enabled broadcast groups found")
+	// For now, we only process the first broadcast group and first broadcast
+	// Later this will be extended to support index-based selection for parallel execution
+	broadcast, broadcastKey, err := o.broadcastConfig.SelectBroadcastByIndex(0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select broadcast by index 0: %w", err)
 	}
 
-	// Execute measurements with concurrency control
-	broadcastMeasurements, err := o.measureBroadcastGroups(benchmarkCtx, enabledGroups)
-	if err != nil {
-		return nil, fmt.Errorf("broadcast measurements failed: %w", err)
+	o.logger.Info("Selected broadcast for benchmarking", logging.Fields{
+		"broadcast_key": broadcastKey,
+		"stream_count":  len(broadcast.Streams),
+		"content_type":  broadcast.ContentType,
+	})
+
+	// Process the selected broadcast
+	broadcastMeasurement := o.measureSingleBroadcast(benchmarkCtx, broadcastKey, broadcast)
+
+	// Create summary with single broadcast result
+	broadcastMeasurements := map[string]*latency.BroadcastMeasurement{
+		broadcastKey: broadcastMeasurement,
 	}
 
 	endTime := time.Now()
 
-	// Calculate summary metrics
 	summary := &latency.BenchmarkSummary{
 		BroadcastMeasurements: broadcastMeasurements,
 		StartTime:             startTime,
@@ -85,7 +92,6 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 		TotalDuration:         endTime.Sub(startTime),
 	}
 
-	// Calculate aggregate metrics
 	o.calculateSummaryMetrics(summary)
 
 	o.logger.Info("CDN benchmark completed", logging.Fields{
@@ -98,44 +104,66 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 	return summary, nil
 }
 
-// measureBroadcastGroups measures all broadcast groups with concurrency control
-func (o *Orchestrator) measureBroadcastGroups(ctx context.Context, groups map[string]*latency.BroadcastGroup) (map[string]*latency.BroadcastMeasurement, error) {
-	results := make(map[string]*latency.BroadcastMeasurement)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+// RunBenchmarkByIndex processes a specific broadcast by index (for parallel execution)
+func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*latency.BenchmarkSummary, error) {
+	startTime := time.Now()
 
-	// Create semaphore for concurrency control
-	semaphore := make(chan struct{}, o.benchmarkConfig.Benchmark.MaxConcurrentBroadcasts)
+	o.logger.Info("Starting CDN benchmark by index", logging.Fields{
+		"index":             index,
+		"segment_duration":  o.benchmarkConfig.Benchmark.AudioSegmentDuration.Seconds(),
+		"operation_timeout": o.benchmarkConfig.Benchmark.OperationTimeout.Seconds(),
+	})
 
-	for groupName, group := range groups {
-		wg.Add(1)
-		go func(name string, grp *latency.BroadcastGroup) {
-			defer wg.Done()
+	benchmarkCtx, cancel := context.WithTimeout(ctx, o.benchmarkConfig.Benchmark.BenchmarkTimeout)
+	defer cancel()
 
-			// Acquire semaphore
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
-
-			measurement := o.measureBroadcastGroup(ctx, name, grp)
-
-			mu.Lock()
-			results[name] = measurement
-			mu.Unlock()
-		}(groupName, group)
+	// Select broadcast by index
+	broadcast, broadcastKey, err := o.broadcastConfig.SelectBroadcastByIndex(index)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select broadcast by index %d: %w", index, err)
 	}
 
-	wg.Wait()
-	return results, nil
+	o.logger.Info("Selected broadcast for benchmarking", logging.Fields{
+		"index":         index,
+		"broadcast_key": broadcastKey,
+		"stream_count":  len(broadcast.Streams),
+		"content_type":  broadcast.ContentType,
+	})
+
+	// Process the selected broadcast
+	broadcastMeasurement := o.measureSingleBroadcast(benchmarkCtx, broadcastKey, broadcast)
+
+	// Create summary with single broadcast result
+	broadcastMeasurements := map[string]*latency.BroadcastMeasurement{
+		broadcastKey: broadcastMeasurement,
+	}
+
+	endTime := time.Now()
+
+	summary := &latency.BenchmarkSummary{
+		BroadcastMeasurements: broadcastMeasurements,
+		StartTime:             startTime,
+		EndTime:               endTime,
+		TotalDuration:         endTime.Sub(startTime),
+	}
+
+	o.calculateSummaryMetrics(summary)
+
+	o.logger.Info("CDN benchmark completed", logging.Fields{
+		"index":                 index,
+		"total_duration_s":      summary.TotalDuration.Seconds(),
+		"successful_broadcasts": summary.SuccessfulBroadcasts,
+		"failed_broadcasts":     summary.FailedBroadcasts,
+		"overall_health_score":  summary.OverallHealthScore,
+	})
+
+	return summary, nil
 }
 
-// measureBroadcastGroup measures a single broadcast group
-func (o *Orchestrator) measureBroadcastGroup(ctx context.Context, groupName string, group *latency.BroadcastGroup) *latency.BroadcastMeasurement {
+// measureSingleBroadcast measures a single broadcast (the 5-6 streams)
+func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey string, broadcast *latency.Broadcast) *latency.BroadcastMeasurement {
 	measurement := &latency.BroadcastMeasurement{
-		Group:                  group,
+		Group:                  broadcast, // Fixed: point to the actual broadcast
 		StreamMeasurements:     make(map[string]*latency.StreamMeasurement),
 		AlignmentMeasurements:  make(map[string]*latency.AlignmentMeasurement),
 		FingerprintComparisons: make(map[string]*latency.FingerprintComparison),
@@ -144,17 +172,17 @@ func (o *Orchestrator) measureBroadcastGroup(ctx context.Context, groupName stri
 
 	benchmarkStart := time.Now()
 
-	o.logger.Info("Starting broadcast group measurement", logging.Fields{
-		"group_name":   groupName,
-		"stream_count": len(group.Streams),
-		"content_type": group.ContentType,
+	o.logger.Info("Starting broadcast measurement", logging.Fields{
+		"broadcast_key": broadcastKey,
+		"stream_count":  len(broadcast.Streams),
+		"content_type":  broadcast.ContentType,
 	})
 
-	// Step 1: Measure all streams concurrently
-	streamMeasurements := o.measureAllStreams(ctx, group)
+	// Step 1: Measure all streams in this broadcast
+	streamMeasurements := o.measureAllStreamsInBroadcast(ctx, broadcast)
 	measurement.StreamMeasurements = streamMeasurements
 
-	// Check if we have enough valid streams to continue
+	// Check if we have enough valid streams
 	validStreams := o.countValidStreams(streamMeasurements)
 	if validStreams < 2 {
 		measurement.Error = fmt.Errorf("insufficient valid streams (%d) for meaningful comparison", validStreams)
@@ -162,24 +190,24 @@ func (o *Orchestrator) measureBroadcastGroup(ctx context.Context, groupName stri
 		return measurement
 	}
 
-	// Step 2: Perform the 3 required alignment measurements
-	measurement.AlignmentMeasurements = o.measureRequiredAlignments(ctx, group, streamMeasurements)
+	// Step 2: Perform all possible alignments dynamically
+	measurement.AlignmentMeasurements = o.measureAllPossibleAlignments(ctx, streamMeasurements)
 
 	// Step 3: Perform fingerprint comparisons (if enabled)
 	if !o.benchmarkConfig.Benchmark.SkipFingerprintComparison {
-		measurement.FingerprintComparisons = o.measureFingerprintComparisons(ctx, group, streamMeasurements, measurement.AlignmentMeasurements)
+		measurement.FingerprintComparisons = o.measureFingerprintComparisons(ctx, measurement.AlignmentMeasurements)
 	}
 
-	// Step 4: Calculate liveness metrics using the correct algorithm
-	measurement.LivenessMetrics = o.calculateCorrectLivenessMetrics(measurement.AlignmentMeasurements, streamMeasurements)
+	// Step 4: Calculate liveness metrics
+	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements, streamMeasurements)
 
 	// Step 5: Perform overall validation
 	measurement.OverallValidation = o.validateOverallHealth(measurement)
 
 	measurement.TotalBenchmarkTime = time.Since(benchmarkStart)
 
-	o.logger.Info("Broadcast group measurement completed", logging.Fields{
-		"group_name":           groupName,
+	o.logger.Info("Broadcast measurement completed", logging.Fields{
+		"broadcast_key":        broadcastKey,
 		"total_time_s":         measurement.TotalBenchmarkTime.Seconds(),
 		"valid_streams":        validStreams,
 		"alignment_count":      len(measurement.AlignmentMeasurements),
@@ -190,17 +218,20 @@ func (o *Orchestrator) measureBroadcastGroup(ctx context.Context, groupName stri
 	return measurement
 }
 
-// measureAllStreams measures all streams in a broadcast group concurrently
-func (o *Orchestrator) measureAllStreams(ctx context.Context, group *latency.BroadcastGroup) map[string]*latency.StreamMeasurement {
+// measureAllStreamsInBroadcast measures all streams within a single broadcast
+func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadcast *latency.Broadcast) map[string]*latency.StreamMeasurement {
 	results := make(map[string]*latency.StreamMeasurement)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Create semaphore for stream concurrency control
 	semaphore := make(chan struct{}, o.benchmarkConfig.Benchmark.MaxConcurrentStreams)
 
-	for streamName, stream := range group.Streams {
+	for streamName, stream := range broadcast.Streams {
 		if !stream.Enabled {
+			o.logger.Info("Skipping disabled stream", logging.Fields{
+				"stream_name": streamName,
+				"url":         stream.URL,
+			})
 			continue
 		}
 
@@ -208,7 +239,6 @@ func (o *Orchestrator) measureAllStreams(ctx context.Context, group *latency.Bro
 		go func(name string, endpoint *latency.StreamEndpoint) {
 			defer wg.Done()
 
-			// Acquire semaphore
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
@@ -228,77 +258,53 @@ func (o *Orchestrator) measureAllStreams(ctx context.Context, group *latency.Bro
 	return results
 }
 
-// measureRequiredAlignments performs the 3 specific alignment measurements required
-func (o *Orchestrator) measureRequiredAlignments(ctx context.Context, group *latency.BroadcastGroup, streamMeasurements map[string]*latency.StreamMeasurement) map[string]*latency.AlignmentMeasurement {
+// measureAllPossibleAlignments creates alignments between all valid stream pairs
+func (o *Orchestrator) measureAllPossibleAlignments(ctx context.Context, streamMeasurements map[string]*latency.StreamMeasurement) map[string]*latency.AlignmentMeasurement {
 	alignments := make(map[string]*latency.AlignmentMeasurement)
 
-	// Define the 3 required alignment pairs
-	alignmentPairs := []struct {
-		name  string
-		type1 latency.StreamType
-		role1 latency.StreamRole
-		type2 latency.StreamType
-		role2 latency.StreamRole
-	}{
-		{"hls_source_to_cdn", latency.StreamTypeHLS, latency.StreamRoleSource, latency.StreamTypeHLS, latency.StreamRoleCDN},
-		{"icecast_source_to_cdn", latency.StreamTypeICEcast, latency.StreamRoleSource, latency.StreamTypeICEcast, latency.StreamRoleCDN},
-		{"hls_cdn_to_icecast_cdn", latency.StreamTypeHLS, latency.StreamRoleCDN, latency.StreamTypeICEcast, latency.StreamRoleCDN},
+	// Get all valid streams
+	validStreams := make([]string, 0)
+	for key, stream := range streamMeasurements {
+		if stream.Error == nil {
+			validStreams = append(validStreams, key)
+		}
 	}
 
-	for _, pair := range alignmentPairs {
-		stream1 := o.findStreamMeasurement(streamMeasurements, pair.type1, pair.role1)
-		stream2 := o.findStreamMeasurement(streamMeasurements, pair.type2, pair.role2)
+	// Create all possible pairs (avoiding duplicates and self-comparisons)
+	for i, key1 := range validStreams {
+		for j, key2 := range validStreams {
+			if i >= j { // Skip duplicates and self-comparisons
+				continue
+			}
 
-		if stream1 != nil && stream2 != nil && stream1.Error == nil && stream2.Error == nil {
+			alignmentName := fmt.Sprintf("%s_to_%s", key1, key2)
+
 			o.logger.Info("Performing temporal alignment", logging.Fields{
-				"alignment_name": pair.name,
-				"stream1":        fmt.Sprintf("%s_%s", pair.type1, pair.role1),
-				"stream2":        fmt.Sprintf("%s_%s", pair.type2, pair.role2),
+				"alignment_name": alignmentName,
+				"stream1_key":    key1,
+				"stream2_key":    key2,
+				"stream1_url":    streamMeasurements[key1].Endpoint.URL,
+				"stream2_url":    streamMeasurements[key2].Endpoint.URL,
 			})
-			alignment := o.engine.MeasureAlignment(ctx, stream1, stream2)
-			alignments[pair.name] = alignment
-		} else {
-			o.logger.Info("Skipping alignment - missing streams", logging.Fields{
-				"alignment_name": pair.name,
-				"stream1_found":  stream1 != nil && stream1.Error == nil,
-				"stream2_found":  stream2 != nil && stream2.Error == nil,
-			})
+
+			alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[key1], streamMeasurements[key2])
+			alignments[alignmentName] = alignment
 		}
 	}
 
 	return alignments
 }
 
-// calculateCorrectLivenessMetrics calculates liveness using the correct algorithm
+// calculateCorrectLivenessMetrics calculates liveness using the hardcoded config. Deprecated for automated approach.
 func (o *Orchestrator) calculateCorrectLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement, streamMeasurements map[string]*latency.StreamMeasurement) *latency.LivenessMetrics {
 	metrics := &latency.LivenessMetrics{}
 
-	o.logger.Info("Calculating liveness metrics using temporal alignment", logging.Fields{
+	o.logger.Info("Calculating liveness metrics using direct alignment measurements", logging.Fields{
 		"alignment_count": len(alignmentMeasurements),
 		"stream_count":    len(streamMeasurements),
 	})
 
-	// Step 1: Build a graph of temporal offsets between streams
-	streamOffsets := make(map[string]float64) // stream_key -> offset from reference
-	streamTTFBs := make(map[string]time.Duration)
-
-	// Collect all streams and their TTFBs
-	for _, stream := range streamMeasurements {
-		if stream.Error != nil {
-			continue
-		}
-		streamKey := fmt.Sprintf("%s_%s", stream.Endpoint.Type, stream.Endpoint.Role)
-		streamTTFBs[streamKey] = stream.TimeToFirstByte
-	}
-
-	// Step 2: Process valid alignments to build offset relationships
-	alignmentData := make(map[string]struct {
-		stream1Key    string
-		stream2Key    string
-		offsetSeconds float64 // stream2 is this many seconds behind stream1
-		isValid       bool
-	})
-
+	// Step 1: Extract CDN latencies directly from alignment measurements
 	for alignmentName, alignment := range alignmentMeasurements {
 		if alignment.Error != nil || !alignment.IsValidAlignment {
 			o.logger.Info("Invalid alignment, skipping", logging.Fields{
@@ -309,196 +315,127 @@ func (o *Orchestrator) calculateCorrectLivenessMetrics(alignmentMeasurements map
 			continue
 		}
 
-		stream1Key := fmt.Sprintf("%s_%s", alignment.Stream1.Endpoint.Type, alignment.Stream1.Endpoint.Role)
-		stream2Key := fmt.Sprintf("%s_%s", alignment.Stream2.Endpoint.Type, alignment.Stream2.Endpoint.Role)
-
-		alignmentData[alignmentName] = struct {
-			stream1Key    string
-			stream2Key    string
-			offsetSeconds float64
-			isValid       bool
-		}{
-			stream1Key:    stream1Key,
-			stream2Key:    stream2Key,
-			offsetSeconds: alignment.LatencySeconds,
-			isValid:       true,
-		}
-
-		o.logger.Info("Valid alignment found", logging.Fields{
-			"alignment_name": alignmentName,
-			"stream1":        stream1Key,
-			"stream2":        stream2Key,
-			"offset_seconds": alignment.LatencySeconds,
-			"confidence":     alignment.AlignmentResult.OffsetConfidence,
-		})
-	}
-
-	// Step 3: Find the reference stream (the one that appears to be most live)
-	// We'll use a simple approach: pick the first stream and calculate all others relative to it
-	var referenceStream string
-	var referenceTTFB time.Duration
-
-	// Try to find HLS source as reference first, then others
-	preferredOrder := []string{"hls_source", "icecast_source", "hls_cdn", "icecast_cdn"}
-	for _, preferred := range preferredOrder {
-		if ttfb, exists := streamTTFBs[preferred]; exists {
-			referenceStream = preferred
-			referenceTTFB = ttfb
-			break
-		}
-	}
-
-	if referenceStream == "" {
-		// Just pick the first available stream
-		for streamKey, ttfb := range streamTTFBs {
-			referenceStream = streamKey
-			referenceTTFB = ttfb
-			break
-		}
-	}
-
-	if referenceStream == "" {
-		o.logger.Info("No valid streams found for liveness calculation")
-		return metrics
-	}
-
-	o.logger.Info("Selected reference stream", logging.Fields{
-		"reference_stream": referenceStream,
-		"reference_ttfb":   referenceTTFB.Milliseconds(),
-	})
-
-	// Step 4: Calculate offsets for all streams relative to reference
-	streamOffsets[referenceStream] = 0.0 // Reference is at 0 offset
-
-	// Build offset graph using alignment data
-	for _, data := range alignmentData {
-		if !data.isValid {
-			continue
-		}
-
-		// If we know the offset of stream1 and we have alignment to stream2
-		if stream1Offset, hasStream1 := streamOffsets[data.stream1Key]; hasStream1 {
-			if _, hasStream2 := streamOffsets[data.stream2Key]; !hasStream2 {
-				// stream2 is data.offsetSeconds behind stream1
-				streamOffsets[data.stream2Key] = stream1Offset + data.offsetSeconds
-				o.logger.Info("Calculated stream offset", logging.Fields{
-					"stream":        data.stream2Key,
-					"offset":        streamOffsets[data.stream2Key],
-					"via_stream":    data.stream1Key,
-					"alignment_gap": data.offsetSeconds,
-				})
-			}
-		}
-
-		// Also try the reverse direction
-		if stream2Offset, hasStream2 := streamOffsets[data.stream2Key]; hasStream2 {
-			if _, hasStream1 := streamOffsets[data.stream1Key]; !hasStream1 {
-				// stream1 is data.offsetSeconds ahead of stream2
-				streamOffsets[data.stream1Key] = stream2Offset - data.offsetSeconds
-				o.logger.Info("Calculated stream offset (reverse)", logging.Fields{
-					"stream":        data.stream1Key,
-					"offset":        streamOffsets[data.stream1Key],
-					"via_stream":    data.stream2Key,
-					"alignment_gap": -data.offsetSeconds,
-				})
-			}
-		}
-	}
-
-	// Step 5: Calculate final end-to-end latency for each stream
-	finalLatencies := make(map[string]float64)
-
-	for streamKey, ttfb := range streamTTFBs {
-		offset, hasOffset := streamOffsets[streamKey]
-		if !hasOffset {
-			o.logger.Info("No offset available for stream, skipping", logging.Fields{
-				"stream": streamKey,
+		switch alignmentName {
+		case "primary_source_to_hls_cloudfront_cdn":
+			metrics.HLSCloudfrontCDNLag = alignment.LatencySeconds
+			o.logger.Info("HLS Cloudfront latency from direct alignment", logging.Fields{
+				"latency_seconds": metrics.HLSCloudfrontCDNLag,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
 			})
+
+		case "primary_source_to_icecast_cloudfront_cdn":
+			metrics.ICEcastCloudfrontCDNLag = alignment.LatencySeconds
+			o.logger.Info("ICEcast Cloudfront latency from direct alignment", logging.Fields{
+				"latency_seconds": metrics.ICEcastCloudfrontCDNLag,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "primary_source_to_hls_ais_cdn":
+			metrics.HLSAISCDNLag = alignment.LatencySeconds
+			o.logger.Info("HLS Soundstack lag from direct alignment", logging.Fields{
+				"latency_seconds": metrics.HLSAISCDNLag,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "primary_source_to_icecast_ais_cdn":
+			metrics.ICEcastAISCDNLag = alignment.LatencySeconds
+			o.logger.Info("ICEcast Soundstack lag from direct alignment", logging.Fields{
+				"latency_seconds": metrics.HLSAISCDNLag,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "backup_source_to_hls_cloudfront_cdn":
+			metrics.HLSCloudfrontCDNLagFromBackup = alignment.LatencySeconds
+			o.logger.Info("HLS Cloudfront latency from direct alignment (via backup stream)", logging.Fields{
+				"latency_seconds": metrics.HLSCloudfrontCDNLagFromBackup,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "backup_source_to_icecast_cloudfront_cdn":
+			metrics.ICEcastCloudfrontCDNLagFromBackup = alignment.LatencySeconds
+			o.logger.Info("ICEcast Cloudfront latency from direct alignment (via backup stream)", logging.Fields{
+				"latency_seconds": metrics.ICEcastCloudfrontCDNLagFromBackup,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "backup_source_to_hls_ais_cdn":
+			metrics.HLSAISCDNLagFromBackup = alignment.LatencySeconds
+			o.logger.Info("HLS Soundstack lag from direct alignment (via backup stream)", logging.Fields{
+				"latency_seconds": metrics.HLSAISCDNLagFromBackup,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+
+		case "backup_source_to_icecast_ais_cdn":
+			metrics.ICEcastAISCDNLagFromBackup = alignment.LatencySeconds
+			o.logger.Info("ICEcast Soundstack lag from direct alignment (via backup stream)", logging.Fields{
+				"latency_seconds": metrics.HLSAISCDNLagFromBackup,
+				"confidence":      alignment.AlignmentResult.OffsetConfidence,
+			})
+		}
+	}
+
+	// Step 2: Calculate individual stream lags (for completeness)
+	// These are derived by adding TTFB to the CDN latencies
+	streamTTFBs := make(map[string]time.Duration)
+	for _, stream := range streamMeasurements {
+		if stream.Error != nil {
 			continue
 		}
-
-		// Base latency = reference TTFB + temporal offset
-		baseLatency := referenceTTFB.Seconds() + offset
-
-		// Add TTFB penalty if this stream's TTFB > reference TTFB
-		ttfbPenalty := 0.0
-		if ttfb > referenceTTFB {
-			ttfbPenalty = (ttfb - referenceTTFB).Seconds()
-		}
-
-		finalLatency := baseLatency + ttfbPenalty
-		finalLatencies[streamKey] = finalLatency
-
-		o.logger.Info("Final stream latency calculated", logging.Fields{
-			"stream":            streamKey,
-			"is_reference":      streamKey == referenceStream,
-			"reference_ttfb_ms": referenceTTFB.Milliseconds(),
-			"stream_ttfb_ms":    ttfb.Milliseconds(),
-			"temporal_offset_s": offset,
-			"ttfb_penalty_s":    ttfbPenalty,
-			"final_latency_s":   finalLatency,
-		})
+		streamKey := fmt.Sprintf("%s_%s", stream.Endpoint.Type, stream.Endpoint.Role)
+		streamTTFBs[streamKey] = stream.TimeToFirstByte
 	}
 
-	// Step 6: Map to metrics structure
-	if val, exists := finalLatencies["hls_source"]; exists {
-		metrics.HLSSourceLag = val
+	// Set source lags to their TTFB (they are the reference points)
+	if ttfb, exists := streamTTFBs["primary_source_to_hls_cloudfront_cdn"]; exists {
+		metrics.HLSCloudfrontCDNLag += ttfb.Seconds()
 	}
-	if val, exists := finalLatencies["hls_cdn"]; exists {
-		metrics.HLSCDNLag = val
+	if ttfb, exists := streamTTFBs["primary_source_to_icecast_cloudfront_cdn"]; exists {
+		metrics.ICEcastCloudfrontCDNLag += ttfb.Seconds()
 	}
-	if val, exists := finalLatencies["icecast_source"]; exists {
-		metrics.ICEcastSourceLag = val
+	if ttfb, exists := streamTTFBs["primary_source_to_hls_ais_cdn"]; exists {
+		metrics.HLSAISCDNLag += ttfb.Seconds()
 	}
-	if val, exists := finalLatencies["icecast_cdn"]; exists {
-		metrics.ICEcastCDNLag = val
+	if ttfb, exists := streamTTFBs["primary_source_to_icecast_ais_cdn"]; exists {
+		metrics.ICEcastAISCDNLag += ttfb.Seconds()
+	}
+	if ttfb, exists := streamTTFBs["backup_source_to_hls_cloudfront_cdn"]; exists {
+		metrics.HLSCloudfrontCDNLagFromBackup += ttfb.Seconds()
+	}
+	if ttfb, exists := streamTTFBs["backup_source_to_icecast_cloudfront_cdn"]; exists {
+		metrics.ICEcastCloudfrontCDNLagFromBackup += ttfb.Seconds()
+	}
+	if ttfb, exists := streamTTFBs["backup_source_to_hls_ais_cdn"]; exists {
+		metrics.HLSAISCDNLagFromBackup += ttfb.Seconds()
+	}
+	if ttfb, exists := streamTTFBs["backup_source_to_icecast_ais_cdn"]; exists {
+		metrics.ICEcastAISCDNLagFromBackup += ttfb.Seconds()
 	}
 
-	// Calculate relative CDN latencies (CDN - Source for same protocol)
-	if metrics.HLSCDNLag > 0 && metrics.HLSSourceLag > 0 {
-		metrics.CDNLatencyHLS = metrics.HLSCDNLag - metrics.HLSSourceLag
-	}
-	if metrics.ICEcastCDNLag > 0 && metrics.ICEcastSourceLag > 0 {
-		metrics.CDNLatencyICEcast = metrics.ICEcastCDNLag - metrics.ICEcastSourceLag
-	}
-
-	// Cross-protocol comparison (HLS vs ICEcast sources)
-	if metrics.HLSSourceLag > 0 && metrics.ICEcastSourceLag > 0 {
-		metrics.CrossProtocolLag = metrics.HLSSourceLag - metrics.ICEcastSourceLag
-	}
-
-	o.logger.Info("Liveness metrics completed", logging.Fields{
-		"hls_source_lag":      metrics.HLSSourceLag,
-		"hls_cdn_lag":         metrics.HLSCDNLag,
-		"icecast_source_lag":  metrics.ICEcastSourceLag,
-		"icecast_cdn_lag":     metrics.ICEcastCDNLag,
-		"cdn_latency_hls":     metrics.CDNLatencyHLS,
-		"cdn_latency_icecast": metrics.CDNLatencyICEcast,
-		"cross_protocol_lag":  metrics.CrossProtocolLag,
+	o.logger.Info("Liveness metrics completed using direct measurements", logging.Fields{
+		"primary_source_to_hls_cloudfront_cdn":     metrics.HLSCloudfrontCDNLag,
+		"primary_source_to_icecast_cloudfront_cdn": metrics.ICEcastCloudfrontCDNLag,
+		"primary_source_to_hls_ais_cdn":            metrics.HLSAISCDNLag,
+		"primary_source_to_icecast_ais_cdn":        metrics.ICEcastAISCDNLag,
+		"backup_source_to_hls_cloudfront_cdn":      metrics.HLSCloudfrontCDNLagFromBackup,
+		"backup_source_to_icecast_cloudfront_cdn":  metrics.ICEcastCloudfrontCDNLagFromBackup,
+		"backup_source_to_hls_ais_cdn":             metrics.HLSAISCDNLagFromBackup,
+		"backup_source_to_icecast_ais_cdn":         metrics.ICEcastAISCDNLagFromBackup,
 	})
 
 	return metrics
 }
 
-// measureFingerprintComparisons performs fingerprint comparisons with alignment
-func (o *Orchestrator) measureFingerprintComparisons(ctx context.Context, group *latency.BroadcastGroup, streamMeasurements map[string]*latency.StreamMeasurement, alignmentMeasurements map[string]*latency.AlignmentMeasurement) map[string]*latency.FingerprintComparison {
+// measureFingerprintComparisons performs fingerprint comparisons using alignment data
+func (o *Orchestrator) measureFingerprintComparisons(ctx context.Context, alignmentMeasurements map[string]*latency.AlignmentMeasurement) map[string]*latency.FingerprintComparison {
 	comparisons := make(map[string]*latency.FingerprintComparison)
 
-	// Perform fingerprint comparisons using alignment data where available
-	comparisonPairs := []struct {
-		name      string
-		alignment string // corresponding alignment measurement name
-	}{
-		{"hls_source_to_cdn_fingerprint", "hls_source_to_cdn"},
-		{"icecast_source_to_cdn_fingerprint", "icecast_source_to_cdn"},
-		{"hls_cdn_to_icecast_cdn_fingerprint", "hls_cdn_to_icecast_cdn"},
-	}
-
-	for _, pair := range comparisonPairs {
-		alignment, hasAlignment := alignmentMeasurements[pair.alignment]
-		if !hasAlignment || alignment.Error != nil {
+	// For each alignment, perform a fingerprint comparison
+	for alignmentName, alignment := range alignmentMeasurements {
+		if alignment.Error != nil || !alignment.IsValidAlignment {
 			continue
 		}
+
+		comparisonName := fmt.Sprintf("%s_fingerprint", alignmentName)
 
 		var alignmentFeatures = alignment.AlignmentResult
 		if !alignment.IsValidAlignment {
@@ -506,7 +443,7 @@ func (o *Orchestrator) measureFingerprintComparisons(ctx context.Context, group 
 		}
 
 		comparison := o.engine.CompareFingerprintSimilarity(ctx, alignment.Stream1, alignment.Stream2, alignmentFeatures)
-		comparisons[pair.name] = comparison
+		comparisons[comparisonName] = comparison
 	}
 
 	return comparisons
@@ -564,7 +501,7 @@ func (o *Orchestrator) validateOverallHealth(measurement *latency.BroadcastMeasu
 	}
 
 	// Calculate overall health score
-	validation.OverallHealthScore = o.calculateHealthScore(validation, measurement)
+	validation.OverallHealthScore = o.calculateHealthScore(validation)
 
 	return validation
 }
@@ -581,16 +518,66 @@ func (o *Orchestrator) countValidStreams(measurements map[string]*latency.Stream
 	return count
 }
 
-func (o *Orchestrator) findStreamMeasurement(measurements map[string]*latency.StreamMeasurement, streamType latency.StreamType, role latency.StreamRole) *latency.StreamMeasurement {
-	for _, measurement := range measurements {
-		if measurement.Endpoint.Type == streamType && measurement.Endpoint.Role == role {
-			return measurement
+// calculateLivenessMetrics calculates liveness metrics from alignment data
+func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement, streamMeasurements map[string]*latency.StreamMeasurement) *latency.LivenessMetrics {
+	metrics := &latency.LivenessMetrics{}
+
+	o.logger.Info("Calculating liveness metrics from alignments", logging.Fields{
+		"alignment_count": len(alignmentMeasurements),
+		"stream_count":    len(streamMeasurements),
+	})
+
+	// Extract latencies from alignments based on naming patterns
+	for alignmentName, alignment := range alignmentMeasurements {
+		if alignment.Error != nil || !alignment.IsValidAlignment {
+			continue
 		}
+
+		latency := alignment.LatencySeconds
+
+		// Map alignment names to metrics fields
+		// This is flexible and works with any stream naming scheme
+		if containsPattern(alignmentName, []string{"source", "hls", "cloudfront"}) {
+			metrics.HLSCloudfrontCDNLag = latency
+		} else if containsPattern(alignmentName, []string{"source", "hls", "ais"}) {
+			metrics.HLSAISCDNLag = latency
+		} else if containsPattern(alignmentName, []string{"source", "icecast", "cloudfront"}) {
+			metrics.ICEcastCloudfrontCDNLag = latency
+		} else if containsPattern(alignmentName, []string{"source", "icecast", "ais"}) {
+			metrics.ICEcastAISCDNLag = latency
+		}
+		// Add more patterns as needed...
+
+		o.logger.Debug("Mapped alignment to liveness metric", logging.Fields{
+			"alignment_name": alignmentName,
+			"latency":        latency,
+		})
 	}
-	return nil
+
+	return metrics
 }
 
-func (o *Orchestrator) calculateHealthScore(validation *latency.OverallValidation, measurement *latency.BroadcastMeasurement) float64 {
+func containsPattern(alignmentName string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if !contains(alignmentName, pattern) {
+			return false
+		}
+	}
+	return true
+}
+
+func contains(str, substr string) bool {
+	return len(str) >= len(substr) && func() bool {
+		for i := 0; i <= len(str)-len(substr); i++ {
+			if str[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	}()
+}
+
+func (o *Orchestrator) calculateHealthScore(validation *latency.OverallValidation) float64 {
 	if validation.ValidStreamCount == 0 {
 		return 0.0
 	}
@@ -626,8 +613,6 @@ func (o *Orchestrator) calculateSummaryMetrics(summary *latency.BenchmarkSummary
 	var avgMetrics latency.AverageLatencyMetrics
 	var totalHealthScore float64
 
-	validMeasurements := 0
-
 	for _, broadcast := range summary.BroadcastMeasurements {
 		if broadcast.Error != nil {
 			failureCount++
@@ -637,11 +622,29 @@ func (o *Orchestrator) calculateSummaryMetrics(summary *latency.BenchmarkSummary
 		successCount++
 		totalHealthScore += broadcast.OverallValidation.OverallHealthScore
 
+		// TODO: ensure that only valid measurements are used
 		if broadcast.LivenessMetrics != nil {
-			avgMetrics.AvgCDNLatencyHLS += broadcast.LivenessMetrics.CDNLatencyHLS
-			avgMetrics.AvgCDNLatencyICEcast += broadcast.LivenessMetrics.CDNLatencyICEcast
-			avgMetrics.AvgCrossProtocolLag += broadcast.LivenessMetrics.CrossProtocolLag
-			validMeasurements++
+			avgMetrics.AvgSourceLag = broadcast.LivenessMetrics.PrimarySourceLag
+
+			backupHLS := 0.0
+			backupICEcast := 0.0
+			div := 2.0
+			if broadcast.LivenessMetrics.BackupSourceLag != 0.0 {
+				backupHLS = broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup + broadcast.LivenessMetrics.HLSAISCDNLagFromBackup
+				backupICEcast = broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup + broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup
+				div *= 2
+
+				avgMetrics.AvgSourceLag = (avgMetrics.AvgSourceLag + broadcast.LivenessMetrics.BackupSourceLag) / 2.0
+			}
+			avgMetrics.AvgHLSCDNLag =
+				(broadcast.LivenessMetrics.HLSCloudfrontCDNLag +
+					broadcast.LivenessMetrics.HLSAISCDNLag +
+					backupHLS) / div
+			avgMetrics.AvgICEcastCDNLag =
+				(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag +
+					broadcast.LivenessMetrics.ICEcastAISCDNLag +
+					backupICEcast) / div
+			avgMetrics.AvgCDNLag = (avgMetrics.AvgHLSCDNLag + avgMetrics.AvgICEcastCDNLag/2.0)
 		}
 
 		// Aggregate stream performance metrics
@@ -651,13 +654,6 @@ func (o *Orchestrator) calculateSummaryMetrics(summary *latency.BenchmarkSummary
 				avgMetrics.AvgAudioExtractionTime += float64(stream.TotalProcessingTime.Milliseconds())
 			}
 		}
-	}
-
-	// Calculate averages
-	if validMeasurements > 0 {
-		avgMetrics.AvgCDNLatencyHLS /= float64(validMeasurements)
-		avgMetrics.AvgCDNLatencyICEcast /= float64(validMeasurements)
-		avgMetrics.AvgCrossProtocolLag /= float64(validMeasurements)
 	}
 
 	streamCount := 0

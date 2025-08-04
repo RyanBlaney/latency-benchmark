@@ -1,7 +1,6 @@
 package benchmark
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/tunein/cdn-benchmark-cli/internal/latency"
@@ -38,13 +37,20 @@ type LatencyStats struct {
 
 // PerformanceMetrics represents comprehensive performance analysis
 type PerformanceMetrics struct {
-	CDNLatencyHLS         *LatencyStats `json:"cdn_latency_hls"`
-	CDNLatencyICEcast     *LatencyStats `json:"cdn_latency_icecast"`
-	CrossProtocolLatency  *LatencyStats `json:"cross_protocol_latency"`
-	TimeToFirstByte       *LatencyStats `json:"time_to_first_byte"`
-	ProcessingTime        *LatencyStats `json:"processing_time"`
-	AlignmentConfidence   *LatencyStats `json:"alignment_confidence"`
-	FingerprintSimilarity *LatencyStats `json:"fingerprint_similarity"`
+	LatencySource                      *LatencyStats `json:"latency_source"`
+	LatencyBackup                      *LatencyStats `json:"latency_backup"`
+	LatencyCloudfrontHLS               *LatencyStats `json:"latency_cloudfront_hls"`
+	LatencyCloudfrontICEcast           *LatencyStats `json:"latency_cloudfront_icecast"`
+	LatencyAISHLS                      *LatencyStats `json:"latency_ais_hls"`
+	LatencyAISICEcast                  *LatencyStats `json:"latency_ais_icecast"`
+	LatencyCloudfrontHLSFromBackup     *LatencyStats `json:"latency_cloudfront_hls_from_backup"`
+	LatencyCloudfrontICEcastFromBackup *LatencyStats `json:"latency_cloudfront_icecast_from_backup"`
+	LatencyAISHLSFromBackup            *LatencyStats `json:"latency_ais_hls_from_backup"`
+	LatencyAISICEcastFromBackup        *LatencyStats `json:"latency_ais_icecast_from_backup"`
+	TimeToFirstByte                    *LatencyStats `json:"time_to_first_byte"`
+	ProcessingTime                     *LatencyStats `json:"processing_time"`
+	AlignmentConfidence                *LatencyStats `json:"alignment_confidence"`
+	FingerprintSimilarity              *LatencyStats `json:"fingerprint_similarity"`
 }
 
 // QualityMetrics represents stream quality analysis
@@ -66,9 +72,16 @@ type ReliabilityMetrics struct {
 
 // CalculatePerformanceMetrics calculates detailed performance metrics
 func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.BenchmarkSummary) *PerformanceMetrics {
-	var cdnLatencyHLS []float64
-	var cdnLatencyICEcast []float64
-	var crossProtocolLatency []float64
+	var latencySource []float64
+	var latencyBackup []float64
+	var latencyCloudfrontHLS []float64
+	var latencyCloudfrontICEcast []float64
+	var latencyAISHLS []float64
+	var latencyAISICEcast []float64
+	var latencyCloudfrontHLSFromBackup []float64
+	var latencyCloudfrontICEcastFromBackup []float64
+	var latencyAISHLSFromBackup []float64
+	var latencyAISICEcastFromBackup []float64
 	var ttfbValues []float64
 	var processingTimes []float64
 	var alignmentConfidences []float64
@@ -82,14 +95,35 @@ func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.Benchm
 
 		// Collect latency data
 		if broadcast.LivenessMetrics != nil {
-			if broadcast.LivenessMetrics.CDNLatencyHLS != 0 {
-				cdnLatencyHLS = append(cdnLatencyHLS, math.Abs(broadcast.LivenessMetrics.CDNLatencyHLS))
+			if broadcast.LivenessMetrics.PrimarySourceLag != 0 {
+				latencySource = append(latencySource, math.Abs(broadcast.LivenessMetrics.PrimarySourceLag))
 			}
-			if broadcast.LivenessMetrics.CDNLatencyICEcast != 0 {
-				cdnLatencyICEcast = append(cdnLatencyICEcast, math.Abs(broadcast.LivenessMetrics.CDNLatencyICEcast))
+			if broadcast.LivenessMetrics.BackupSourceLag != 0 {
+				latencyBackup = append(latencyBackup, math.Abs(broadcast.LivenessMetrics.BackupSourceLag))
 			}
-			if broadcast.LivenessMetrics.CrossProtocolLag != 0 {
-				crossProtocolLatency = append(crossProtocolLatency, math.Abs(broadcast.LivenessMetrics.CrossProtocolLag))
+			if broadcast.LivenessMetrics.HLSCloudfrontCDNLag != 0 {
+				latencyCloudfrontHLS = append(latencyCloudfrontHLS, math.Abs(broadcast.LivenessMetrics.HLSCloudfrontCDNLag))
+			}
+			if broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag != 0 {
+				latencyCloudfrontICEcast = append(latencyCloudfrontICEcast, math.Abs(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag))
+			}
+			if broadcast.LivenessMetrics.HLSAISCDNLag != 0 {
+				latencyAISHLS = append(latencyAISHLS, math.Abs(broadcast.LivenessMetrics.HLSAISCDNLag))
+			}
+			if broadcast.LivenessMetrics.ICEcastAISCDNLag != 0 {
+				latencyAISICEcast = append(latencyAISICEcast, math.Abs(broadcast.LivenessMetrics.ICEcastAISCDNLag))
+			}
+			if broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup != 0 {
+				latencyCloudfrontHLSFromBackup = append(latencyCloudfrontHLSFromBackup, math.Abs(broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup))
+			}
+			if broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup != 0 {
+				latencyCloudfrontICEcastFromBackup = append(latencyCloudfrontICEcastFromBackup, math.Abs(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup))
+			}
+			if broadcast.LivenessMetrics.HLSAISCDNLagFromBackup != 0 {
+				latencyAISHLSFromBackup = append(latencyAISHLSFromBackup, math.Abs(broadcast.LivenessMetrics.HLSAISCDNLagFromBackup))
+			}
+			if broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup != 0 {
+				latencyAISICEcastFromBackup = append(latencyAISICEcastFromBackup, math.Abs(broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup))
 			}
 		}
 
@@ -116,14 +150,37 @@ func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.Benchm
 		}
 	}
 
-	return &PerformanceMetrics{
-		CDNLatencyHLS:         mc.calculateStats(cdnLatencyHLS),
-		CDNLatencyICEcast:     mc.calculateStats(cdnLatencyICEcast),
-		CrossProtocolLatency:  mc.calculateStats(crossProtocolLatency),
-		TimeToFirstByte:       mc.calculateStats(ttfbValues),
-		ProcessingTime:        mc.calculateStats(processingTimes),
-		AlignmentConfidence:   mc.calculateStats(alignmentConfidences),
-		FingerprintSimilarity: mc.calculateStats(fingerprintSimilarities),
+	if len(latencyBackup) != 0 {
+		return &PerformanceMetrics{
+			LatencySource:                      mc.calculateStats(latencySource),
+			LatencyBackup:                      mc.calculateStats(latencyBackup),
+			LatencyCloudfrontHLS:               mc.calculateStats(latencyCloudfrontHLS),
+			LatencyCloudfrontICEcast:           mc.calculateStats(latencyCloudfrontICEcast),
+			LatencyAISHLS:                      mc.calculateStats(latencyAISHLS),
+			LatencyAISICEcast:                  mc.calculateStats(latencyAISICEcast),
+			LatencyCloudfrontHLSFromBackup:     mc.calculateStats(latencyCloudfrontHLSFromBackup),
+			LatencyCloudfrontICEcastFromBackup: mc.calculateStats(latencyCloudfrontICEcastFromBackup),
+			LatencyAISHLSFromBackup:            mc.calculateStats(latencyAISHLSFromBackup),
+			LatencyAISICEcastFromBackup:        mc.calculateStats(latencyAISICEcastFromBackup),
+			TimeToFirstByte:                    mc.calculateStats(ttfbValues),
+			ProcessingTime:                     mc.calculateStats(processingTimes),
+			AlignmentConfidence:                mc.calculateStats(alignmentConfidences),
+			FingerprintSimilarity:              mc.calculateStats(fingerprintSimilarities),
+		}
+	} else {
+		return &PerformanceMetrics{
+			LatencySource:                  mc.calculateStats(latencySource),
+			LatencyBackup:                  mc.calculateStats(latencyBackup),
+			LatencyCloudfrontHLS:           mc.calculateStats(latencyCloudfrontHLS),
+			LatencyCloudfrontICEcast:       mc.calculateStats(latencyCloudfrontICEcast),
+			LatencyAISHLS:                  mc.calculateStats(latencyAISHLS),
+			LatencyAISICEcast:              mc.calculateStats(latencyAISICEcast),
+			LatencyCloudfrontHLSFromBackup: mc.calculateStats(latencyCloudfrontHLS),
+			TimeToFirstByte:                mc.calculateStats(ttfbValues),
+			ProcessingTime:                 mc.calculateStats(processingTimes),
+			AlignmentConfidence:            mc.calculateStats(alignmentConfidences),
+			FingerprintSimilarity:          mc.calculateStats(fingerprintSimilarities),
+		}
 	}
 }
 
@@ -449,60 +506,4 @@ func (mc *MetricsCalculator) containsAny(str string, substrings []string) bool {
 		}
 	}
 	return false
-}
-
-// GenerateInsights generates actionable insights from metrics
-func (mc *MetricsCalculator) GenerateInsights(performance *PerformanceMetrics, quality *QualityMetrics, reliability *ReliabilityMetrics) []string {
-	var insights []string
-
-	// Performance insights
-	if performance.CDNLatencyHLS != nil && performance.CDNLatencyHLS.Mean > 5.0 {
-		insights = append(insights, fmt.Sprintf("High HLS CDN latency detected (%.1fs average). Consider optimizing CDN configuration.", performance.CDNLatencyHLS.Mean))
-	}
-
-	if performance.CDNLatencyICEcast != nil && performance.CDNLatencyICEcast.Mean > 3.0 {
-		insights = append(insights, fmt.Sprintf("High ICEcast CDN latency detected (%.1fs average). ICEcast streams should have lower latency.", performance.CDNLatencyICEcast.Mean))
-	}
-
-	if performance.TimeToFirstByte != nil && performance.TimeToFirstByte.Mean > 2000 {
-		insights = append(insights, fmt.Sprintf("Slow time to first byte (%.0fms average). Check network connectivity and server response times.", performance.TimeToFirstByte.Mean))
-	}
-
-	// Quality insights
-	if quality.StreamValidityRate < 0.9 {
-		insights = append(insights, fmt.Sprintf("Low stream validity rate (%.1f%%). Check stream configurations and endpoints.", quality.StreamValidityRate*100))
-	}
-
-	if quality.AlignmentSuccessRate < 0.8 {
-		insights = append(insights, fmt.Sprintf("Low alignment success rate (%.1f%%). Streams may have significant timing differences or quality issues.", quality.AlignmentSuccessRate*100))
-	}
-
-	if quality.FingerprintMatchRate < 0.7 {
-		insights = append(insights, fmt.Sprintf("Low fingerprint match rate (%.1f%%). Streams may have content differences or encoding issues.", quality.FingerprintMatchRate*100))
-	}
-
-	// Reliability insights
-	if reliability.OverallSuccessRate < 0.9 {
-		insights = append(insights, fmt.Sprintf("Overall success rate is low (%.1f%%). Consider investigating infrastructure stability.", reliability.OverallSuccessRate*100))
-	}
-
-	// Stream type specific insights
-	if hlsReliability, exists := reliability.StreamTypeReliability["hls"]; exists && hlsReliability < 0.8 {
-		insights = append(insights, fmt.Sprintf("HLS streams have low reliability (%.1f%%). Check HLS playlist generation and segment availability.", hlsReliability*100))
-	}
-
-	if icecastReliability, exists := reliability.StreamTypeReliability["icecast"]; exists && icecastReliability < 0.8 {
-		insights = append(insights, fmt.Sprintf("ICEcast streams have low reliability (%.1f%%). Check ICEcast server stability and network connectivity.", icecastReliability*100))
-	}
-
-	// Error distribution insights
-	if networkErrors, exists := reliability.ErrorDistribution["network"]; exists && networkErrors > 0 {
-		insights = append(insights, fmt.Sprintf("Network errors detected (%d instances). Check network connectivity and DNS resolution.", networkErrors))
-	}
-
-	if len(insights) == 0 {
-		insights = append(insights, "All metrics appear healthy. CDN performance is within expected parameters.")
-	}
-
-	return insights
 }

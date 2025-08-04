@@ -75,13 +75,12 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 	totalStart := time.Now()
 
 	// Step 1: Load audio and measure TTFB
-	ttfbStart := time.Now()
-	audioData, err := e.loadAudio(ctx, endpoint)
+	audioData, ttfb, err := e.loadAudio(ctx, endpoint)
 	if err != nil {
 		measurement.Error = fmt.Errorf("failed to load audio: %w", err)
 		return measurement
 	}
-	measurement.TimeToFirstByte = time.Since(ttfbStart)
+	measurement.TimeToFirstByte = ttfb
 	measurement.AudioData = audioData
 
 	// Step 2: Validate stream
@@ -99,7 +98,7 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 
 	measurement.TotalProcessingTime = time.Since(totalStart)
 
-	e.logger.Info("Stream measurement completed", map[string]any{
+	e.logger.Debug("Stream measurement completed", map[string]any{
 		"url":                 endpoint.URL,
 		"ttfb_ms":             measurement.TimeToFirstByte.Milliseconds(),
 		"fingerprint_time_ms": measurement.FingerprintTime.Milliseconds(),
@@ -208,21 +207,43 @@ func (e *MeasurementEngine) TruncateToAlignment(ctx context.Context, alignment *
 	// Update AudioData with truncated PCM
 	sampleRate := float64(alignment.Stream1.AudioData.SampleRate)
 
-	// Update Stream1 AudioData
-	alignment.Stream1.AudioData = &common.AudioData{
-		PCM:        alignedPCM1,
-		SampleRate: alignment.Stream1.AudioData.SampleRate,
-		Channels:   alignment.Stream1.AudioData.Channels,
-		Duration:   time.Duration(float64(len(alignedPCM1)) / sampleRate * float64(time.Second)),
+	// Clone Streams
+	stream1Copy := &StreamMeasurement{
+		Endpoint:            alignment.Stream1.Endpoint,
+		Fingerprint:         alignment.Stream1.Fingerprint,
+		StreamValidation:    alignment.Stream1.StreamValidation,
+		TimeToFirstByte:     alignment.Stream1.TimeToFirstByte,
+		AudioExtractionTime: alignment.Stream1.AudioExtractionTime,
+		FingerprintTime:     alignment.Stream1.FingerprintTime,
+		Error:               alignment.Stream1.Error,
+		Timestamp:           alignment.Stream1.Timestamp,
+		AudioData: &common.AudioData{
+			PCM:        alignedPCM1,
+			SampleRate: alignment.Stream1.AudioData.SampleRate,
+			Channels:   alignment.Stream1.AudioData.Channels,
+			Duration:   time.Duration(float64(len(alignedPCM1)) / sampleRate * float64(time.Second)),
+		},
 	}
 
-	// Update Stream2 AudioData
-	alignment.Stream2.AudioData = &common.AudioData{
-		PCM:        alignedPCM2,
-		SampleRate: alignment.Stream2.AudioData.SampleRate,
-		Channels:   alignment.Stream2.AudioData.Channels,
-		Duration:   time.Duration(float64(len(alignedPCM2)) / sampleRate * float64(time.Second)),
+	stream2Copy := &StreamMeasurement{
+		Endpoint:            alignment.Stream2.Endpoint,
+		Fingerprint:         alignment.Stream2.Fingerprint,
+		StreamValidation:    alignment.Stream2.StreamValidation,
+		TimeToFirstByte:     alignment.Stream2.TimeToFirstByte,
+		AudioExtractionTime: alignment.Stream2.AudioExtractionTime,
+		FingerprintTime:     alignment.Stream2.FingerprintTime,
+		Error:               alignment.Stream2.Error,
+		Timestamp:           alignment.Stream2.Timestamp,
+		AudioData: &common.AudioData{
+			PCM:        alignedPCM2,
+			SampleRate: alignment.Stream2.AudioData.SampleRate,
+			Channels:   alignment.Stream2.AudioData.Channels,
+			Duration:   time.Duration(float64(len(alignedPCM2)) / sampleRate * float64(time.Second)),
+		},
 	}
+
+	alignment.Stream1 = stream1Copy
+	alignment.Stream2 = stream2Copy
 
 	e.logger.Info("Stream truncation completed", map[string]any{
 		"stream1_url":      alignment.Stream1.Endpoint.URL,
@@ -297,8 +318,8 @@ func (e *MeasurementEngine) CompareFingerprintSimilarity(ctx context.Context, st
 	return comparison
 }
 
-// loadAudio loads audio from a stream endpoint
-func (e *MeasurementEngine) loadAudio(ctx context.Context, endpoint *StreamEndpoint) (*common.AudioData, error) {
+// loadAudio loads audio from a stream endpoint. Also returns TTFB (time to first byte)
+func (e *MeasurementEngine) loadAudio(ctx context.Context, endpoint *StreamEndpoint) (*common.AudioData, time.Duration, error) {
 	if e.isLocalFile(endpoint.URL) {
 		return e.loadLocalFile(endpoint.URL, endpoint.ContentType)
 	}
@@ -315,19 +336,19 @@ func (e *MeasurementEngine) isLocalFile(input string) bool {
 }
 
 // loadLocalFile loads audio from a local file
-func (e *MeasurementEngine) loadLocalFile(filePath, contentType string) (*common.AudioData, error) {
+func (e *MeasurementEngine) loadLocalFile(filePath, contentType string) (*common.AudioData, time.Duration, error) {
 	// Implementation similar to your working fingerprint-test.go
 	cleanPath := strings.TrimPrefix(filePath, "file://")
 
 	decoder := transcode.NewNormalizingDecoder(contentType)
 	anyData, err := decoder.DecodeFile(cleanPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode audio file: %w", err)
+		return nil, 0, fmt.Errorf("failed to decode audio file: %w", err)
 	}
 
 	audioData := common.ConvertToAudioData(anyData)
 	if audioData == nil {
-		return nil, fmt.Errorf("decoder returned unexpected type: %T", anyData)
+		return nil, 0, fmt.Errorf("decoder returned unexpected type: %T", anyData)
 	}
 
 	// Truncate if needed
@@ -339,11 +360,11 @@ func (e *MeasurementEngine) loadLocalFile(filePath, contentType string) (*common
 		}
 	}
 
-	return audioData, nil
+	return audioData, 0, nil
 }
 
 // loadStreamURL loads audio from a stream URL
-func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url, contentType string) (*common.AudioData, error) {
+func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url, contentType string) (*common.AudioData, time.Duration, error) {
 	managerConfig := &stream.ManagerConfig{
 		StreamTimeout:        e.operationTimeout,
 		OverallTimeout:       e.operationTimeout + (10 * time.Second),
@@ -354,17 +375,17 @@ func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url, contentType 
 
 	results, err := manager.ExtractAudioSequential(ctx, []string{url}, e.segmentDuration)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if len(results.Results) == 0 || results.Results[0].Error != nil {
 		if len(results.Results) > 0 {
-			return nil, results.Results[0].Error
+			return nil, 0, results.Results[0].Error
 		}
-		return nil, fmt.Errorf("no results from stream extraction")
+		return nil, 0, fmt.Errorf("no results from stream extraction")
 	}
 
-	return results.Results[0].AudioData, nil
+	return results.Results[0].AudioData, results.Results[0].TimeToFirstByte, nil
 }
 
 // generateFingerprint generates a fingerprint for audio data

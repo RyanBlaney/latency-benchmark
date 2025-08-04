@@ -37,7 +37,7 @@ type SimilarityResult struct {
 	Confidence            float64                   `json:"confidence"`
 	Metadata              map[string]any            `json:"metadata"`
 	AlignmentApplied      bool                      `json:"alignment_applied"`
-	TemporalOffset        float64                   `json:"temporal_offset"`
+	TemporalOffset        float64                   `json:"temporal_offset_seconds"`
 }
 
 // ComparisonQualityMetrics holds quality metrics for the comparison

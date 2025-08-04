@@ -223,7 +223,7 @@ func NewChordDetector(sampleRate int) *ChordDetector {
 		NormalizeTemplates:    true,
 		TemplateStrength:      1.0,
 		UseInversions:         true,
-		MinConfidence:         0.3,
+		MinConfidence:         0.26,
 		MaxCandidates:         5,
 		MinChordStrength:      0.2,
 		UseBassDetection:      true,

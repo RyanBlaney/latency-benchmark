@@ -3,6 +3,7 @@ package extractors
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/stats"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/algorithms/temporal"
@@ -38,9 +39,9 @@ type AlignmentFeatures struct {
 	CorrAlignment *AlignmentResult `json:"corr_alignment"` // Cross-correlation alignment
 
 	// Offset and timing information
-	TemporalOffset   float64 `json:"temporal_offset"`   // Best offset in seconds
-	OffsetConfidence float64 `json:"offset_confidence"` // Confidence in offset estimate
-	TimeStretch      float64 `json:"time_stretch"`      // Estimated time stretch factor
+	TemporalOffset   float64 `json:"temporal_offset_seconds"` // Best offset in seconds
+	OffsetConfidence float64 `json:"offset_confidence"`       // Confidence in offset estimate
+	TimeStretch      float64 `json:"time_stretch"`            // Estimated time stretch factor
 
 	// Similarity metrics
 	OverallSimilarity float64            `json:"overall_similarity"` // Combined similarity score
@@ -208,10 +209,10 @@ func (ae *AlignmentExtractor) ExtractAlignmentFeatures(
 	} */
 
 	logger.Debug("Alignment feature extraction completed", logging.Fields{
-		"best_method":     result.Method,
-		"temporal_offset": result.TemporalOffset,
-		"similarity":      result.OverallSimilarity,
-		"quality":         result.AlignmentQuality,
+		"best_method":             result.Method,
+		"temporal_offset_seconds": result.TemporalOffset,
+		"similarity":              result.OverallSimilarity,
+		"quality":                 result.AlignmentQuality,
 	})
 
 	return result, nil
@@ -283,9 +284,9 @@ func (ae *AlignmentExtractor) TruncateToAlignmentPCM(pcm1, pcm2 []float64, sampl
 
 	logger.Debug("After alignment",
 		logging.Fields{
-			"start1":                                start1,
-			"start2":                                start2,
-			"common_length_" + string(commonLength): float64(commonLength) / sampleRateFloat,
+			"start1": start1,
+			"start2": start2,
+			"common_length_" + strconv.Itoa(commonLength): float64(commonLength) / sampleRateFloat,
 		})
 
 	// Return aligned PCM segments
@@ -474,41 +475,11 @@ func (ae *AlignmentExtractor) estimateTimeStretch(alignment *AlignmentResult, qu
 	return lengthRatio
 }
 
-// analyzeConsistency performs consistency analysis using multiple alignment attempts
-func (ae *AlignmentExtractor) analyzeConsistency(
-	queryFeatures, referenceFeatures *ExtractedFeatures,
-	sampleRate int,
-) (*stats.AlignmentStats, error) {
-
-	// Use MFCC features if available, otherwise use energy
-	var queryFeats, refFeats [][]float64
-
-	if queryFeatures.MFCC != nil && referenceFeatures.MFCC != nil {
-		queryFeats = queryFeatures.MFCC
-		refFeats = referenceFeatures.MFCC
-	} else if queryFeatures.EnergyFeatures != nil && referenceFeatures.EnergyFeatures != nil {
-		queryFeats = ae.convertEnergyTo2D(queryFeatures.EnergyFeatures.ShortTimeEnergy)
-		refFeats = ae.convertEnergyTo2D(referenceFeatures.EnergyFeatures.ShortTimeEnergy)
-	} else {
-		return nil, fmt.Errorf("no suitable features for consistency analysis")
-	}
-
-	return ae.alignmentAnalyzer.AnalyzeAlignmentConsistency(queryFeats, refFeats, sampleRate, 5)
-}
-
 // Helper methods for feature conversion
 
 func (ae *AlignmentExtractor) convertEnergyTo2D(energy []float64) [][]float64 {
 	result := make([][]float64, len(energy))
 	for i, val := range energy {
-		result[i] = []float64{val}
-	}
-	return result
-}
-
-func (ae *AlignmentExtractor) convertSpectralTo2D(spectral []float64) [][]float64 {
-	result := make([][]float64, len(spectral))
-	for i, val := range spectral {
 		result[i] = []float64{val}
 	}
 	return result

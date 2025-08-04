@@ -71,6 +71,201 @@ type BenchmarkSettings struct {
 	GenerateSummary         bool   `json:"generate_summary" yaml:"generate_summary"`
 }
 
+// StreamType represents the type of stream being measured
+type StreamType string
+
+const (
+	StreamTypeHLS     StreamType = "hls"
+	StreamTypeICEcast StreamType = "icecast"
+)
+
+// StreamRole represents the role of the stream in the CDN architecture
+type StreamRole string
+
+const (
+	StreamRoleSource StreamRole = "source"
+	StreamRoleCDN    StreamRole = "cdn"
+)
+
+// StreamEndpoint represents a single stream endpoint
+type StreamEndpoint struct {
+	URL         string     `json:"url" yaml:"url"`
+	Type        StreamType `json:"type" yaml:"type"`
+	Role        StreamRole `json:"role" yaml:"role"`
+	ContentType string     `json:"content_type" yaml:"content_type"`
+	Enabled     bool       `json:"enabled" yaml:"enabled"`
+}
+
+// BroadcastGroup represents a collection of broadcasts (multiple sets of streams)
+type BroadcastGroup struct {
+	Name        string                `json:"name" yaml:"name"`
+	Description string                `json:"description,omitempty" yaml:"description,omitempty"`
+	ContentType string                `json:"content_type" yaml:"content_type"`
+	Broadcasts  map[string]*Broadcast `json:"broadcasts" yaml:"broadcasts"`
+	Enabled     bool                  `json:"enabled" yaml:"enabled"`
+}
+
+// Broadcast represents a single broadcast with 5-6 streams for comparison
+type Broadcast struct {
+	Name        string                     `json:"name" yaml:"name"`
+	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
+	ContentType string                     `json:"content_type" yaml:"content_type"`
+	Streams     map[string]*StreamEndpoint `json:"streams" yaml:"streams"`
+	Enabled     bool                       `json:"enabled" yaml:"enabled"`
+}
+
+// GetStreamByTypeAndRole returns a stream endpoint by type and role from a Broadcast
+func (b *Broadcast) GetStreamByTypeAndRole(streamType StreamType, role StreamRole) *StreamEndpoint {
+	for _, stream := range b.Streams {
+		if stream.Type == streamType && stream.Role == role && stream.Enabled {
+			return stream
+		}
+	}
+	return nil
+}
+
+// GetAllStreamsOfTypeAndRole returns all streams from ALL broadcasts in the group matching type and role
+func (bg *BroadcastGroup) GetAllStreamsOfTypeAndRole(streamType StreamType, role StreamRole) []*StreamEndpoint {
+	var streams []*StreamEndpoint
+	for _, broadcast := range bg.Broadcasts {
+		if !broadcast.Enabled {
+			continue
+		}
+		for _, stream := range broadcast.Streams {
+			if stream.Type == streamType && stream.Role == role && stream.Enabled {
+				streams = append(streams, stream)
+			}
+		}
+	}
+	return streams
+}
+
+// HasRequiredStreamTypes checks if the broadcast group has the minimum required stream combinations
+func (bg *BroadcastGroup) HasRequiredStreamTypes() bool {
+	// Check across ALL broadcasts in the group
+	hlsSources := bg.GetAllStreamsOfTypeAndRole(StreamTypeHLS, StreamRoleSource)
+	hlsCDNs := bg.GetAllStreamsOfTypeAndRole(StreamTypeHLS, StreamRoleCDN)
+	icecastSources := bg.GetAllStreamsOfTypeAndRole(StreamTypeICEcast, StreamRoleSource)
+	icecastCDNs := bg.GetAllStreamsOfTypeAndRole(StreamTypeICEcast, StreamRoleCDN)
+
+	// Validate that we have at least some meaningful comparisons
+	hasHLSPair := len(hlsSources) > 0 && len(hlsCDNs) > 0
+	hasICEcastPair := len(icecastSources) > 0 && len(icecastCDNs) > 0
+	hasCrossProtocol := len(hlsSources) > 0 && len(icecastSources) > 0
+
+	return hasHLSPair || hasICEcastPair || hasCrossProtocol
+}
+
+// StreamMeasurement represents the measurement results for a single stream
+type StreamMeasurement struct {
+	Endpoint            *StreamEndpoint               `json:"endpoint"`
+	AudioData           *common.AudioData             `json:"-"` // Don't serialize raw audio
+	Fingerprint         *fingerprint.AudioFingerprint `json:"-"` // Don't serialize fingerprint
+	TimeToFirstByte     time.Duration                 `json:"time_to_first_byte_ms"`
+	AudioExtractionTime time.Duration                 `json:"audio_extraction_time_seconds"`
+	FingerprintTime     time.Duration                 `json:"fingerprint_time"`
+	TotalProcessingTime time.Duration                 `json:"total_processing_time_seconds"`
+	StreamValidation    *StreamValidation             `json:"stream_validation"`
+	Error               error                         `json:"error,omitempty"`
+	Timestamp           time.Time                     `json:"timestamp"`
+}
+
+// StreamValidation represents the validation results for a stream
+type StreamValidation struct {
+	IsValid           bool     `json:"is_valid"`
+	ValidationErrors  []string `json:"validation_errors,omitempty"`
+	PlaylistStructure bool     `json:"playlist_structure,omitempty"` // For HLS
+	HTTPHeaders       bool     `json:"http_headers,omitempty"`       // For ICEcast
+	AudioFormat       bool     `json:"audio_format"`
+	BitrateConsistent bool     `json:"bitrate_consistent"`
+}
+
+// AlignmentMeasurement represents alignment comparison between two streams
+type AlignmentMeasurement struct {
+	Stream1          *StreamMeasurement            `json:"stream1"`
+	Stream2          *StreamMeasurement            `json:"stream2"`
+	AlignmentResult  *extractors.AlignmentFeatures `json:"alignment_result"`
+	LatencySeconds   float64                       `json:"latency_seconds"`
+	IsValidAlignment bool                          `json:"is_valid_alignment"`
+	ComparisonTime   time.Duration                 `json:"comparison_time_ms"`
+	Error            error                         `json:"error,omitempty"`
+	Timestamp        time.Time                     `json:"timestamp"`
+}
+
+// FingerprintComparison represents fingerprint similarity comparison
+type FingerprintComparison struct {
+	Stream1           *StreamMeasurement            `json:"stream1"`
+	Stream2           *StreamMeasurement            `json:"stream2"`
+	SimilarityResult  *fingerprint.SimilarityResult `json:"similarity_result"`
+	AlignmentFeatures *extractors.AlignmentFeatures `json:"alignment_features,omitempty"`
+	IsValidMatch      bool                          `json:"is_valid_match"`
+	ComparisonTime    time.Duration                 `json:"comparison_time_ms"`
+	Error             error                         `json:"error,omitempty"`
+	Timestamp         time.Time                     `json:"timestamp"`
+}
+
+// BroadcastMeasurement represents all measurements for a single broadcast
+type BroadcastMeasurement struct {
+	Group                  *Broadcast                        `json:"broadcast"`
+	StreamMeasurements     map[string]*StreamMeasurement     `json:"stream_measurements"`
+	AlignmentMeasurements  map[string]*AlignmentMeasurement  `json:"alignment_measurements"`
+	FingerprintComparisons map[string]*FingerprintComparison `json:"fingerprint_comparisons"`
+	LivenessMetrics        *LivenessMetrics                  `json:"liveness_metrics"`
+	OverallValidation      *OverallValidation                `json:"overall_validation"`
+	TotalBenchmarkTime     time.Duration                     `json:"total_benchmark_time_seconds"`
+	Error                  error                             `json:"error,omitempty"`
+	Timestamp              time.Time                         `json:"timestamp"`
+}
+
+// LivenessMetrics represents how far behind live each stream is
+type LivenessMetrics struct {
+	PrimarySourceLag                  float64 `json:"primary_source_lag_seconds"`
+	BackupSourceLag                   float64 `json:"backup_source_lag_seconds"`
+	HLSCloudfrontCDNLag               float64 `json:"hls_cloudfront_cdn_lag_seconds"`
+	ICEcastCloudfrontCDNLag           float64 `json:"icecast_cloudfront_lag_seconds"`
+	HLSAISCDNLag                      float64 `json:"hls_ais_cdn_lag_seconds"`
+	ICEcastAISCDNLag                  float64 `json:"icecast_ais_cdn_lag_seconds"`
+	HLSCloudfrontCDNLagFromBackup     float64 `json:"hls_cloudfront_cdn_lag_seconds_from_backup,omitempty"`
+	ICEcastCloudfrontCDNLagFromBackup float64 `json:"icecast_cloudfront_lag_seconds_from_backup,omitempty"`
+	HLSAISCDNLagFromBackup            float64 `json:"hls_ais_cdn_lag_seconds_from_backup,omitempty"`
+	ICEcastAISCDNLagFromBackup        float64 `json:"icecast_ais_cdn_lag_seconds_from_backup,omitempty"`
+}
+
+// OverallValidation represents the overall health of all streams
+type OverallValidation struct {
+	AllStreamsValid         bool     `json:"all_streams_valid"`
+	ValidStreamCount        int      `json:"valid_stream_count"`
+	InvalidStreamCount      int      `json:"invalid_stream_count"`
+	StreamValidityIssues    []string `json:"stream_validity_issues,omitempty"`
+	FingerprintMatchesValid bool     `json:"fingerprint_matches_valid"`
+	AlignmentQualityGood    bool     `json:"alignment_quality_good"`
+	OverallHealthScore      float64  `json:"overall_health_score"` // 0.0 to 1.0
+}
+
+// BenchmarkSummary represents a summary of multiple broadcast measurements
+type BenchmarkSummary struct {
+	BroadcastMeasurements map[string]*BroadcastMeasurement `json:"broadcast_measurements"`
+	StartTime             time.Time                        `json:"start_time"`
+	EndTime               time.Time                        `json:"end_time"`
+	TotalDuration         time.Duration                    `json:"total_duration"`
+	SuccessfulBroadcasts  int                              `json:"successful_broadcasts"`
+	FailedBroadcasts      int                              `json:"failed_broadcasts"`
+	AverageLatencyMetrics *AverageLatencyMetrics           `json:"average_latency_metrics"`
+	OverallHealthScore    float64                          `json:"overall_health_score"`
+}
+
+// AverageLatencyMetrics represents average latency across all broadcasts
+type AverageLatencyMetrics struct {
+	AvgHLSCDNLag           float64 `json:"avg_hls_cdn_lag_seconds"`
+	AvgICEcastCDNLag       float64 `json:"avg_icecast_cdn_lag_seconds"`
+	AvgCDNLag              float64 `json:"avg_cdn_lag_seconds"`
+	AvgSourceLag           float64 `json:"avg_source_lag_seconds"`
+	AvgTimeToFirstByte     float64 `json:"avg_time_to_first_byte_ms"`
+	AvgAudioExtractionTime float64 `json:"avg_audio_extraction_time_ms"`
+}
+
+// VALIDATION FUNCTIONS
+
 // Validate validates the benchmark configuration
 func (c *BenchmarkConfig) Validate() error {
 	// Validate base configuration first
@@ -125,7 +320,7 @@ func (c *BroadcastConfig) Validate() error {
 	}
 
 	for name, group := range c.BroadcastGroups {
-		if err := c.validateBroadcastGroup(name, group); err != nil {
+		if err := c.validateBroadcastGroup(group); err != nil {
 			return fmt.Errorf("invalid broadcast group %s: %w", name, err)
 		}
 	}
@@ -134,33 +329,43 @@ func (c *BroadcastConfig) Validate() error {
 }
 
 // validateBroadcastGroup validates a single broadcast group
-func (c *BroadcastConfig) validateBroadcastGroup(name string, group *BroadcastGroup) error {
+func (c *BroadcastConfig) validateBroadcastGroup(group *BroadcastGroup) error {
 	if group.Name == "" {
 		return fmt.Errorf("broadcast group name is required")
 	}
 
-	if len(group.Streams) == 0 {
-		return fmt.Errorf("at least one stream is required")
+	if len(group.Broadcasts) == 0 {
+		return fmt.Errorf("at least one broadcast is required")
 	}
 
-	// Check for required stream combinations
-	hlsSource := group.GetStreamByTypeAndRole(StreamTypeHLS, StreamRoleSource)
-	hlsCDN := group.GetStreamByTypeAndRole(StreamTypeHLS, StreamRoleCDN)
-	icecastSource := group.GetStreamByTypeAndRole(StreamTypeICEcast, StreamRoleSource)
-	icecastCDN := group.GetStreamByTypeAndRole(StreamTypeICEcast, StreamRoleCDN)
-
-	// Validate that we have at least some meaningful comparisons
-	hasHLSPair := hlsSource != nil && hlsCDN != nil
-	hasICEcastPair := icecastSource != nil && icecastCDN != nil
-	hasCrossProtocol := hlsSource != nil && icecastSource != nil
-
-	if !hasHLSPair && !hasICEcastPair && !hasCrossProtocol {
+	// Validate that the group has required stream combinations
+	if !group.HasRequiredStreamTypes() {
 		return fmt.Errorf("broadcast group must have at least one of: HLS source+CDN pair, ICEcast source+CDN pair, or cross-protocol sources")
 	}
 
+	// Validate individual broadcasts
+	for broadcastName, broadcast := range group.Broadcasts {
+		if err := c.validateBroadcast(broadcast); err != nil {
+			return fmt.Errorf("invalid broadcast %s: %w", broadcastName, err)
+		}
+	}
+
+	return nil
+}
+
+// validateBroadcast validates a single broadcast
+func (c *BroadcastConfig) validateBroadcast(broadcast *Broadcast) error {
+	if broadcast.Name == "" {
+		return fmt.Errorf("broadcast name is required")
+	}
+
+	if len(broadcast.Streams) == 0 {
+		return fmt.Errorf("at least one stream is required")
+	}
+
 	// Validate individual streams
-	for streamName, stream := range group.Streams {
-		if err := c.validateStreamEndpoint(streamName, stream); err != nil {
+	for streamName, stream := range broadcast.Streams {
+		if err := c.validateStreamEndpoint(stream); err != nil {
 			return fmt.Errorf("invalid stream %s: %w", streamName, err)
 		}
 	}
@@ -169,7 +374,7 @@ func (c *BroadcastConfig) validateBroadcastGroup(name string, group *BroadcastGr
 }
 
 // validateStreamEndpoint validates a single stream endpoint
-func (c *BroadcastConfig) validateStreamEndpoint(name string, stream *StreamEndpoint) error {
+func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint) error {
 	if stream.URL == "" {
 		return fmt.Errorf("stream URL is required")
 	}
@@ -201,6 +406,7 @@ func (c *BroadcastConfig) validateStreamEndpoint(name string, stream *StreamEndp
 	return nil
 }
 
+// GetEnabledBroadcastGroups returns only the enabled broadcast groups
 func (c *BroadcastConfig) GetEnabledBroadcastGroups() map[string]*BroadcastGroup {
 	enabled := make(map[string]*BroadcastGroup)
 	for name, group := range c.BroadcastGroups {
@@ -211,154 +417,58 @@ func (c *BroadcastConfig) GetEnabledBroadcastGroups() map[string]*BroadcastGroup
 	return enabled
 }
 
-// StreamType represents the type of stream being measured
-type StreamType string
-
-const (
-	StreamTypeHLS     StreamType = "hls"
-	StreamTypeICEcast StreamType = "icecast"
-)
-
-// StreamRole represents the role of the stream in the CDN architecture
-type StreamRole string
-
-const (
-	StreamRoleSource StreamRole = "source"
-	StreamRoleCDN    StreamRole = "cdn"
-)
-
-// StreamEndpoint represents a single stream endpoint
-type StreamEndpoint struct {
-	URL         string     `json:"url" yaml:"url"`
-	Type        StreamType `json:"type" yaml:"type"`
-	Role        StreamRole `json:"role" yaml:"role"`
-	ContentType string     `json:"content_type" yaml:"content_type"`
-	Enabled     bool       `json:"enabled" yaml:"enabled"`
-}
-
-// BroadcastGroup represents a collection of related streams for a single broadcast
-type BroadcastGroup struct {
-	Name        string                     `json:"name" yaml:"name"`
-	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
-	ContentType string                     `json:"content_type" yaml:"content_type"`
-	Streams     map[string]*StreamEndpoint `json:"streams" yaml:"streams"`
-	Enabled     bool                       `json:"enabled" yaml:"enabled"`
-}
-
-// GetStreamByTypeAndRole returns a stream endpoint by type and role
-func (bg *BroadcastGroup) GetStreamByTypeAndRole(streamType StreamType, role StreamRole) *StreamEndpoint {
-	for _, stream := range bg.Streams {
-		if stream.Type == streamType && stream.Role == role && stream.Enabled {
-			return stream
+// GetFirstBroadcastGroup returns the first enabled broadcast group
+func (c *BroadcastConfig) GetFirstBroadcastGroup() (*BroadcastGroup, string, error) {
+	for name, group := range c.BroadcastGroups {
+		if group.Enabled {
+			return group, name, nil
 		}
 	}
-	return nil
+	return nil, "", fmt.Errorf("no enabled broadcast groups found")
 }
 
-// StreamMeasurement represents the measurement results for a single stream
-type StreamMeasurement struct {
-	Endpoint            *StreamEndpoint               `json:"endpoint"`
-	AudioData           *common.AudioData             `json:"-"` // Don't serialize raw audio
-	Fingerprint         *fingerprint.AudioFingerprint `json:"-"` // Don't serialize fingerprint
-	TimeToFirstByte     time.Duration                 `json:"time_to_first_byte"`
-	AudioExtractionTime time.Duration                 `json:"audio_extraction_time"`
-	FingerprintTime     time.Duration                 `json:"fingerprint_time"`
-	TotalProcessingTime time.Duration                 `json:"total_processing_time"`
-	StreamValidation    *StreamValidation             `json:"stream_validation"`
-	Error               error                         `json:"error,omitempty"`
-	Timestamp           time.Time                     `json:"timestamp"`
+// SelectBroadcastByIndex selects a broadcast from the first enabled group by index
+func (c *BroadcastConfig) SelectBroadcastByIndex(index int) (*Broadcast, string, error) {
+	group, groupName, err := c.GetFirstBroadcastGroup()
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Convert map to slice for indexing
+	var broadcasts []*Broadcast
+	var broadcastKeys []string
+
+	for key, broadcast := range group.Broadcasts {
+		if broadcast.Enabled {
+			broadcasts = append(broadcasts, broadcast)
+			broadcastKeys = append(broadcastKeys, key)
+		}
+	}
+
+	if len(broadcasts) == 0 {
+		return nil, "", fmt.Errorf("no enabled broadcasts found in group %s", groupName)
+	}
+
+	if index < 0 || index >= len(broadcasts) {
+		return nil, "", fmt.Errorf("index %d out of range [0, %d) for broadcasts in group %s", index, len(broadcasts), groupName)
+	}
+
+	broadcastKey := fmt.Sprintf("%s_%s", groupName, broadcastKeys[index])
+	return broadcasts[index], broadcastKey, nil
 }
 
-// StreamValidation represents the validation results for a stream
-type StreamValidation struct {
-	IsValid           bool     `json:"is_valid"`
-	ValidationErrors  []string `json:"validation_errors,omitempty"`
-	PlaylistStructure bool     `json:"playlist_structure,omitempty"` // For HLS
-	HTTPHeaders       bool     `json:"http_headers,omitempty"`       // For ICEcast
-	AudioFormat       bool     `json:"audio_format"`
-	BitrateConsistent bool     `json:"bitrate_consistent"`
-}
-
-// AlignmentMeasurement represents alignment comparison between two streams
-type AlignmentMeasurement struct {
-	Stream1          *StreamMeasurement            `json:"stream1"`
-	Stream2          *StreamMeasurement            `json:"stream2"`
-	AlignmentResult  *extractors.AlignmentFeatures `json:"alignment_result"`
-	LatencySeconds   float64                       `json:"latency_seconds"`
-	IsValidAlignment bool                          `json:"is_valid_alignment"`
-	ComparisonTime   time.Duration                 `json:"comparison_time"`
-	Error            error                         `json:"error,omitempty"`
-	Timestamp        time.Time                     `json:"timestamp"`
-}
-
-// FingerprintComparison represents fingerprint similarity comparison
-type FingerprintComparison struct {
-	Stream1           *StreamMeasurement            `json:"stream1"`
-	Stream2           *StreamMeasurement            `json:"stream2"`
-	SimilarityResult  *fingerprint.SimilarityResult `json:"similarity_result"`
-	AlignmentFeatures *extractors.AlignmentFeatures `json:"alignment_features,omitempty"`
-	IsValidMatch      bool                          `json:"is_valid_match"`
-	ComparisonTime    time.Duration                 `json:"comparison_time"`
-	Error             error                         `json:"error,omitempty"`
-	Timestamp         time.Time                     `json:"timestamp"`
-}
-
-// BroadcastMeasurement represents all measurements for a broadcast group
-type BroadcastMeasurement struct {
-	Group                  *BroadcastGroup                   `json:"group"`
-	StreamMeasurements     map[string]*StreamMeasurement     `json:"stream_measurements"`
-	AlignmentMeasurements  map[string]*AlignmentMeasurement  `json:"alignment_measurements"`
-	FingerprintComparisons map[string]*FingerprintComparison `json:"fingerprint_comparisons"`
-	LivenessMetrics        *LivenessMetrics                  `json:"liveness_metrics"`
-	OverallValidation      *OverallValidation                `json:"overall_validation"`
-	TotalBenchmarkTime     time.Duration                     `json:"total_benchmark_time"`
-	Error                  error                             `json:"error,omitempty"`
-	Timestamp              time.Time                         `json:"timestamp"`
-}
-
-// LivenessMetrics represents how far behind live each stream is
-type LivenessMetrics struct {
-	HLSSourceLag      float64 `json:"hls_source_lag_seconds"`
-	HLSCDNLag         float64 `json:"hls_cdn_lag_seconds"`
-	ICEcastSourceLag  float64 `json:"icecast_source_lag_seconds"`
-	ICEcastCDNLag     float64 `json:"icecast_cdn_lag_seconds"`
-	CDNLatencyHLS     float64 `json:"cdn_latency_hls_seconds"`     // HLS CDN - HLS Source
-	CDNLatencyICEcast float64 `json:"cdn_latency_icecast_seconds"` // ICEcast CDN - ICEcast Source
-	CrossProtocolLag  float64 `json:"cross_protocol_lag_seconds"`  // HLS Source - ICEcast Source
-}
-
-// OverallValidation represents the overall health of all streams
-type OverallValidation struct {
-	AllStreamsValid         bool     `json:"all_streams_valid"`
-	ValidStreamCount        int      `json:"valid_stream_count"`
-	InvalidStreamCount      int      `json:"invalid_stream_count"`
-	StreamValidityIssues    []string `json:"stream_validity_issues,omitempty"`
-	FingerprintMatchesValid bool     `json:"fingerprint_matches_valid"`
-	AlignmentQualityGood    bool     `json:"alignment_quality_good"`
-	OverallHealthScore      float64  `json:"overall_health_score"` // 0.0 to 1.0
-}
-
-// BenchmarkSummary represents a summary of multiple broadcast measurements
-type BenchmarkSummary struct {
-	BroadcastMeasurements map[string]*BroadcastMeasurement `json:"broadcast_measurements"`
-	StartTime             time.Time                        `json:"start_time"`
-	EndTime               time.Time                        `json:"end_time"`
-	TotalDuration         time.Duration                    `json:"total_duration"`
-	SuccessfulBroadcasts  int                              `json:"successful_broadcasts"`
-	FailedBroadcasts      int                              `json:"failed_broadcasts"`
-	AverageLatencyMetrics *AverageLatencyMetrics           `json:"average_latency_metrics"`
-	OverallHealthScore    float64                          `json:"overall_health_score"`
-}
-
-// AverageLatencyMetrics represents average latency across all broadcasts
-type AverageLatencyMetrics struct {
-	AvgHLSSourceLag        float64 `json:"avg_hls_source_lag_seconds"`
-	AvgHLSCDNLag           float64 `json:"avg_hls_cdn_lag_seconds"`
-	AvgICEcastSourceLag    float64 `json:"avg_icecast_source_lag_seconds"`
-	AvgICEcastCDNLag       float64 `json:"avg_icecast_cdn_lag_seconds"`
-	AvgCDNLatencyHLS       float64 `json:"avg_cdn_latency_hls_seconds"`
-	AvgCDNLatencyICEcast   float64 `json:"avg_cdn_latency_icecast_seconds"`
-	AvgCrossProtocolLag    float64 `json:"avg_cross_protocol_lag_seconds"`
-	AvgTimeToFirstByte     float64 `json:"avg_time_to_first_byte_ms"`
-	AvgAudioExtractionTime float64 `json:"avg_audio_extraction_time_ms"`
+// GetTotalEnabledBroadcasts returns the total number of enabled broadcasts across all enabled groups
+func (c *BroadcastConfig) GetTotalEnabledBroadcasts() int {
+	total := 0
+	for _, group := range c.BroadcastGroups {
+		if !group.Enabled {
+			continue
+		}
+		for _, broadcast := range group.Broadcasts {
+			if broadcast.Enabled {
+				total++
+			}
+		}
+	}
+	return total
 }

@@ -4,36 +4,56 @@ updated_at: "2025-01-15T10:30:00Z"
 description: "TuneIn CDN benchmark broadcast groups - production streams"
 
 broadcast_groups:
-  msnbc_news:
-    name: "MSNBC News"
-    description: "MSNBC live news broadcast for CDN latency testing"
+  news:
+    name: "News"
+    descriptioon: "Live news broadcasts for CDN latency testing"
     content_type: "news"
     enabled: true
-    streams:
-      hls_source:
-        url: "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
-        type: "hls"
-        role: "source"
+    broadcasts:
+      msnbc_news:
+        name: "MSNBC News"
+        description: "MSNBC live news broadcast for CDN latency testing"
         content_type: "news"
         enabled: true
+        streams:
+          primary_source:
+            url: "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
+            type: "hls"
+            role: "source"
+            content_type: "news"
+            enabled: true
 
-      hls_cdn:
-        url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
+          backup_source:
+            url: "http://stream1.skyviewnetworks.com:8010/MSNBC"
+            type: "icecast"
+            role: "source"
+            content_type: "news"
+            enabled: true
 
-      icecast_source:
-        url: "http://stream1.skyviewnetworks.com:8010/MSNBC"
-        type: "icecast"
-        role: "source"
-        content_type: "news"
-        enabled: true
+          hls_cloudfront_cdn:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            type: "hls"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
 
-      icecast_cdn:
-        url: "https://tunein.cdnstream1.com/3511_96.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
+          icecast_cloudfront_source:
+            url: "https://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            type: "icecast"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+          hls_ais_cdn:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            type: "hls"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+          icecast_ais_cdn:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            type: "icecast"
+            role: "cdn"
+            content_type: "news"
+            enabled: true

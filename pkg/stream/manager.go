@@ -3,6 +3,8 @@ package stream
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 
@@ -32,14 +34,16 @@ type ManagerConfig struct {
 
 // AudioExtractionResult represents the result of extracting audio from a single stream
 type AudioExtractionResult struct {
-	URL        string                 `json:"url"`
-	AudioData  *common.AudioData      `json:"audio_data,omitempty"`
-	Metadata   *common.StreamMetadata `json:"metadata,omitempty"`
-	Error      error                  `json:"error,omitempty"`
-	StartTime  time.Time              `json:"start_time"`
-	EndTime    time.Time              `json:"end_time"`
-	Duration   time.Duration          `json:"duration"`
-	StreamType common.StreamType      `json:"stream_type"`
+	URL             string                 `json:"url"`
+	AudioData       *common.AudioData      `json:"audio_data,omitempty"`
+	Metadata        *common.StreamMetadata `json:"metadata,omitempty"`
+	Error           error                  `json:"error,omitempty"`
+	StartTime       time.Time              `json:"start_time"`
+	EndTime         time.Time              `json:"end_time"`
+	Duration        time.Duration          `json:"duration"`
+	StreamType      common.StreamType      `json:"stream_type"`
+	TimeToFirstByte time.Duration          `json:"time_to_first_byte"`
+	ConnectionTime  time.Duration          `json:"connection_time"`
 }
 
 // ParallelExtractionResult contains results from parallel audio extraction
@@ -205,13 +209,44 @@ func (m *Manager) extractSingleStream(ctx context.Context, url string, targetDur
 
 	result.StreamType = handler.Type()
 
+	connectionStart := time.Now()
+
 	// Connect to stream
 	if err := handler.Connect(ctx, url); err != nil {
 		result.Error = fmt.Errorf("failed to connect to stream: %w", err)
 		result.EndTime = time.Now()
 		result.Duration = result.EndTime.Sub(result.StartTime)
+		result.ConnectionTime = time.Since(connectionStart)
 		return result
 	}
+
+	// Connection successful
+	result.ConnectionTime = time.Since(connectionStart)
+
+	// Measure TTFB
+	ttfbStart := time.Now()
+
+	// Try to read a small amount of data to measure TTFB
+	firstByteData, err := m.measureFirstByte(ctx, handler)
+	if err != nil {
+		// If we can't measure TTFB, fall back to connection time
+		logger.Warn("Could not measure TTFB, using connection time", logging.Fields{
+			"error": err.Error(),
+		})
+		result.TimeToFirstByte = result.ConnectionTime
+	} else {
+		result.TimeToFirstByte = time.Since(ttfbStart)
+		logger.Debug("TTFB measured successfully", logging.Fields{
+			"ttfb_ms":     result.TimeToFirstByte.Milliseconds(),
+			"first_bytes": len(firstByteData),
+		})
+	}
+
+	logger.Debug("Stream connection established", logging.Fields{
+		"connection_time_ms": result.ConnectionTime.Milliseconds(),
+		"ttfb_ms":            result.TimeToFirstByte.Milliseconds(),
+		"ttfb_delta_ms":      (result.TimeToFirstByte - result.ConnectionTime).Milliseconds(),
+	})
 
 	// Get metadata
 	metadata, err := handler.GetMetadata()
@@ -243,6 +278,42 @@ func (m *Manager) extractSingleStream(ctx context.Context, url string, targetDur
 	})
 
 	return result
+}
+
+// measureFirstByte attempts to read the first few bytes from a stream to measure TTFB
+func (m *Manager) measureFirstByte(ctx context.Context, handler common.StreamHandler) ([]byte, error) {
+	// Create a short timeout context for TTFB measurement
+	ttfbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// Try to get the HTTP response body for direct reading
+	if httpHandler, ok := handler.(interface{ GetResponse() *http.Response }); ok {
+		resp := httpHandler.GetResponse()
+		if resp != nil && resp.Body != nil {
+			// Read just a few bytes to trigger TTFB
+			buffer := make([]byte, 64)
+			n, err := resp.Body.Read(buffer)
+			if err != nil && err != io.EOF {
+				return nil, err
+			}
+			return buffer[:n], nil
+		}
+	}
+
+	// Fallback: try to read a very small amount using ReadAudioWithDuration
+	// This is less accurate but works with any handler
+	smallDuration := 100 * time.Millisecond
+	audioData, err := handler.ReadAudioWithDuration(ttfbCtx, smallDuration)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert some PCM samples back to bytes as an approximation
+	if len(audioData.PCM) > 0 {
+		return []byte{0x1}, nil // Just signal that we got data
+	}
+
+	return nil, fmt.Errorf("no data received")
 }
 
 // ExtractAudioSequential extracts audio from multiple streams one after another
