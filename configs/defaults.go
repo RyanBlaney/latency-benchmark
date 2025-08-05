@@ -29,6 +29,22 @@ func setDefaults(v *viper.Viper) {
 	if !v.IsSet("stream.headers") {
 		v.Set("stream.headers", map[string]string{})
 	}
+	if !v.IsSet("stream.ad_bypass_rules") {
+		// Apply default Soundstack/AdzWizz ad bypass rules
+		defaultAdBypassRules := []map[string]any{
+			{
+				"host_patterns": []string{"cdnstream1.com", "soundstack", "adzwizz"},
+				"path_patterns": []string{}, // empty for now
+				"query_params": map[string]string{
+					"aw_0_1st.premium":           "true",
+					"partnerID":                  "BotTIStream",
+					"playerid":                   "BotTIStream",
+					"aw_0_1st.ads_partner_alias": "bot.TIStream",
+				},
+			},
+		}
+		v.Set("stream.ad_bypass_rules", defaultAdBypassRules)
+	}
 
 	// Global test defaults
 	if !v.IsSet("test.timeout") {
@@ -381,6 +397,18 @@ func GetDefaultStreamConfig() StreamConfig {
 		MaxRedirects:      3,
 		UserAgent:         "TuneIn-CDN-Benchmark/1.0",
 		Headers:           make(map[string]string),
+		AdBypassRules: []AdBypassRule{
+			{
+				HostPatterns: []string{"cdnstream1.com", "soundstack", "adzwizz"},
+				PathPatterns: []string{},
+				QueryParams: map[string]string{
+					"aw_0_1st.premium":           "true",
+					"partnerID":                  "BotTIStream",
+					"playerid":                   "BotTIStream",
+					"aw_0_1st.ads_partner_alias": "bot.TIStream",
+				},
+			},
+		},
 	}
 }
 

@@ -35,6 +35,7 @@ func NewOrchestrator(benchmarkCfg *latency.BenchmarkConfig, broadcastCfg *latenc
 		EnableDetailedAnalysis: benchmarkCfg.Benchmark.EnableDetailedAnalysis,
 		UserAgent:              benchmarkCfg.Stream.UserAgent,
 		Logger:                 logger,
+		AdBypassRules:          benchmarkCfg.Stream.AdBypassRules,
 	}
 
 	engine := latency.NewMeasurementEngine(engineConfig)
@@ -190,8 +191,8 @@ func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey 
 		return measurement
 	}
 
-	// Step 2: Perform all possible alignments dynamically
-	measurement.AlignmentMeasurements = o.measureAllPossibleAlignments(ctx, streamMeasurements)
+	// Step 2: Perform source-to-CDN alignments only
+	measurement.AlignmentMeasurements = o.measureSourceToCDNAlignments(ctx, streamMeasurements)
 
 	// Step 3: Perform fingerprint comparisons (if enabled)
 	if !o.benchmarkConfig.Benchmark.SkipFingerprintComparison {
@@ -199,7 +200,7 @@ func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey 
 	}
 
 	// Step 4: Calculate liveness metrics
-	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements, streamMeasurements)
+	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements)
 
 	// Step 5: Perform overall validation
 	measurement.OverallValidation = o.validateOverallHealth(measurement)
@@ -224,8 +225,10 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	semaphore := make(chan struct{}, o.benchmarkConfig.Benchmark.MaxConcurrentStreams)
+	// Create a start signal to synchronize all downloads
+	startSignal := make(chan struct{})
 
+	// Start all goroutines but have them wait for the signal
 	for streamName, stream := range broadcast.Streams {
 		if !stream.Enabled {
 			o.logger.Info("Skipping disabled stream", logging.Fields{
@@ -239,12 +242,8 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 		go func(name string, endpoint *latency.StreamEndpoint) {
 			defer wg.Done()
 
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
+			// Wait for the start signal before proceeding
+			<-startSignal
 
 			measurement := o.engine.MeasureStream(ctx, endpoint)
 
@@ -254,40 +253,61 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 		}(streamName, stream)
 	}
 
+	// Small delay to ensure all goroutines are ready and waiting
+	time.Sleep(100 * time.Millisecond)
+
+	o.logger.Info("Starting synchronized stream measurements", logging.Fields{
+		"stream_count": len(results) + 1, // +1 for the streams being started
+	})
+
+	// Signal all streams to start simultaneously
+	close(startSignal)
+
 	wg.Wait()
 	return results
 }
 
-// measureAllPossibleAlignments creates alignments between all valid stream pairs
-func (o *Orchestrator) measureAllPossibleAlignments(ctx context.Context, streamMeasurements map[string]*latency.StreamMeasurement) map[string]*latency.AlignmentMeasurement {
+// measureSourceToCDNAlignments creates alignments only between source and CDN streams
+func (o *Orchestrator) measureSourceToCDNAlignments(ctx context.Context, streamMeasurements map[string]*latency.StreamMeasurement) map[string]*latency.AlignmentMeasurement {
 	alignments := make(map[string]*latency.AlignmentMeasurement)
 
-	// Get all valid streams
-	validStreams := make([]string, 0)
+	// Separate streams by role
+	var sourceStreams []string
+	var cdnStreams []string
+
 	for key, stream := range streamMeasurements {
-		if stream.Error == nil {
-			validStreams = append(validStreams, key)
+		if stream.Error != nil {
+			continue // Skip failed streams
+		}
+
+		switch stream.Endpoint.Role {
+		case latency.StreamRoleSource:
+			sourceStreams = append(sourceStreams, key)
+		case latency.StreamRoleCDN:
+			cdnStreams = append(cdnStreams, key)
 		}
 	}
 
-	// Create all possible pairs (avoiding duplicates and self-comparisons)
-	for i, key1 := range validStreams {
-		for j, key2 := range validStreams {
-			if i >= j { // Skip duplicates and self-comparisons
-				continue
-			}
+	o.logger.Info("Found streams for alignment", logging.Fields{
+		"source_streams":    sourceStreams,
+		"cdn_streams":       cdnStreams,
+		"total_comparisons": len(sourceStreams) * len(cdnStreams),
+	})
 
-			alignmentName := fmt.Sprintf("%s_to_%s", key1, key2)
+	// Create alignments: each source vs each CDN
+	for _, sourceKey := range sourceStreams {
+		for _, cdnKey := range cdnStreams {
+			alignmentName := fmt.Sprintf("%s_to_%s", sourceKey, cdnKey)
 
 			o.logger.Info("Performing temporal alignment", logging.Fields{
 				"alignment_name": alignmentName,
-				"stream1_key":    key1,
-				"stream2_key":    key2,
-				"stream1_url":    streamMeasurements[key1].Endpoint.URL,
-				"stream2_url":    streamMeasurements[key2].Endpoint.URL,
+				"source_stream":  sourceKey,
+				"cdn_stream":     cdnKey,
+				"source_url":     streamMeasurements[sourceKey].Endpoint.URL,
+				"cdn_url":        streamMeasurements[cdnKey].Endpoint.URL,
 			})
 
-			alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[key1], streamMeasurements[key2])
+			alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[sourceKey], streamMeasurements[cdnKey])
 			alignments[alignmentName] = alignment
 		}
 	}
@@ -519,15 +539,14 @@ func (o *Orchestrator) countValidStreams(measurements map[string]*latency.Stream
 }
 
 // calculateLivenessMetrics calculates liveness metrics from alignment data
-func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement, streamMeasurements map[string]*latency.StreamMeasurement) *latency.LivenessMetrics {
+func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement) *latency.LivenessMetrics {
 	metrics := &latency.LivenessMetrics{}
 
 	o.logger.Info("Calculating liveness metrics from alignments", logging.Fields{
 		"alignment_count": len(alignmentMeasurements),
-		"stream_count":    len(streamMeasurements),
 	})
 
-	// Extract latencies from alignments based on naming patterns
+	// Extract latencies from source-to-CDN alignments
 	for alignmentName, alignment := range alignmentMeasurements {
 		if alignment.Error != nil || !alignment.IsValidAlignment {
 			continue
@@ -535,18 +554,26 @@ func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string
 
 		latency := alignment.LatencySeconds
 
-		// Map alignment names to metrics fields
-		// This is flexible and works with any stream naming scheme
-		if containsPattern(alignmentName, []string{"source", "hls", "cloudfront"}) {
+		// Map based on stream names in the alignment
+		// Pattern: {source_name}_to_{cdn_name}
+		switch {
+		case contains(alignmentName, "primary_source") && contains(alignmentName, "hls") && contains(alignmentName, "cloudfront"):
 			metrics.HLSCloudfrontCDNLag = latency
-		} else if containsPattern(alignmentName, []string{"source", "hls", "ais"}) {
+		case contains(alignmentName, "primary_source") && contains(alignmentName, "hls") && contains(alignmentName, "ais"):
 			metrics.HLSAISCDNLag = latency
-		} else if containsPattern(alignmentName, []string{"source", "icecast", "cloudfront"}) {
+		case contains(alignmentName, "primary_source") && contains(alignmentName, "icecast") && contains(alignmentName, "cloudfront"):
 			metrics.ICEcastCloudfrontCDNLag = latency
-		} else if containsPattern(alignmentName, []string{"source", "icecast", "ais"}) {
+		case contains(alignmentName, "primary_source") && contains(alignmentName, "icecast") && contains(alignmentName, "ais"):
 			metrics.ICEcastAISCDNLag = latency
+		case contains(alignmentName, "backup_source") && contains(alignmentName, "hls") && contains(alignmentName, "cloudfront"):
+			metrics.HLSCloudfrontCDNLagFromBackup = latency
+		case contains(alignmentName, "backup_source") && contains(alignmentName, "hls") && contains(alignmentName, "ais"):
+			metrics.HLSAISCDNLagFromBackup = latency
+		case contains(alignmentName, "backup_source") && contains(alignmentName, "icecast") && contains(alignmentName, "cloudfront"):
+			metrics.ICEcastCloudfrontCDNLagFromBackup = latency
+		case contains(alignmentName, "backup_source") && contains(alignmentName, "icecast") && contains(alignmentName, "ais"):
+			metrics.ICEcastAISCDNLagFromBackup = latency
 		}
-		// Add more patterns as needed...
 
 		o.logger.Debug("Mapped alignment to liveness metric", logging.Fields{
 			"alignment_name": alignmentName,
@@ -555,15 +582,6 @@ func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string
 	}
 
 	return metrics
-}
-
-func containsPattern(alignmentName string, patterns []string) bool {
-	for _, pattern := range patterns {
-		if !contains(alignmentName, pattern) {
-			return false
-		}
-	}
-	return true
 }
 
 func contains(str, substr string) bool {

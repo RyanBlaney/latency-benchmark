@@ -25,6 +25,17 @@ stream:
     "X-Forwarded-For": "10.0.0.1"
     "Cache-Control": "no-cache"
     "Accept-Encoding": "gzip, deflate"
+  ad_bypass_rules:
+    - host_patterns:
+        - "cdnstream1.com"
+        - "soundstack"
+        - "adzwizz"
+      path_patterns: []
+      query_params:
+        aw_0_1st.premium: "true"
+        partnerID: "BotTIStream"
+        playerid: "BotTIStream"
+        aw_0_1st.ads_partner_alias: "bot.TIStream"
 
 # Audio processing (high quality)
 audio:

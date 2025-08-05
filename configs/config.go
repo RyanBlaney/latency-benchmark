@@ -162,6 +162,7 @@ type StreamConfig struct {
 	MaxRedirects      int               `mapstructure:"max_redirects"`
 	UserAgent         string            `mapstructure:"user_agent"`
 	Headers           map[string]string `mapstructure:"headers"`
+	AdBypassRules     []AdBypassRule    `mapstructure:"ad_bypass_rules"`
 }
 
 // AudioConfig contains audio processing settings
@@ -232,6 +233,14 @@ type StreamMetadata struct {
 	Channels   int    `mapstructure:"channels"`
 	Codec      string `mapstructure:"codec"`
 	Format     string `mapstructure:"format"`
+}
+
+// AdBypassRule allows query params to be passed in, generally for the
+// sake of bypassing ads for AIS streams
+type AdBypassRule struct {
+	HostPatterns []string          `mapstructure:"host_patterns"`
+	PathPatterns []string          `mapstructure:"path_patterns"`
+	QueryParams  map[string]string `mapstructure:"query_params"`
 }
 
 // ToHLSConfig converts the main config to an HLS config

@@ -3,9 +3,11 @@ package latency
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/configs"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
@@ -25,6 +27,7 @@ type MeasurementEngine struct {
 	minSimilarity          float64
 	enableDetailedAnalysis bool
 	userAgent              string
+	adBypassRules          []configs.AdBypassRule
 }
 
 // EngineConfig contains configuration for the measurement engine
@@ -37,6 +40,7 @@ type EngineConfig struct {
 	EnableDetailedAnalysis bool
 	UserAgent              string
 	Logger                 logging.Logger
+	AdBypassRules          []configs.AdBypassRule
 }
 
 // NewMeasurementEngine creates a new measurement engine
@@ -55,6 +59,7 @@ func NewMeasurementEngine(config *EngineConfig) *MeasurementEngine {
 		minSimilarity:          config.MinSimilarity,
 		enableDetailedAnalysis: config.EnableDetailedAnalysis,
 		userAgent:              config.UserAgent,
+		adBypassRules:          config.AdBypassRules,
 	}
 }
 
@@ -373,7 +378,9 @@ func (e *MeasurementEngine) loadStreamURL(ctx context.Context, url, contentType 
 	}
 	manager := stream.NewManagerWithConfig(managerConfig)
 
-	results, err := manager.ExtractAudioSequential(ctx, []string{url}, e.segmentDuration)
+	modifiedURL := e.applyAdBypassRules(url)
+
+	results, err := manager.ExtractAudioSequential(ctx, []string{modifiedURL}, e.segmentDuration)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -525,4 +532,73 @@ func (e *MeasurementEngine) createFeatureConfig(contentType config.ContentType, 
 		},
 		MatchThreshold: 0.70,
 	}
+}
+
+// applyAdBypassRules applies ad bypass rules to a URL
+func (e *MeasurementEngine) applyAdBypassRules(targetURL string) string {
+	if len(e.adBypassRules) == 0 {
+		return targetURL
+	}
+
+	parsedURL, err := url.Parse(targetURL)
+	if err != nil {
+		return targetURL
+	}
+
+	query := parsedURL.Query()
+	applied := false
+
+	// Apply matching rules
+	for _, rule := range e.adBypassRules {
+		if e.matchesAdBypassRule(parsedURL, rule) {
+			for key, value := range rule.QueryParams {
+				query.Set(key, value)
+				applied = true
+			}
+		}
+	}
+
+	if applied {
+		parsedURL.RawQuery = query.Encode()
+		e.logger.Debug("Applied ad bypass rules", map[string]any{
+			"original_url": targetURL,
+			"modified_url": parsedURL.String(),
+		})
+		return parsedURL.String()
+	}
+
+	return targetURL
+}
+
+// matchesAdBypassRule checks if a URL matches an ad bypass rule
+func (e *MeasurementEngine) matchesAdBypassRule(parsedURL *url.URL, rule configs.AdBypassRule) bool {
+	// Check host patterns
+	if len(rule.HostPatterns) > 0 {
+		hostMatched := false
+		for _, pattern := range rule.HostPatterns {
+			if strings.Contains(parsedURL.Host, pattern) {
+				hostMatched = true
+				break
+			}
+		}
+		if !hostMatched {
+			return false
+		}
+	}
+
+	// Check path patterns (if specified)
+	if len(rule.PathPatterns) > 0 {
+		pathMatched := false
+		for _, pattern := range rule.PathPatterns {
+			if strings.Contains(parsedURL.Path, pattern) {
+				pathMatched = true
+				break
+			}
+		}
+		if !pathMatched {
+			return false
+		}
+	}
+
+	return true
 }
