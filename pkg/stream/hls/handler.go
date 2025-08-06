@@ -279,8 +279,9 @@ func (h *Handler) ResolveMasterPlaylist(ctx context.Context, masterPlaylist *M3U
 	return mediaPlaylist, nil
 }
 
-// ReadAudioWithDuration reads audio data with a specified duration
-func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
+// ReadAudioWithDurationOld reads audio data with a specified duration
+// TODO: Remove if deprecated
+func (h *Handler) ReadAudioWithDurationOld(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
 	if !h.connected {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
 			common.ErrCodeConnection, "not connected", nil)
@@ -360,6 +361,66 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 	h.stats.BytesReceived = downloader.GetDownloadStats().BytesDownloaded
 
 	logger.Debug("Audio download completed", logging.Fields{
+		"actual_duration": audioData.Duration.Seconds(),
+		"samples":         len(audioData.PCM),
+		"sample_rate":     audioData.SampleRate,
+		"channels":        audioData.Channels,
+	})
+
+	return audioData, nil
+}
+
+// ReadAudioWithDuration reads audio using FFmpeg directly (bypasses HLS parsing)
+func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
+	if !h.connected {
+		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
+			common.ErrCodeConnection, "not connected", nil)
+	}
+
+	logger := logging.WithFields(logging.Fields{
+		"component":       "hls_handler",
+		"function":        "ReadAudioWithDurationDirect",
+		"target_duration": duration.Seconds(),
+		"method":          "ffmpeg_direct",
+	})
+
+	// Initialize downloader if not exists
+	if h.downloader == nil {
+		downloadConfig := DefaultDownloadConfig()
+		if h.config != nil && h.config.Audio != nil {
+			downloadConfig.TargetDuration = duration
+			downloadConfig.OutputSampleRate = 44100
+			downloadConfig.OutputChannels = 1
+
+			if h.config.Audio.MaxSegments > 0 {
+				downloadConfig.MaxSegments = h.config.Audio.MaxSegments
+			}
+		}
+		h.downloader = NewAudioDownloader(h.client, downloadConfig, h.config)
+		h.downloader.SetBaseURL(h.url)
+	}
+
+	logger.Debug("Using direct FFmpeg method for HLS download")
+
+	// Use the direct FFmpeg method
+	audioData, err := h.downloader.DownloadAudioSampleDirect(ctx, h.url, duration)
+	if err != nil {
+		logger.Warn("Direct FFmpeg method failed, falling back to standard HLS parsing", logging.Fields{
+			"error": err.Error(),
+		})
+
+		// Fallback to standard HLS parsing method
+		return h.ReadAudioWithDuration(ctx, duration)
+	}
+
+	// Enrich metadata from playlist/stream info if available
+	h.enrichAudioMetadata(audioData)
+
+	// Update stats
+	h.stats.BytesReceived = h.downloader.GetDownloadStats().BytesDownloaded
+	h.stats.SegmentsReceived = h.downloader.GetDownloadStats().SegmentsDownloaded
+
+	logger.Debug("Direct FFmpeg download completed successfully", logging.Fields{
 		"actual_duration": audioData.Duration.Seconds(),
 		"samples":         len(audioData.PCM),
 		"sample_rate":     audioData.SampleRate,

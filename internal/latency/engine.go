@@ -2,8 +2,12 @@ package latency
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -88,6 +92,9 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 	measurement.TimeToFirstByte = ttfb
 	measurement.AudioData = audioData
 
+	// Output to file (for testing)
+	outputToFile(endpoint.URL, audioData.PCM)
+
 	// Step 2: Validate stream
 	measurement.StreamValidation = e.validateStream(endpoint, audioData)
 
@@ -113,6 +120,76 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 	})
 
 	return measurement
+}
+
+// outputToFile is a santity check to ensure the downloads are actually starting and downloading properly
+func outputToFile(urlStr string, pcmData []float64) error {
+	// Create live-test directory if it doesn't exist
+	if err := os.MkdirAll("./live-test", 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Clean URL to make it filesystem-safe
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	// Create filename from URL (remove protocol, replace invalid chars)
+	filename := strings.ReplaceAll(parsedURL.Host+parsedURL.Path, "/", "_")
+	filename = strings.ReplaceAll(filename, ":", "_")
+	filename = strings.ReplaceAll(filename, "?", "_")
+	filename = strings.ReplaceAll(filename, "&", "_")
+	filename = strings.ReplaceAll(filename, "=", "_")
+	if filename == "" {
+		filename = "audio"
+	}
+
+	// Create temporary raw PCM file
+	tempPCMFile := filepath.Join("./live-test", filename+"_temp.pcm")
+	wavFile := filepath.Join("./live-test", filename+".wav")
+
+	// Convert float64 to 16-bit PCM and write to temp file
+	file, err := os.Create(tempPCMFile)
+	if err != nil {
+		return fmt.Errorf("failed to create temp PCM file: %w", err)
+	}
+	defer file.Close()
+	defer os.Remove(tempPCMFile) // Clean up temp file
+
+	for _, sample := range pcmData {
+		// Clamp to [-1.0, 1.0] and convert to 16-bit signed integer
+		if sample > 1.0 {
+			sample = 1.0
+		} else if sample < -1.0 {
+			sample = -1.0
+		}
+
+		pcm16 := int16(sample * 32767)
+		if err := binary.Write(file, binary.LittleEndian, pcm16); err != nil {
+			return fmt.Errorf("failed to write PCM data: %w", err)
+		}
+	}
+	file.Close()
+
+	// Use ffmpeg to convert raw PCM to WAV
+	// Assuming 44.1kHz sample rate, 16-bit, mono
+	cmd := exec.Command("ffmpeg",
+		"-f", "s16le", // 16-bit signed little-endian
+		"-ar", "44100", // 44.1kHz sample rate
+		"-ac", "1", // mono
+		"-i", tempPCMFile, // input file
+		"-y",    // overwrite output file
+		wavFile, // output file
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg failed: %w\nOutput: %s", err, string(output))
+	}
+
+	fmt.Printf("Successfully created WAV file: %s\n", wavFile)
+	return nil
 }
 
 // MeasureAlignment measures temporal alignment between two streams

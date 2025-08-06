@@ -381,8 +381,7 @@ func LoadConfig() (*Config, error) {
 
 	// Copy all settings from the global viper instance (flags), excluding conflicting flag keys
 	conflictingKeys := map[string]bool{
-		"output":  true, // conflicts with output config section
-		"regions": true, // conflicts with regions config section
+		"output": true, // conflicts with output config section
 	}
 
 	for _, key := range viper.AllKeys() {
@@ -396,11 +395,6 @@ func LoadConfig() (*Config, error) {
 		configViper.Set("output_format", viper.GetString("output"))
 	}
 
-	// Handle regions flag conflict by mapping it to benchmark.regions
-	if viper.IsSet("regions") {
-		configViper.Set("benchmark.regions", viper.GetStringSlice("regions"))
-	}
-
 	// Ensure output configuration section exists with defaults if not already set
 	if !configViper.IsSet("output.precision") {
 		defaultOutput := GetDefaultOutputConfig()
@@ -409,22 +403,6 @@ func LoadConfig() (*Config, error) {
 		configViper.Set("output.timestamps", defaultOutput.Timestamps)
 		configViper.Set("output.colors", defaultOutput.Colors)
 		configViper.Set("output.pager", defaultOutput.Pager)
-	}
-
-	// Ensure regions configuration section exists with defaults if not already set
-	if !configViper.IsSet("regions.local") {
-		defaultRegions := GetDefaultRegions()
-		for regionKey, regionConfig := range defaultRegions {
-			configViper.Set(fmt.Sprintf("regions.%s.name", regionKey), regionConfig.Name)
-			configViper.Set(fmt.Sprintf("regions.%s.endpoint", regionKey), regionConfig.Endpoint)
-			configViper.Set(fmt.Sprintf("regions.%s.location", regionKey), regionConfig.Location)
-			configViper.Set(fmt.Sprintf("regions.%s.enabled", regionKey), regionConfig.Enabled)
-
-			// Set region headers
-			for headerKey, headerValue := range regionConfig.Headers {
-				configViper.Set(fmt.Sprintf("regions.%s.headers.%s", regionKey, headerKey), headerValue)
-			}
-		}
 	}
 
 	// Set all defaults if not already configured (this replaces setHLSDefaults)

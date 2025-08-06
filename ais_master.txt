@@ -1,0 +1,3 @@
+#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=95000,CODECS="mp4a.40.2"
+https://tunein.cdnstream1.com:443/3511_96.aac/playlist.m3u8?listeningSessionID=6874726801871bdf_2044600_93rdbNq8_NjYuODUuODkuNTI6ODA!_0000001l8Yb&downloadSessionID=0

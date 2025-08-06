@@ -63,8 +63,6 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 	benchmarkCtx, cancel := context.WithTimeout(ctx, o.benchmarkConfig.Benchmark.BenchmarkTimeout)
 	defer cancel()
 
-	// For now, we only process the first broadcast group and first broadcast
-	// Later this will be extended to support index-based selection for parallel execution
 	broadcast, broadcastKey, err := o.broadcastConfig.SelectBroadcastByIndex(0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select broadcast by index 0: %w", err)
@@ -230,12 +228,14 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 
 	// Start all goroutines but have them wait for the signal
 	for streamName, stream := range broadcast.Streams {
-		if !stream.Enabled {
-			o.logger.Info("Skipping disabled stream", logging.Fields{
-				"stream_name": streamName,
-				"url":         stream.URL,
-			})
-			continue
+		if stream.Enabled != nil {
+			if !*stream.Enabled {
+				o.logger.Info("Skipping disabled stream", logging.Fields{
+					"stream_name": streamName,
+					"url":         stream.URL,
+				})
+				continue
+			}
 		}
 
 		wg.Add(1)

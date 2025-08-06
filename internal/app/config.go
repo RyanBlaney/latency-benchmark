@@ -81,6 +81,8 @@ func loadBroadcastConfigFromYAML(filePath string) (*BroadcastConfig, error) {
 		return nil, fmt.Errorf("failed to parse YAML broadcast config: %w", err)
 	}
 
+	config.ApplyInheritance()
+
 	return &config, nil
 }
 
@@ -101,6 +103,8 @@ func loadBroadcastConfigFromJSON(filePath string) (*BroadcastConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON broadcast config: %w", err)
 	}
+
+	config.ApplyInheritance()
 
 	return &config, nil
 }
@@ -299,40 +303,34 @@ func GenerateExampleBroadcastConfig(outputFile string) error {
 				Name:        "News",
 				Description: "Live News Broadcasts",
 				ContentType: "news",
-				Enabled:     true,
 				Broadcasts: map[string]*latency.Broadcast{
 					"msnbc_news": {
 						Name:        "MSNBC News",
 						Description: "MSNBC Live News Broadcast",
-						Enabled:     true,
 						Streams: map[string]*latency.StreamEndpoint{
 							"hls_source": {
 								URL:         "https://source.example.com/msnbc/live.m3u8",
 								Type:        latency.StreamTypeHLS,
 								Role:        latency.StreamRoleSource,
 								ContentType: "news",
-								Enabled:     true,
 							},
 							"hls_cdn": {
 								URL:         "https://cdn.example.com/msnbc/live.m3u8",
 								Type:        latency.StreamTypeHLS,
 								Role:        latency.StreamRoleCDN,
 								ContentType: "news",
-								Enabled:     true,
 							},
 							"icecast_source": {
 								URL:         "https://source.example.com/msnbc/live.mp3",
 								Type:        latency.StreamTypeICEcast,
 								Role:        latency.StreamRoleSource,
 								ContentType: "news",
-								Enabled:     true,
 							},
 							"icecast_cdn": {
 								URL:         "https://cdn.example.com/msnbc/live.mp3",
 								Type:        latency.StreamTypeICEcast,
 								Role:        latency.StreamRoleCDN,
 								ContentType: "news",
-								Enabled:     true,
 							},
 						},
 					},

@@ -134,7 +134,15 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 		return nil, nil, fmt.Errorf("failed to load base configuration: %w", err)
 	}
 
-	// Load benchmark-specific configuration from file (optional)
+	fmt.Printf("Base Config")
+	fmt.Printf("Stream.ReadTimeout: %d", baseConfig.Stream.ReadTimeout)
+	fmt.Printf("HLS.HTTP.ReadTimeout: %d", baseConfig.HLS.HTTP.ReadTimeout)
+	fmt.Printf("HLS.Audio.SampleDuration: %d", baseConfig.HLS.Audio.SampleDuration)
+	fmt.Printf("ICEcast.HTTP.ReadTimeout: %d", baseConfig.ICEcast.HTTP.ReadTimeout)
+	fmt.Printf("ICEcast.Audio.SampleDuration: %d", baseConfig.ICEcast.Audio.SampleDuration)
+	fmt.Printf("Quality.MaxLatency: %d", baseConfig.Quality.MaxLatency)
+
+	// Load benchmark-specific configuration from file
 	var benchmarkConfig *BenchmarkConfig
 	if ctx.ConfigFile != "" {
 		benchmarkConfig, err = loadBenchmarkConfigFromFile(ctx.ConfigFile)
@@ -142,6 +150,11 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 			return nil, nil, fmt.Errorf("failed to load benchmark configuration: %w", err)
 		}
 	}
+
+	fmt.Printf("Benchmark Config")
+	fmt.Printf("Benchmark.OperationTimeout: %d", benchmarkConfig.Benchmark.OperationTimeout)
+	fmt.Printf("Benchmark.AudioSegmentDuration: %d", benchmarkConfig.Benchmark.AudioSegmentDuration)
+	fmt.Printf("Benchmark.MaxAlignmentOffset: %f", benchmarkConfig.Benchmark.MaxAlignmentOffset)
 
 	// Load broadcast groups configuration from file (required)
 	if ctx.BroadcastConfigFile == "" {

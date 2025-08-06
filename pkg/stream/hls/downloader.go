@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
@@ -346,6 +347,121 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 
 	// FIX: Combine all segment data before decoding
 	return ad.combineAndDecodeSegments(segmentDataList, segmentDurations, mediaPlaylistURL)
+}
+
+// DownloadAudioSampleDirect downloads HLS audio using FFmpeg directly from URL
+// This bypasses all the complex HLS parsing and uses FFmpeg's native HLS support
+func (ad *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, playlistURL string, targetDuration time.Duration) (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component":       "hls_audio_downloader",
+		"function":        "DownloadAudioSampleDirect",
+		"playlist_url":    playlistURL,
+		"target_duration": targetDuration.Seconds(),
+		"method":          "ffmpeg_direct",
+	})
+
+	logger.Info("Starting direct FFmpeg HLS audio download")
+
+	// Apply query parameters if needed
+	processedURL := ad.applyQueryParamRules(playlistURL)
+
+	// Create decoder with configuration matching our output requirements
+	decoderConfig := transcode.DefaultDecoderConfig()
+
+	// Apply HLS config values if available
+	if ad.hlsConfig != nil && ad.hlsConfig.MetadataExtractor != nil && ad.hlsConfig.MetadataExtractor.DefaultValues != nil {
+		if sampleRate, ok := ad.hlsConfig.MetadataExtractor.DefaultValues["sample_rate"].(int); ok && sampleRate > 0 {
+			decoderConfig.TargetSampleRate = sampleRate
+		}
+		if channels, ok := ad.hlsConfig.MetadataExtractor.DefaultValues["channels"].(int); ok && channels > 0 {
+			decoderConfig.TargetChannels = channels
+		}
+	}
+
+	// Override with our downloader config if available
+	if ad.config != nil {
+		decoderConfig.TargetSampleRate = ad.config.OutputSampleRate
+		decoderConfig.TargetChannels = ad.config.OutputChannels
+
+		// Set duration limit
+		decoderConfig.MaxDuration = targetDuration
+
+		// Set timeout based on target duration + buffer
+		decoderConfig.Timeout = targetDuration + (30 * time.Second)
+	}
+
+	// Create decoder
+	decoder := transcode.NewDecoder(decoderConfig)
+	defer decoder.Close()
+
+	logger.Debug("Created FFmpeg decoder", logging.Fields{
+		"target_sample_rate": decoderConfig.TargetSampleRate,
+		"target_channels":    decoderConfig.TargetChannels,
+		"max_duration":       decoderConfig.MaxDuration.Seconds(),
+		"timeout":            decoderConfig.Timeout.Seconds(),
+	})
+
+	// Use FFmpeg to decode directly from URL
+	startTime := time.Now()
+	result, err := decoder.DecodeURL(processedURL, targetDuration)
+	if err != nil {
+		logger.Error(err, "FFmpeg direct decode failed")
+		return nil, fmt.Errorf("failed to decode HLS stream with FFmpeg: %w", err)
+	}
+
+	downloadTime := time.Since(startTime)
+
+	// TODO: remove this variable
+	// Convert transcode.AudioData to common.AudioData
+	transcodeAudio := result
+
+	// Convert to common.AudioData format
+	audioData := &common.AudioData{
+		PCM:        transcodeAudio.PCM,
+		SampleRate: transcodeAudio.SampleRate,
+		Channels:   transcodeAudio.Channels,
+		Duration:   transcodeAudio.Duration,
+		Timestamp:  time.Now(),
+	}
+
+	// Convert metadata if available
+	if transcodeAudio.Metadata != nil {
+		audioData.Metadata = &common.StreamMetadata{
+			URL:         playlistURL,
+			Type:        common.StreamTypeHLS,
+			Format:      transcodeAudio.Metadata.Format,
+			Bitrate:     transcodeAudio.Metadata.Bitrate,
+			SampleRate:  transcodeAudio.Metadata.SampleRate,
+			Channels:    transcodeAudio.Metadata.Channels,
+			Codec:       transcodeAudio.Metadata.Codec,
+			ContentType: transcodeAudio.Metadata.ContentType,
+			Title:       transcodeAudio.Metadata.Title,
+			Artist:      transcodeAudio.Metadata.Artist,
+			Genre:       transcodeAudio.Metadata.Genre,
+			Station:     transcodeAudio.Metadata.Station,
+			Headers:     transcodeAudio.Metadata.Headers,
+			Timestamp:   time.Now(),
+		}
+	} else {
+		// Create basic metadata
+		audioData.Metadata = ad.createBasicMetadata(playlistURL)
+	}
+
+	// Update download stats
+	ad.downloadStats.SegmentsDownloaded = 1                          // FFmpeg handles segments internally
+	ad.downloadStats.BytesDownloaded = int64(len(audioData.PCM) * 8) // Estimate based on PCM data
+	ad.downloadStats.DownloadTime = downloadTime
+
+	logger.Info("Direct FFmpeg HLS download completed", logging.Fields{
+		"actual_duration": audioData.Duration.Seconds(),
+		"target_duration": targetDuration.Seconds(),
+		"samples":         len(audioData.PCM),
+		"sample_rate":     audioData.SampleRate,
+		"channels":        audioData.Channels,
+		"download_time":   downloadTime.Seconds(),
+	})
+
+	return audioData, nil
 }
 
 // combineAndDecodeSegments combines raw segment data and decodes it as one unit

@@ -5,11 +5,75 @@ description: "TuneIn CDN benchmark broadcast groups - production streams"
 
 broadcast_groups:
   news:
-    name: "News"
-    descriptioon: "Live news broadcasts for CDN latency testing"
+    name: "O&O Talk"
+    description: "O&O live talk and news broadcasts"
     content_type: "news"
     enabled: true
     broadcasts:
+      cnbc:
+        name: CNBC
+        enabled: false
+        streams:
+          primary_source:
+            url: "http://hls.tunein.com/v3/newsfree/cnbcfree/master.m3u8"
+            role: "source"
+            enabled: true
+          icy_mp3:
+            url: "https://tunein.cdnstream1.com/3516_96.mp3"
+            role: "cdn"
+            enabled: true
+          icy_ais:
+            url: "https://tunein.cdnstream1.com/newsfree-cnbcfree"
+            role: "cdn"
+            enabled: true
+
+      fox:
+        name: "Fox News"
+        enabled: false
+        streams:
+          primary_source:
+            url: "http://hls.tunein.com/v3/newsfree/foxfree/master.m3u8"
+            role: "source"
+            enabled: true
+          icy_mp3:
+            url: "https://tunein.cdnstream1.com/2869_96.mp3"
+            role: "cdn"
+            enabled: true
+          icy_ais:
+            url: "https://tunein.cdnstream1.com/newsfree-foxfree"
+            role: "cdn"
+            enabled: true
+
+      cnn:
+        name: "CNN"
+        content_type: "news"
+        enabled: false
+        streams:
+          primary_source:
+            url: "http://hls.tunein.com/v3/newsfree/cnnfree/master.m3u8"
+            role: "source"
+          icy_mp3:
+            url: "https://tunein.cdnstream1.com/2868_96.mp3"
+            role: "cdn"
+          icy_ais:
+            url: "https://tunein.cdnstream1.com/newsfree-cnnfree"
+            role: "cdn"
+
+      cnn_hln:
+        name: "CNN HLN"
+        content_type: "news"
+        enabled: false
+        streams:
+          primary_source:
+            url: "http://hls.tunein.com/v3/newsfree/cnnhln/master.m3u8"
+            role: "source"
+          icy_mp3:
+            url: "https://tunein.cdnstream1.com/2876_96.mp3"
+            role: "cdn"
+          icy_ais:
+            url: "https://tunein.cdnstream1.com/newsfree-cnnhln"
+            role: "cdn"
+
       msnbc_news:
         name: "MSNBC News"
         description: "MSNBC live news broadcast for CDN latency testing"
@@ -28,7 +92,7 @@ broadcast_groups:
             type: "icecast"
             role: "source"
             content_type: "news"
-            enabled: true
+            enabled: false
 
           hls_cloudfront_cdn:
             url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
@@ -37,7 +101,7 @@ broadcast_groups:
             content_type: "news"
             enabled: true
 
-          icecast_cloudfront_source:
+          icecast_cloudfront:
             url: "https://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
             type: "icecast"
             role: "cdn"

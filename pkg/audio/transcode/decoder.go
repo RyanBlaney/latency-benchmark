@@ -258,6 +258,130 @@ func (d *Decoder) GetConfig() map[string]any {
 	}
 }
 
+// DecodeURL decodes audio directly from a URL using FFmpeg (for HLS, HTTP streams, etc.)
+func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_decoder",
+		"function":  "DecodeURL",
+		"url":       url,
+		"duration":  duration.Seconds(),
+	})
+
+	logger.Debug("Starting URL decode with FFmpeg")
+
+	// Build ffmpeg command for URL input
+	args := []string{
+		"-v", "error", // Suppress verbose output
+		"-i", url, // Input URL
+	}
+
+	// Add duration limit if specified
+	if duration > 0 {
+		args = append(args, "-t", fmt.Sprintf("%.3f", duration.Seconds()))
+	}
+
+	// Add output format parameters
+	args = append(args,
+		"-vn",         // No video
+		"-f", "f64le", // Output raw float64 little-endian
+		"-ac", strconv.Itoa(d.config.TargetChannels), // Target channels
+		"-ar", strconv.Itoa(d.config.TargetSampleRate), // Target sample rate
+	)
+
+	// Add normalization if enabled
+	if d.config.EnableNormalization {
+		normFilter := d.buildNormalizationFilter()
+		if normFilter != "" {
+			args = append(args, "-af", normFilter)
+		}
+	}
+
+	// Output to stdout
+	args = append(args, "pipe:1")
+
+	// Create command with timeout
+	timeout := duration + (30 * time.Second) // Buffer time
+	if d.config.Timeout > 0 && d.config.Timeout > timeout {
+		timeout = d.config.Timeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, d.config.FFmpegPath, args...)
+
+	logger.Debug("Running FFmpeg URL command", logging.Fields{
+		"command": fmt.Sprintf("%s %s", d.config.FFmpegPath, strings.Join(args, " ")),
+		"timeout": timeout.Seconds(),
+	})
+
+	startTime := time.Now()
+	output, err := cmd.Output()
+	decodeTime := time.Since(startTime)
+
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			logger.Error(err, "FFmpeg URL decode failed", logging.Fields{
+				"stderr": string(exitError.Stderr),
+			})
+			return nil, fmt.Errorf("ffmpeg URL decode failed: %w, stderr: %s", err, string(exitError.Stderr))
+		}
+		return nil, fmt.Errorf("ffmpeg URL decode failed: %w", err)
+	}
+
+	logger.Debug("FFmpeg URL decode completed", logging.Fields{
+		"output_bytes": len(output),
+		"decode_time":  decodeTime.Seconds(),
+	})
+
+	// Convert output to AudioData
+	samples := d.bytesToFloat64(output)
+	if len(samples) == 0 {
+		return nil, fmt.Errorf("no audio samples decoded from URL")
+	}
+
+	// Calculate actual duration
+	samplesPerChannel := len(samples) / d.config.TargetChannels
+	actualDuration := time.Duration(samplesPerChannel) * time.Second / time.Duration(d.config.TargetSampleRate)
+
+	logger.Debug("URL decode processing completed", logging.Fields{
+		"samples":            len(samples),
+		"samples_per_ch":     samplesPerChannel,
+		"actual_duration":    actualDuration.Seconds(),
+		"requested_duration": duration.Seconds(),
+		"sample_rate":        d.config.TargetSampleRate,
+		"channels":           d.config.TargetChannels,
+	})
+
+	// Create metadata for URL-based decode
+	metadata := &StreamMetadata{
+		URL:        url,
+		Type:       "stream",
+		Format:     d.config.OutputFormat,
+		SampleRate: d.config.TargetSampleRate,
+		Channels:   d.config.TargetChannels,
+		Codec:      "decoded",
+		Headers:    make(map[string]string),
+		Timestamp:  time.Now(),
+	}
+
+	// Add normalization info if applied
+	if d.config.EnableNormalization {
+		metadata.Headers["normalization_applied"] = "true"
+		metadata.Headers["normalization_method"] = d.config.NormalizationMethod
+		metadata.Headers["target_lufs"] = fmt.Sprintf("%.1f", d.config.TargetLUFS)
+	}
+
+	return &AudioData{
+		PCM:        samples,
+		SampleRate: d.config.TargetSampleRate,
+		Channels:   d.config.TargetChannels,
+		Duration:   actualDuration,
+		Timestamp:  time.Now(),
+		Metadata:   metadata,
+	}, nil
+}
+
 // probeAudioFile uses ffprobe to get audio information from a file
 func (d *Decoder) probeAudioFile(filename string) (*AudioMetadata, error) {
 	args := []string{

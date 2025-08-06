@@ -70,7 +70,7 @@ func init() {
 
 	// Performance options
 	benchmarkCmd.Flags().DurationVar(&benchmarkTimeout, "timeout", time.Minute*30, "overall benchmark timeout")
-	benchmarkCmd.Flags().DurationVarP(&benchmarkSegmentDuration, "segment-duration", "t", time.Second*240, "audio segment duration")
+	benchmarkCmd.Flags().DurationVarP(&benchmarkSegmentDuration, "segment-duration", "t", 0, "audio segment duration")
 	benchmarkCmd.Flags().IntVar(&benchmarkMaxConcurrent, "max-concurrent", 3, "maximum concurrent broadcast measurements")
 
 	// Analysis options

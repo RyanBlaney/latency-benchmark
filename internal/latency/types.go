@@ -1,12 +1,15 @@
 package latency
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/tunein/cdn-benchmark-cli/configs"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
 	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
+	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
 
@@ -90,10 +93,10 @@ const (
 // StreamEndpoint represents a single stream endpoint
 type StreamEndpoint struct {
 	URL         string     `json:"url" yaml:"url"`
-	Type        StreamType `json:"type" yaml:"type"`
+	Type        StreamType `json:"type,omitempty" yaml:"type,omitempty"`
 	Role        StreamRole `json:"role" yaml:"role"`
-	ContentType string     `json:"content_type" yaml:"content_type"`
-	Enabled     bool       `json:"enabled" yaml:"enabled"`
+	ContentType string     `json:"content_type,omitempty" yaml:"content_type,omitempty"`
+	Enabled     *bool      `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 // BroadcastGroup represents a collection of broadcasts (multiple sets of streams)
@@ -102,23 +105,25 @@ type BroadcastGroup struct {
 	Description string                `json:"description,omitempty" yaml:"description,omitempty"`
 	ContentType string                `json:"content_type" yaml:"content_type"`
 	Broadcasts  map[string]*Broadcast `json:"broadcasts" yaml:"broadcasts"`
-	Enabled     bool                  `json:"enabled" yaml:"enabled"`
+	Enabled     *bool                 `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 // Broadcast represents a single broadcast with 5-6 streams for comparison
 type Broadcast struct {
 	Name        string                     `json:"name" yaml:"name"`
 	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
-	ContentType string                     `json:"content_type" yaml:"content_type"`
+	ContentType string                     `json:"content_type,omitempty" yaml:"content_type,omitempty"`
 	Streams     map[string]*StreamEndpoint `json:"streams" yaml:"streams"`
-	Enabled     bool                       `json:"enabled" yaml:"enabled"`
+	Enabled     *bool                      `json:"enabled,omitempty" yaml:"enabled,omitempty"`
 }
 
 // GetStreamByTypeAndRole returns a stream endpoint by type and role from a Broadcast
 func (b *Broadcast) GetStreamByTypeAndRole(streamType StreamType, role StreamRole) *StreamEndpoint {
 	for _, stream := range b.Streams {
-		if stream.Type == streamType && stream.Role == role && stream.Enabled {
-			return stream
+		if stream.Enabled != nil {
+			if stream.Type == streamType && stream.Role == role && *stream.Enabled {
+				return stream
+			}
 		}
 	}
 	return nil
@@ -128,12 +133,36 @@ func (b *Broadcast) GetStreamByTypeAndRole(streamType StreamType, role StreamRol
 func (bg *BroadcastGroup) GetAllStreamsOfTypeAndRole(streamType StreamType, role StreamRole) []*StreamEndpoint {
 	var streams []*StreamEndpoint
 	for _, broadcast := range bg.Broadcasts {
-		if !broadcast.Enabled {
-			continue
+		if broadcast.Enabled != nil {
+			if !*broadcast.Enabled {
+				continue
+			}
 		}
 		for _, stream := range broadcast.Streams {
-			if stream.Type == streamType && stream.Role == role && stream.Enabled {
-				streams = append(streams, stream)
+			if stream.Enabled != nil {
+				if stream.Type == streamType && stream.Role == role && *stream.Enabled {
+					streams = append(streams, stream)
+				}
+			}
+		}
+	}
+	return streams
+}
+
+// GetAllStreamsOfRole returns all streams from ALL broadcasts in the group matching type and role
+func (bg *BroadcastGroup) GetAllStreamsOfRole(role StreamRole) []*StreamEndpoint {
+	var streams []*StreamEndpoint
+	for _, broadcast := range bg.Broadcasts {
+		if broadcast.Enabled != nil {
+			if !*broadcast.Enabled {
+				continue
+			}
+		}
+		for _, stream := range broadcast.Streams {
+			if stream.Enabled != nil {
+				if stream.Role == role && *stream.Enabled {
+					streams = append(streams, stream)
+				}
 			}
 		}
 	}
@@ -142,18 +171,10 @@ func (bg *BroadcastGroup) GetAllStreamsOfTypeAndRole(streamType StreamType, role
 
 // HasRequiredStreamTypes checks if the broadcast group has the minimum required stream combinations
 func (bg *BroadcastGroup) HasRequiredStreamTypes() bool {
-	// Check across ALL broadcasts in the group
-	hlsSources := bg.GetAllStreamsOfTypeAndRole(StreamTypeHLS, StreamRoleSource)
-	hlsCDNs := bg.GetAllStreamsOfTypeAndRole(StreamTypeHLS, StreamRoleCDN)
-	icecastSources := bg.GetAllStreamsOfTypeAndRole(StreamTypeICEcast, StreamRoleSource)
-	icecastCDNs := bg.GetAllStreamsOfTypeAndRole(StreamTypeICEcast, StreamRoleCDN)
+	sources := bg.GetAllStreamsOfRole(StreamRoleSource)
+	cdns := bg.GetAllStreamsOfRole(StreamRoleCDN)
 
-	// Validate that we have at least some meaningful comparisons
-	hasHLSPair := len(hlsSources) > 0 && len(hlsCDNs) > 0
-	hasICEcastPair := len(icecastSources) > 0 && len(icecastCDNs) > 0
-	hasCrossProtocol := len(hlsSources) > 0 && len(icecastSources) > 0
-
-	return hasHLSPair || hasICEcastPair || hasCrossProtocol
+	return len(sources) > 0 && len(cdns) > 0
 }
 
 // StreamMeasurement represents the measurement results for a single stream
@@ -313,6 +334,55 @@ func (c *BenchmarkConfig) Validate() error {
 	return nil
 }
 
+// ApplyInheritance applies content type inheritance and sets defaults throughout the hierarchy
+func (c *BroadcastConfig) ApplyInheritance() {
+	for _, group := range c.BroadcastGroups {
+		if group.Enabled == nil {
+			defaultVal := true
+			group.Enabled = &defaultVal
+		} else if !*group.Enabled {
+			continue
+		}
+
+		for _, broadcast := range group.Broadcasts {
+			// Set broadcast defaults
+			if broadcast.ContentType == "" {
+				broadcast.ContentType = group.ContentType
+			}
+
+			if broadcast.Enabled == nil {
+				defaultVal := true
+				broadcast.Enabled = &defaultVal
+			} else if !*group.Enabled {
+				continue
+			}
+
+			for _, s := range broadcast.Streams {
+				// Set stream defaults
+				if s.ContentType == "" {
+					s.ContentType = broadcast.ContentType
+				}
+				if s.Enabled == nil {
+					defaultVal := true
+					s.Enabled = &defaultVal
+				}
+				if s.Type == "" && *s.Enabled {
+					sType, err := stream.NewDetector().DetectType(context.Background(), s.URL)
+					if err != nil {
+						log.Fatalf("failed to get stream type for %s: %v", s.URL, err)
+					}
+					switch sType {
+					case common.StreamTypeHLS:
+						s.Type = StreamTypeHLS
+					case common.StreamTypeICEcast:
+						s.Type = StreamTypeICEcast
+					}
+				}
+			}
+		}
+	}
+}
+
 // Validate validates the broadcast configuration
 func (c *BroadcastConfig) Validate() error {
 	if len(c.BroadcastGroups) == 0 {
@@ -379,9 +449,11 @@ func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint) error {
 		return fmt.Errorf("stream URL is required")
 	}
 
-	if stream.Type != StreamTypeHLS && stream.Type != StreamTypeICEcast {
-		return fmt.Errorf("invalid stream type: %s (must be hls or icecast)", stream.Type)
-	}
+	// The pkg/stream handlers will catch this
+	//
+	// if stream.Type != StreamTypeHLS && stream.Type != StreamTypeICEcast {
+	// return fmt.Errorf("invalid stream type: %s (must be hls or icecast)", stream.Type)
+	// }
 
 	if stream.Role != StreamRoleSource && stream.Role != StreamRoleCDN {
 		return fmt.Errorf("invalid stream role: %s (must be source or cdn)", stream.Role)
@@ -410,8 +482,10 @@ func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint) error {
 func (c *BroadcastConfig) GetEnabledBroadcastGroups() map[string]*BroadcastGroup {
 	enabled := make(map[string]*BroadcastGroup)
 	for name, group := range c.BroadcastGroups {
-		if group.Enabled {
-			enabled[name] = group
+		if group.Enabled != nil {
+			if *group.Enabled {
+				enabled[name] = group
+			}
 		}
 	}
 	return enabled
@@ -420,8 +494,10 @@ func (c *BroadcastConfig) GetEnabledBroadcastGroups() map[string]*BroadcastGroup
 // GetFirstBroadcastGroup returns the first enabled broadcast group
 func (c *BroadcastConfig) GetFirstBroadcastGroup() (*BroadcastGroup, string, error) {
 	for name, group := range c.BroadcastGroups {
-		if group.Enabled {
-			return group, name, nil
+		if group.Enabled != nil {
+			if *group.Enabled {
+				return group, name, nil
+			}
 		}
 	}
 	return nil, "", fmt.Errorf("no enabled broadcast groups found")
@@ -439,9 +515,11 @@ func (c *BroadcastConfig) SelectBroadcastByIndex(index int) (*Broadcast, string,
 	var broadcastKeys []string
 
 	for key, broadcast := range group.Broadcasts {
-		if broadcast.Enabled {
-			broadcasts = append(broadcasts, broadcast)
-			broadcastKeys = append(broadcastKeys, key)
+		if broadcast.Enabled != nil {
+			if *broadcast.Enabled {
+				broadcasts = append(broadcasts, broadcast)
+				broadcastKeys = append(broadcastKeys, key)
+			}
 		}
 	}
 
@@ -461,14 +539,17 @@ func (c *BroadcastConfig) SelectBroadcastByIndex(index int) (*Broadcast, string,
 func (c *BroadcastConfig) GetTotalEnabledBroadcasts() int {
 	total := 0
 	for _, group := range c.BroadcastGroups {
-		if !group.Enabled {
-			continue
-		}
-		for _, broadcast := range group.Broadcasts {
-			if broadcast.Enabled {
-				total++
+		if group.Enabled != nil {
+			if !*group.Enabled {
+				continue
+			}
+			for _, broadcast := range group.Broadcasts {
+				if *broadcast.Enabled {
+					total++
+				}
 			}
 		}
+
 	}
 	return total
 }
