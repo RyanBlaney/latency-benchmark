@@ -31,6 +31,7 @@ type Context struct {
 	Quiet               bool
 	DetailedAnalysis    bool
 	SkipFingerprint     bool
+	BroadcastIndex      int
 
 	// Runtime context
 	Logger          logging.Logger
@@ -88,7 +89,7 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create benchmark orchestrator: %w", err)
 	}
 
-	summary, err := orchestrator.RunBenchmarkByIndex(ctx, 0) // DEPLOYMENT: The index will be the job's assigned index
+	summary, err := orchestrator.RunBenchmarkByIndex(ctx, app.ctx.BroadcastIndex) // DEPLOYMENT: The index will be the job's assigned index
 	if err != nil {
 		return fmt.Errorf("benchmark execution failed: %w", err)
 	}
@@ -134,14 +135,6 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 		return nil, nil, fmt.Errorf("failed to load base configuration: %w", err)
 	}
 
-	fmt.Printf("Base Config")
-	fmt.Printf("Stream.ReadTimeout: %d", baseConfig.Stream.ReadTimeout)
-	fmt.Printf("HLS.HTTP.ReadTimeout: %d", baseConfig.HLS.HTTP.ReadTimeout)
-	fmt.Printf("HLS.Audio.SampleDuration: %d", baseConfig.HLS.Audio.SampleDuration)
-	fmt.Printf("ICEcast.HTTP.ReadTimeout: %d", baseConfig.ICEcast.HTTP.ReadTimeout)
-	fmt.Printf("ICEcast.Audio.SampleDuration: %d", baseConfig.ICEcast.Audio.SampleDuration)
-	fmt.Printf("Quality.MaxLatency: %d", baseConfig.Quality.MaxLatency)
-
 	// Load benchmark-specific configuration from file
 	var benchmarkConfig *BenchmarkConfig
 	if ctx.ConfigFile != "" {
@@ -150,11 +143,6 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 			return nil, nil, fmt.Errorf("failed to load benchmark configuration: %w", err)
 		}
 	}
-
-	fmt.Printf("Benchmark Config")
-	fmt.Printf("Benchmark.OperationTimeout: %d", benchmarkConfig.Benchmark.OperationTimeout)
-	fmt.Printf("Benchmark.AudioSegmentDuration: %d", benchmarkConfig.Benchmark.AudioSegmentDuration)
-	fmt.Printf("Benchmark.MaxAlignmentOffset: %f", benchmarkConfig.Benchmark.MaxAlignmentOffset)
 
 	// Load broadcast groups configuration from file (required)
 	if ctx.BroadcastConfigFile == "" {
@@ -185,7 +173,7 @@ func loadAndMergeConfig(ctx *Context) (*BenchmarkConfig, *BroadcastConfig, error
 func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, performance *benchmark.PerformanceMetrics, quality *benchmark.QualityMetrics, reliability *benchmark.ReliabilityMetrics) error {
 	// Create clean output structure (exclude raw data)
 	outputData := map[string]any{
-		"benchmark_summary": cleanBenchmarkSummary(summary),
+		"benchmark_summary": cleanBenchmarkSummary(summary, app.config.Verbose),
 		"timestamp":         time.Now(),
 		"configuration": map[string]any{
 			"segment_duration":  app.ctx.SegmentDuration.Seconds(),
@@ -244,7 +232,7 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 }
 
 // cleanBenchmarkSummary removes raw data from the benchmark summary
-func cleanBenchmarkSummary(summary *latency.BenchmarkSummary) map[string]any {
+func cleanBenchmarkSummary(summary *latency.BenchmarkSummary, verbose bool) map[string]any {
 	cleanSummary := map[string]any{
 		"start_time":              summary.StartTime,
 		"end_time":                summary.EndTime,
@@ -258,15 +246,27 @@ func cleanBenchmarkSummary(summary *latency.BenchmarkSummary) map[string]any {
 
 	// Clean broadcast measurements (remove raw audio and fingerprint data)
 	for name, broadcast := range summary.BroadcastMeasurements {
-		cleanBroadcast := map[string]any{
-			"group_name":                   broadcast.Group.Name,
-			"content_type":                 broadcast.Group.ContentType,
-			"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
-			"liveness_metrics":             broadcast.LivenessMetrics,
-			"overall_validation":           broadcast.OverallValidation,
-			"stream_measurements":          cleanStreamMeasurements(broadcast.StreamMeasurements),
-			"alignment_measurements":       cleanAlignmentMeasurements(broadcast.AlignmentMeasurements),
-			"fingerprint_comparisons":      cleanFingerprintComparisons(broadcast.FingerprintComparisons),
+		var cleanBroadcast map[string]any
+		if verbose {
+			cleanBroadcast = map[string]any{
+				"group_name":                   broadcast.Group.Name,
+				"content_type":                 broadcast.Group.ContentType,
+				"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
+				"liveness_metrics":             broadcast.LivenessMetrics,
+				"overall_validation":           broadcast.OverallValidation,
+				"stream_measurements":          cleanStreamMeasurements(broadcast.StreamMeasurements),
+				"alignment_measurements":       cleanAlignmentMeasurements(broadcast.AlignmentMeasurements),
+				"fingerprint_comparisons":      cleanFingerprintComparisons(broadcast.FingerprintComparisons),
+			}
+		} else {
+			cleanBroadcast = map[string]any{
+				"group_name":                   broadcast.Group.Name,
+				"content_type":                 broadcast.Group.ContentType,
+				"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
+				"liveness_metrics":             broadcast.LivenessMetrics,
+				"overall_validation":           broadcast.OverallValidation,
+			}
+
 		}
 
 		if broadcast.Error != nil {

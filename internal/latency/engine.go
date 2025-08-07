@@ -93,7 +93,7 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 	measurement.AudioData = audioData
 
 	// Output to file (for testing)
-	outputToFile(endpoint.URL, audioData.PCM)
+	outputToFile(endpoint.URL, audioData)
 
 	// Step 2: Validate stream
 	measurement.StreamValidation = e.validateStream(endpoint, audioData)
@@ -123,7 +123,7 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 }
 
 // outputToFile is a santity check to ensure the downloads are actually starting and downloading properly
-func outputToFile(urlStr string, pcmData []float64) error {
+func outputToFile(urlStr string, audioData *common.AudioData) error {
 	// Create live-test directory if it doesn't exist
 	if err := os.MkdirAll("./live-test", 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
@@ -157,7 +157,7 @@ func outputToFile(urlStr string, pcmData []float64) error {
 	defer file.Close()
 	defer os.Remove(tempPCMFile) // Clean up temp file
 
-	for _, sample := range pcmData {
+	for _, sample := range audioData.PCM {
 		// Clamp to [-1.0, 1.0] and convert to 16-bit signed integer
 		if sample > 1.0 {
 			sample = 1.0
@@ -173,11 +173,10 @@ func outputToFile(urlStr string, pcmData []float64) error {
 	file.Close()
 
 	// Use ffmpeg to convert raw PCM to WAV
-	// Assuming 44.1kHz sample rate, 16-bit, mono
 	cmd := exec.Command("ffmpeg",
 		"-f", "s16le", // 16-bit signed little-endian
-		"-ar", "44100", // 44.1kHz sample rate
-		"-ac", "1", // mono
+		"-ar", fmt.Sprintf("%d", audioData.SampleRate),
+		"-ac", fmt.Sprintf("%d", audioData.Channels),
 		"-i", tempPCMFile, // input file
 		"-y",    // overwrite output file
 		wavFile, // output file

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
@@ -222,7 +223,7 @@ func (d *AudioDownloader) DownloadAudioSample(ctx context.Context, streamURL str
 // downloadStreamWithTimeout downloads the stream with proper timeout handling
 func (d *AudioDownloader) downloadStreamWithTimeout(ctx context.Context, streamURL string, targetDuration time.Duration, logger logging.Logger) (*common.AudioData, error) {
 	// Target duration + reasonable buffer for connection/processing
-	downloadTimeout := targetDuration + (180 * time.Second) // Only 60s buffer, not 300s
+	downloadTimeout := targetDuration + (400 * time.Second)
 	downloadCtx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
@@ -596,7 +597,7 @@ func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url 
 		Metadata:   d.convertMetadata(audioData.Metadata, url),
 	}
 
-	logger.Debug("ICEcast streaming audio processing completed", logging.Fields{
+	logger.Info("ICEcast streaming audio processing completed", logging.Fields{
 		"final_samples":      len(finalAudioData.PCM),
 		"final_duration_sec": finalAudioData.Duration.Seconds(),
 		"final_sample_rate":  finalAudioData.SampleRate,
@@ -694,6 +695,153 @@ func (d *AudioDownloader) updateAudioMetrics(audioData *common.AudioData) {
 // GetDownloadStats returns the current download statistics
 func (d *AudioDownloader) GetDownloadStats() *DownloadStats {
 	return d.downloadStats
+}
+
+// DownloadAudioSampleDirect downloads ICEcast audio using FFmpeg directly with reconnection
+// This bypasses all the complex ICEcast parsing and uses FFmpeg's native streaming support
+func (d *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, streamURL string, targetDuration time.Duration) (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component":       "icecast_downloader",
+		"function":        "DownloadAudioSampleDirect",
+		"url":             streamURL,
+		"target_duration": targetDuration.Seconds(),
+		"method":          "ffmpeg_direct",
+	})
+
+	logger.Info("Starting direct FFmpeg ICEcast audio download")
+
+	// Apply query parameters if needed
+	processedURL := d.applyQueryParamRules(streamURL)
+
+	// Create decoder with configuration matching our output requirements
+	decoderConfig := transcode.DefaultDecoderConfig()
+
+	// Apply ICEcast config values if available
+	if d.icecastConfig != nil && d.icecastConfig.MetadataExtractor != nil && d.icecastConfig.MetadataExtractor.DefaultValues != nil {
+		if sampleRate, ok := d.icecastConfig.MetadataExtractor.DefaultValues["sample_rate"].(int); ok && sampleRate > 0 {
+			decoderConfig.TargetSampleRate = sampleRate
+		}
+		if channels, ok := d.icecastConfig.MetadataExtractor.DefaultValues["channels"].(int); ok && channels > 0 {
+			decoderConfig.TargetChannels = channels
+		}
+	}
+
+	// Override with our downloader config if available
+	if d.config != nil {
+		decoderConfig.TargetSampleRate = d.config.OutputSampleRate
+		decoderConfig.TargetChannels = d.config.OutputChannels
+
+		// Set duration limit
+		decoderConfig.MaxDuration = targetDuration
+
+		// Set timeout based on target duration + buffer for reconnections
+		decoderConfig.Timeout = targetDuration + (60 * time.Second)
+	}
+
+	// FIX: Use stream type instead of custom options
+	// Create decoder
+	decoder := transcode.NewDecoder(decoderConfig)
+	defer decoder.Close()
+
+	logger.Info("Created FFmpeg decoder with ICEcast stream type", logging.Fields{
+		"target_sample_rate": decoderConfig.TargetSampleRate,
+		"target_channels":    decoderConfig.TargetChannels,
+		"max_duration":       decoderConfig.MaxDuration.Seconds(),
+		"timeout":            decoderConfig.Timeout.Seconds(),
+		"stream_type":        "icecast",
+	})
+
+	// Use FFmpeg to decode directly from URL with ICEcast optimizations
+	startTime := time.Now()
+	result, err := decoder.DecodeURL(processedURL, targetDuration, "icecast")
+	if err != nil {
+		logger.Error(err, "FFmpeg direct decode failed")
+		return nil, fmt.Errorf("failed to decode ICEcast stream with FFmpeg: %w", err)
+	}
+
+	downloadTime := time.Since(startTime)
+
+	// Convert transcode.AudioData to common.AudioData
+	transcodeAudio := result
+
+	// Convert to common.AudioData format
+	audioData := &common.AudioData{
+		PCM:        transcodeAudio.PCM,
+		SampleRate: transcodeAudio.SampleRate,
+		Channels:   transcodeAudio.Channels,
+		Duration:   transcodeAudio.Duration,
+		Timestamp:  time.Now(),
+	}
+
+	// Convert metadata if available
+	if transcodeAudio.Metadata != nil {
+		audioData.Metadata = &common.StreamMetadata{
+			URL:         streamURL,
+			Type:        common.StreamTypeICEcast,
+			Format:      transcodeAudio.Metadata.Format,
+			Bitrate:     transcodeAudio.Metadata.Bitrate,
+			SampleRate:  transcodeAudio.Metadata.SampleRate,
+			Channels:    transcodeAudio.Metadata.Channels,
+			Codec:       transcodeAudio.Metadata.Codec,
+			ContentType: transcodeAudio.Metadata.ContentType,
+			Title:       transcodeAudio.Metadata.Title,
+			Artist:      transcodeAudio.Metadata.Artist,
+			Genre:       transcodeAudio.Metadata.Genre,
+			Station:     transcodeAudio.Metadata.Station,
+			Headers:     transcodeAudio.Metadata.Headers,
+			Timestamp:   time.Now(),
+		}
+	} else {
+		// Create basic metadata
+		audioData.Metadata = d.createBasicMetadata(streamURL)
+	}
+
+	// Update download stats
+	d.downloadStats.SegmentsDownloaded = 1                          // FFmpeg handles streaming internally
+	d.downloadStats.BytesDownloaded = int64(len(audioData.PCM) * 8) // Estimate based on PCM data
+	d.downloadStats.DownloadTime = downloadTime
+
+	logger.Info("Direct FFmpeg ICEcast download completed", logging.Fields{
+		"actual_duration": audioData.Duration.Seconds(),
+		"target_duration": targetDuration.Seconds(),
+		"samples":         len(audioData.PCM),
+		"sample_rate":     audioData.SampleRate,
+		"channels":        audioData.Channels,
+		"download_time":   downloadTime.Seconds(),
+	})
+
+	return audioData, nil
+}
+
+// createBasicMetadata creates basic metadata for ICEcast streams
+func (d *AudioDownloader) createBasicMetadata(streamURL string) *common.StreamMetadata {
+	metadata := &common.StreamMetadata{
+		URL:        streamURL,
+		Type:       common.StreamTypeICEcast,
+		SampleRate: d.config.OutputSampleRate,
+		Channels:   d.config.OutputChannels,
+		Bitrate:    d.config.PreferredBitrate,
+		Headers:    make(map[string]string),
+		Timestamp:  time.Now(),
+	}
+
+	// Try to infer format from URL
+	if strings.Contains(strings.ToLower(streamURL), ".mp3") {
+		metadata.Format = "mp3"
+		metadata.Codec = "mp3"
+		metadata.ContentType = "audio/mpeg"
+	} else if strings.Contains(strings.ToLower(streamURL), ".aac") {
+		metadata.Format = "aac"
+		metadata.Codec = "aac"
+		metadata.ContentType = "audio/aac"
+	} else {
+		// Default to MP3 for ICEcast streams
+		metadata.Format = "mp3"
+		metadata.Codec = "mp3"
+		metadata.ContentType = "audio/mpeg"
+	}
+
+	return metadata
 }
 
 // DownloadAudioSampleWithRetry downloads audio with automatic retry logic (legacy method)

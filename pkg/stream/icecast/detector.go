@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
 	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
 	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
@@ -152,66 +153,252 @@ func ProbeStream(ctx context.Context, client *http.Client, streamURL string) (*c
 }
 
 // ProbeStreamWithConfig performs a probe with full configuration control
+// ProbeStreamWithConfig probes an ICEcast stream to detect audio properties
+// Priority order: FFprobe > HTTP headers > config defaults
 func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config) (*common.StreamMetadata, error) {
-	if config == nil {
-		config = DefaultConfig()
+	logger := logging.WithFields(logging.Fields{
+		"component": "icecast_prober",
+		"function":  "ProbeStreamWithConfig",
+		"url":       streamURL,
+	})
+
+	// Step 1: Try FFprobe first (highest priority)
+	logger.Debug("Attempting FFprobe detection")
+	metadata, err := probeWithFFprobe(ctx, streamURL, config, logger)
+
+	if err == nil && metadata != nil && isValidProbeResult(metadata) {
+		logger.Info("FFprobe detection successful", logging.Fields{
+			"sample_rate": metadata.SampleRate,
+			"channels":    metadata.Channels,
+			"bitrate":     metadata.Bitrate,
+			"codec":       metadata.Codec,
+		})
+		metadata.Headers["probe_method"] = "ffprobe"
+		return metadata, nil
 	}
 
-	detector := NewDetectorWithConfig(config.Detection)
+	if err != nil {
+		logger.Warn("FFprobe detection failed", logging.Fields{
+			"error": err.Error(),
+		})
+	}
 
-	// Use configured timeout
-	detectCtx, cancel := context.WithTimeout(ctx, time.Duration(config.Detection.TimeoutSeconds)*time.Second)
+	// Step 2: Try HTTP headers (medium priority)
+	logger.Debug("Attempting HTTP header detection")
+	metadata, err = probeWithHeaders(ctx, streamURL, config, logger)
+
+	if err == nil && metadata != nil && isValidProbeResult(metadata) {
+		logger.Info("HTTP header detection successful", logging.Fields{
+			"sample_rate": metadata.SampleRate,
+			"channels":    metadata.Channels,
+			"bitrate":     metadata.Bitrate,
+			"codec":       metadata.Codec,
+		})
+		metadata.Headers["probe_method"] = "headers"
+		return metadata, nil
+	}
+
+	// Step 3: Fall back to config defaults (lowest priority)
+	logger.Debug("Using config defaults as fallback")
+	metadata = createMetadataFromConfig(streamURL, config)
+	metadata.Headers["probe_method"] = "config"
+
+	logger.Warn("Probe methods failed, using config defaults", logging.Fields{
+		"sample_rate": metadata.SampleRate,
+		"channels":    metadata.Channels,
+		"bitrate":     metadata.Bitrate,
+		"codec":       metadata.Codec,
+	})
+
+	return metadata, nil
+}
+
+// probeWithFFprobe uses FFmpeg/FFprobe to detect stream properties
+func probeWithFFprobe(ctx context.Context, streamURL string, config *Config, logger logging.Logger) (*common.StreamMetadata, error) {
+	// Create a short timeout context for probing
+	probeTimeout := 15 * time.Second
+	if config != nil && config.Detection != nil && config.Detection.TimeoutSeconds > 0 {
+		probeTimeout = time.Duration(config.Detection.TimeoutSeconds) * time.Second
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	// Use detector's client or create one with HTTP config timeout
-	client := detector.client
-	if config.HTTP != nil {
-		client = &http.Client{
-			Timeout: config.HTTP.ConnectionTimeout + config.HTTP.ReadTimeout,
-			Transport: &http.Transport{
-				MaxIdleConns:       10,
-				IdleConnTimeout:    30 * time.Second,
-				DisableCompression: false,
-			},
+	// Create decoder for probing
+	decoderConfig := transcode.DefaultDecoderConfig()
+	decoderConfig.Timeout = probeTimeout
+
+	decoder := transcode.NewDecoder(decoderConfig)
+	defer decoder.Close()
+
+	logger.Debug("Starting FFprobe stream analysis", logging.Fields{
+		"timeout_seconds": probeTimeout.Seconds(),
+	})
+
+	// Use FFprobe to analyze the stream
+	probeResult, err := decoder.ProbeURL(probeCtx, streamURL)
+	if err != nil {
+		return nil, fmt.Errorf("FFprobe failed: %w", err)
+	}
+
+	if probeResult == nil {
+		return nil, fmt.Errorf("FFprobe returned no results")
+	}
+
+	// Convert probe result to StreamMetadata
+	metadata := &common.StreamMetadata{
+		URL:        streamURL,
+		Type:       common.StreamTypeICEcast,
+		SampleRate: probeResult.SampleRate,
+		Channels:   probeResult.Channels,
+		Bitrate:    probeResult.Bitrate,
+		Codec:      probeResult.Codec,
+		Format:     probeResult.Format,
+		Headers:    make(map[string]string),
+		Timestamp:  time.Now(),
+	}
+
+	logger.Debug("FFprobe completed successfully", logging.Fields{
+		"detected_sample_rate": metadata.SampleRate,
+		"detected_channels":    metadata.Channels,
+		"detected_bitrate":     metadata.Bitrate,
+		"detected_codec":       metadata.Codec,
+		"detected_format":      metadata.Format,
+	})
+
+	return metadata, nil
+}
+
+// probeWithHeaders attempts to extract stream info from HTTP headers
+func probeWithHeaders(ctx context.Context, streamURL string, config *Config, logger logging.Logger) (*common.StreamMetadata, error) {
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 5 * time.Second,
+		},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", streamURL, nil)
+	if err != nil {
+		// Try GET if HEAD fails
+		req, err = http.NewRequestWithContext(ctx, "GET", streamURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 	}
 
-	req, err := http.NewRequestWithContext(detectCtx, "HEAD", streamURL, nil)
-	if err != nil {
-		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
-			common.ErrCodeConnection, "failed to create request", err)
-	}
-
-	// Set headers from configuration
-	if config.HTTP != nil {
-		headers := config.HTTP.GetHTTPHeaders()
+	// Set headers
+	if config != nil && config.HTTP != nil {
+		headers := config.GetHTTPHeaders()
 		for key, value := range headers {
 			req.Header.Set(key, value)
 		}
 	} else {
-		// Fallback to default headers
 		req.Header.Set("User-Agent", "TuneIn-CDN-Benchmark/1.0")
-		req.Header.Set("Accept", "audio/*")
+		req.Header.Set("Accept", "audio/*,*/*")
 		req.Header.Set("Icy-MetaData", "1")
 	}
 
+	logger.Debug("Sending HTTP request for header analysis")
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, common.NewStreamError(common.StreamTypeICEcast, streamURL,
-			common.ErrCodeConnection, "failed to probe stream", err)
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, common.NewStreamErrorWithFields(common.StreamTypeICEcast, streamURL,
-			common.ErrCodeConnection, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status), nil,
-			logging.Fields{
-				"status_code": resp.StatusCode,
-				"status_text": resp.Status,
-			})
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return nil, fmt.Errorf("HTTP request returned status %d", resp.StatusCode)
 	}
 
-	// Create metadata using configured extractor
+	// Extract metadata from headers
+	metadata := &common.StreamMetadata{
+		URL:         streamURL,
+		Type:        common.StreamTypeICEcast,
+		ContentType: resp.Header.Get("Content-Type"),
+		Headers:     make(map[string]string),
+		Timestamp:   time.Now(),
+	}
+
+	// Copy all headers
+	for key, values := range resp.Header {
+		if len(values) > 0 {
+			metadata.Headers[strings.ToLower(key)] = values[0]
+		}
+	}
+
+	// Extract ICEcast-specific headers
+	extractICEcastHeaders(metadata, resp.Header, logger)
+
+	logger.Debug("Header analysis completed", logging.Fields{
+		"content_type":     metadata.ContentType,
+		"detected_bitrate": metadata.Bitrate,
+		"icy_name":         metadata.Headers["icy-name"],
+		"icy_br":           metadata.Headers["icy-br"],
+	})
+
+	return metadata, nil
+}
+
+// extractICEcastHeaders extracts audio properties from ICEcast headers
+func extractICEcastHeaders(metadata *common.StreamMetadata, headers http.Header, logger logging.Logger) {
+	// Extract bitrate from icy-br header
+	if icyBr := headers.Get("icy-br"); icyBr != "" {
+		if bitrate, err := strconv.Atoi(icyBr); err == nil {
+			metadata.Bitrate = bitrate
+			logger.Debug("Extracted bitrate from icy-br header", logging.Fields{
+				"bitrate": bitrate,
+			})
+		}
+	}
+
+	// Extract station name
+	if icyName := headers.Get("icy-name"); icyName != "" {
+		metadata.Station = icyName
+	}
+
+	// Extract genre
+	if icyGenre := headers.Get("icy-genre"); icyGenre != "" {
+		metadata.Genre = icyGenre
+	}
+
+	// Try to infer codec from content-type
+	contentType := strings.ToLower(headers.Get("Content-Type"))
+	switch {
+	case strings.Contains(contentType, "mpeg") || strings.Contains(contentType, "mp3"):
+		metadata.Codec = "mp3"
+		metadata.Format = "mp3"
+		// Default values for MP3
+		if metadata.SampleRate == 0 {
+			metadata.SampleRate = 44100
+		}
+		if metadata.Channels == 0 {
+			metadata.Channels = 2
+		}
+	case strings.Contains(contentType, "aac"):
+		metadata.Codec = "aac"
+		metadata.Format = "aac"
+		if metadata.SampleRate == 0 {
+			metadata.SampleRate = 44100
+		}
+		if metadata.Channels == 0 {
+			metadata.Channels = 2
+		}
+	case strings.Contains(contentType, "ogg"):
+		metadata.Codec = "vorbis"
+		metadata.Format = "ogg"
+		if metadata.SampleRate == 0 {
+			metadata.SampleRate = 44100
+		}
+		if metadata.Channels == 0 {
+			metadata.Channels = 2
+		}
+	}
+}
+
+// createMetadataFromConfig creates metadata using config defaults
+func createMetadataFromConfig(streamURL string, config *Config) *common.StreamMetadata {
 	metadata := &common.StreamMetadata{
 		URL:       streamURL,
 		Type:      common.StreamTypeICEcast,
@@ -219,15 +406,238 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 		Timestamp: time.Now(),
 	}
 
-	// Extract metadata from headers
-	extractMetadataFromHeaders(resp.Header, metadata)
+	if config != nil && config.MetadataExtractor != nil && config.MetadataExtractor.DefaultValues != nil {
+		defaults := config.MetadataExtractor.DefaultValues
 
-	// Apply default values from configuration if available
-	if config.MetadataExtractor != nil && config.MetadataExtractor.DefaultValues != nil {
-		applyDefaultValues(metadata, config.MetadataExtractor.DefaultValues)
+		if codec, ok := defaults["codec"].(string); ok {
+			metadata.Codec = codec
+		}
+		if format, ok := defaults["format"].(string); ok {
+			metadata.Format = format
+		}
+		if sampleRate, ok := defaults["sample_rate"].(int); ok {
+			metadata.SampleRate = sampleRate
+		} else if sampleRateFloat, ok := defaults["sample_rate"].(float64); ok {
+			metadata.SampleRate = int(sampleRateFloat)
+		}
+		if channels, ok := defaults["channels"].(int); ok {
+			metadata.Channels = channels
+		} else if channelsFloat, ok := defaults["channels"].(float64); ok {
+			metadata.Channels = int(channelsFloat)
+		}
+		if bitrate, ok := defaults["bitrate"].(int); ok {
+			metadata.Bitrate = bitrate
+		} else if bitrateFloat, ok := defaults["bitrate"].(float64); ok {
+			metadata.Bitrate = int(bitrateFloat)
+		}
 	}
 
-	return metadata, nil
+	// Set reasonable defaults if nothing was configured
+	if metadata.Codec == "" {
+		metadata.Codec = "mp3"
+	}
+	if metadata.Format == "" {
+		metadata.Format = "mp3"
+	}
+	if metadata.SampleRate == 0 {
+		metadata.SampleRate = 44100
+	}
+	if metadata.Channels == 0 {
+		metadata.Channels = 2
+	}
+	if metadata.Bitrate == 0 {
+		metadata.Bitrate = 128
+	}
+	if metadata.ContentType == "" {
+		metadata.ContentType = "audio/mpeg"
+	}
+
+	return metadata
+}
+
+// isValidProbeResult checks if probe result contains valid audio properties
+func isValidProbeResult(metadata *common.StreamMetadata) bool {
+	if metadata == nil {
+		return false
+	}
+
+	// Check for valid sample rate
+	if metadata.SampleRate <= 0 || metadata.SampleRate > 192000 {
+		return false
+	}
+
+	// Check for valid channels
+	if metadata.Channels <= 0 || metadata.Channels > 8 {
+		return false
+	}
+
+	// Check for valid codec
+	if metadata.Codec == "" {
+		return false
+	}
+
+	return true
+}
+
+func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component":       "icecast_handler",
+		"function":        "ReadAudioWithDuration",
+		"target_duration": duration.Seconds(),
+		"approach":        "ffmpeg_direct",
+	})
+
+	if !h.connected {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeConnection, "not connected", nil)
+	}
+
+	logger.Info("Starting FFmpeg-based duration audio reading", logging.Fields{
+		"target_duration": duration.Seconds(),
+		"url":             h.url,
+	})
+
+	// STEP 1: Use enhanced probing with priority order (FFprobe > Headers > Config)
+	detectedSampleRate := 44100 // fallback default
+	detectedChannels := 1       // fallback default
+
+	logger.Debug("Starting enhanced stream probing with priority: FFprobe > Headers > Config")
+
+	// Use the enhanced ProbeStreamWithConfig function
+	probedMetadata, err := ProbeStreamWithConfig(ctx, h.url, h.config)
+	if err == nil && probedMetadata != nil && isValidProbeResult(probedMetadata) {
+		// FFprobe/probed results take absolute priority over config
+		detectedSampleRate = probedMetadata.SampleRate
+		detectedChannels = probedMetadata.Channels
+
+		logger.Info("Successfully probed stream format", logging.Fields{
+			"approach":             "ffmpeg_direct",
+			"detected_sample_rate": detectedSampleRate,
+			"detected_channels":    detectedChannels,
+			"detected_codec":       probedMetadata.Codec,
+			"detected_bitrate":     probedMetadata.Bitrate,
+			"probe_source":         probedMetadata.Headers["probe_method"],
+		})
+
+		// Update handler metadata with probed values (FFprobe results override config)
+		if h.metadata != nil {
+			h.metadata.SampleRate = detectedSampleRate
+			h.metadata.Channels = detectedChannels
+			h.metadata.Codec = probedMetadata.Codec
+			h.metadata.Bitrate = probedMetadata.Bitrate
+			h.metadata.Format = probedMetadata.Format
+		}
+	} else {
+		logger.Warn("Failed to probe stream, using config defaults", logging.Fields{
+			"approach":        "ffmpeg_direct",
+			"probe_error":     err,
+			"target_duration": duration.Seconds(),
+		})
+
+		// Final fallback to config values if probing completely failed
+		if h.config != nil && h.config.MetadataExtractor != nil && h.config.MetadataExtractor.DefaultValues != nil {
+			if sampleRate, ok := h.config.MetadataExtractor.DefaultValues["sample_rate"].(int); ok && sampleRate > 0 {
+				detectedSampleRate = sampleRate
+			}
+			if channels, ok := h.config.MetadataExtractor.DefaultValues["channels"].(int); ok && channels > 0 {
+				detectedChannels = channels
+			}
+		}
+	}
+
+	// TODO: @@@ Key fix
+	detectedChannels = 1
+	h.metadata.Channels = 1
+
+	// STEP 2: Create optimized downloader with probed properties (FFprobe results take priority)
+	downloaderConfig := DefaultDownloadConfig()
+	downloaderConfig.TargetDuration = duration
+	downloaderConfig.OutputSampleRate = detectedSampleRate // Use FFprobe detected rate!
+	downloaderConfig.OutputChannels = detectedChannels     // Use FFprobe detected channels!
+
+	logger.Info("Using detected audio properties for downloader", logging.Fields{
+		"approach":        "ffmpeg_direct",
+		"sample_rate":     downloaderConfig.OutputSampleRate,
+		"channels":        downloaderConfig.OutputChannels,
+		"target_duration": duration.Seconds(),
+	})
+
+	downloader := &AudioDownloader{
+		client: &http.Client{
+			Timeout: 0, // FFmpeg handles timeouts
+		},
+		icecastConfig: h.config,
+		downloadStats: &DownloadStats{
+			AudioMetrics:  &AudioMetrics{},
+			LiveStartTime: &time.Time{},
+		},
+		config: downloaderConfig,
+	}
+	*downloader.downloadStats.LiveStartTime = time.Now()
+
+	// Use direct FFmpeg approach with ICEcast stream type
+	audioData, err := downloader.DownloadAudioSampleDirect(ctx, h.url, duration)
+	if err != nil {
+		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
+			common.ErrCodeDecoding, "failed to download audio using FFmpeg direct approach", err)
+	}
+
+	// Ensure the returned AudioData uses the probed sample rate and channels
+	audioData.SampleRate = detectedSampleRate
+	audioData.Channels = detectedChannels
+
+	// Update handler statistics
+	h.stats.BytesReceived += int64(len(audioData.PCM) * 8) // float64 = 8 bytes per sample
+
+	// Calculate average bitrate
+	elapsed := time.Since(h.startTime)
+	if elapsed > 0 {
+		h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
+	}
+
+	// Update metadata with probed values and current timestamp
+	if audioData.Metadata != nil {
+		audioData.Metadata.SampleRate = detectedSampleRate
+		audioData.Metadata.Channels = detectedChannels
+		audioData.Metadata.Timestamp = time.Now()
+		audioData.Metadata.Type = common.StreamTypeICEcast
+
+		// Record the probing method used
+		if probedMetadata != nil && probedMetadata.Headers != nil {
+			if probeMethod, exists := probedMetadata.Headers["probe_method"]; exists {
+				if audioData.Metadata.Headers == nil {
+					audioData.Metadata.Headers = make(map[string]string)
+				}
+				audioData.Metadata.Headers["probe_method"] = probeMethod
+			}
+		}
+
+		// Merge additional metadata from handler if available
+		if h.metadata != nil {
+			if audioData.Metadata.Station == "" && h.metadata.Station != "" {
+				audioData.Metadata.Station = h.metadata.Station
+			}
+			if audioData.Metadata.Genre == "" && h.metadata.Genre != "" {
+				audioData.Metadata.Genre = h.metadata.Genre
+			}
+			if audioData.Metadata.Title == "" && h.metadata.Title != "" {
+				audioData.Metadata.Title = h.metadata.Title
+			}
+		}
+	}
+
+	logger.Info("ICEcast FFmpeg-based audio extraction completed successfully", logging.Fields{
+		"approach":         "ffmpeg_direct",
+		"actual_duration":  audioData.Duration.Seconds(),
+		"target_duration":  duration.Seconds(),
+		"samples":          len(audioData.PCM),
+		"sample_rate":      audioData.SampleRate,
+		"channels":         audioData.Channels,
+		"efficiency_ratio": audioData.Duration.Seconds() / duration.Seconds(),
+		"reconnect_used":   audioData.Metadata != nil && audioData.Metadata.Headers["reconnect_enabled"] == "true",
+	})
+
+	return audioData, nil
 }
 
 // DetectFromURL matches the URL with configured ICEcast patterns

@@ -403,7 +403,7 @@ func (ad *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, playli
 
 	// Use FFmpeg to decode directly from URL
 	startTime := time.Now()
-	result, err := decoder.DecodeURL(processedURL, targetDuration)
+	result, err := decoder.DecodeURL(processedURL, targetDuration, "hls")
 	if err != nil {
 		logger.Error(err, "FFmpeg direct decode failed")
 		return nil, fmt.Errorf("failed to decode HLS stream with FFmpeg: %w", err)

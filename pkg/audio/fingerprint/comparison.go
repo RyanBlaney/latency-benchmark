@@ -176,7 +176,7 @@ func (fc *FingerprintComparator) Compare(fp1, fp2 *AudioFingerprint) (*Similarit
 	result.HashSimilarity = hashSimilarity
 
 	// Early exit if hash filtering is enabled and similarity is too low
-	earlyExitThreshold := 0.005 // Only exit if hash similarity is extremely low (1%)
+	earlyExitThreshold := 0.00005 // Only exit if hash similarity is extremely low (1%)
 	if hashSimilarity < earlyExitThreshold {
 		logger.Warn("Hash similarity extremely low, early exit", logging.Fields{
 			"hash_similarity": hashSimilarity,

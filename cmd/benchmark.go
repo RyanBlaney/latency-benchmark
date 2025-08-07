@@ -21,6 +21,7 @@ var (
 	benchmarkQuiet               bool
 	benchmarkDetailedAnalysis    bool
 	benchmarkSkipFingerprint     bool
+	benchmarkBroadcastIndex      int
 )
 
 var benchmarkCmd = &cobra.Command{
@@ -44,6 +45,7 @@ respective stream endpoints.`,
   cdn-benchmark-cli benchmark \
     --config app-config.yaml \
     --broadcasts broadcasts.yaml \
+	--index 0 \
     --timeout 30m \
     --output results.json \
     --format json
@@ -81,6 +83,8 @@ func init() {
 	benchmarkCmd.Flags().BoolVarP(&benchmarkVerbose, "verbose", "v", false, "verbose output")
 	benchmarkCmd.Flags().BoolVarP(&benchmarkQuiet, "quiet", "q", false, "quiet output (errors only)")
 
+	benchmarkCmd.Flags().IntVar(&benchmarkBroadcastIndex, "broadcast-index", 0, "job index to select broadcast")
+
 	// Add subcommands
 	benchmarkCmd.AddCommand(generateConfigCmd)
 	benchmarkCmd.AddCommand(generateBroadcastsCmd)
@@ -102,6 +106,7 @@ func runBenchmark(cmd *cobra.Command, args []string) error {
 		Quiet:               benchmarkQuiet,
 		DetailedAnalysis:    benchmarkDetailedAnalysis,
 		SkipFingerprint:     benchmarkSkipFingerprint,
+		BroadcastIndex:      benchmarkBroadcastIndex,
 	}
 
 	// Initialize application

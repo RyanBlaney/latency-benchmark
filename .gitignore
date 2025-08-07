@@ -1,5 +1,5 @@
-./live-test
-./test-audio
+live-test/
+test-audio/
 source-master.txt
 cloudfront-master.txt
 ais-master.txt

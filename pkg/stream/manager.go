@@ -228,6 +228,7 @@ func (m *Manager) extractSingleStream(ctx context.Context, url string, targetDur
 
 	// Try to read a small amount of data to measure TTFB
 	firstByteData, err := m.measureFirstByte(ctx, handler)
+
 	if err != nil {
 		// If we can't measure TTFB, fall back to connection time
 		logger.Warn("Could not measure TTFB, using connection time", logging.Fields{

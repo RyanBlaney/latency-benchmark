@@ -259,12 +259,13 @@ func (d *Decoder) GetConfig() map[string]any {
 }
 
 // DecodeURL decodes audio directly from a URL using FFmpeg (for HLS, HTTP streams, etc.)
-func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, error) {
+func (d *Decoder) DecodeURL(url string, duration time.Duration, streamType string) (*AudioData, error) {
 	logger := logging.WithFields(logging.Fields{
-		"component": "audio_decoder",
-		"function":  "DecodeURL",
-		"url":       url,
-		"duration":  duration.Seconds(),
+		"component":   "audio_decoder",
+		"function":    "DecodeURL",
+		"url":         url,
+		"duration":    duration.Seconds(),
+		"stream_type": streamType,
 	})
 
 	logger.Debug("Starting URL decode with FFmpeg")
@@ -272,8 +273,30 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, err
 	// Build ffmpeg command for URL input
 	args := []string{
 		"-v", "error", // Suppress verbose output
-		"-i", url, // Input URL
 	}
+
+	// Add stream-type specific flags
+	switch streamType {
+	case "icecast":
+		// Add reconnection flags for Icecast streams
+		args = append(args,
+			"-reconnect", "1",
+			"-reconnect_at_eof", "1",
+			"-reconnect_streamed", "1",
+			"-fflags", "+genpts", // Generate presentation timestamps
+		)
+	case "hls":
+		// HLS doesn't need special reconnection flags
+		// Could add HLS-specific options here if needed in the future
+	default:
+		// For unknown stream types, log a warning but continue
+		logger.Debug("Unknown stream type, using default settings", logging.Fields{
+			"stream_type": streamType,
+		})
+	}
+
+	// Add input URL
+	args = append(args, "-i", url)
 
 	// Add duration limit if specified
 	if duration > 0 {
@@ -288,11 +311,28 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, err
 		"-ar", strconv.Itoa(d.config.TargetSampleRate), // Target sample rate
 	)
 
+	// For Icecast streams, add explicit resampling to avoid timing issues
+	if streamType == "icecast" {
+		// Force specific resampling method for Icecast to avoid timing issues
+		args = append(args, "-af", fmt.Sprintf("aresample=%d:resampler=soxr", d.config.TargetSampleRate))
+	}
+
 	// Add normalization if enabled
 	if d.config.EnableNormalization {
 		normFilter := d.buildNormalizationFilter()
 		if normFilter != "" {
-			args = append(args, "-af", normFilter)
+			// Check if we already have an audio filter for Icecast
+			if streamType == "icecast" {
+				// Combine with existing aresample filter
+				for i, arg := range args {
+					if arg == "-af" && i+1 < len(args) {
+						args[i+1] = args[i+1] + "," + normFilter
+						break
+					}
+				}
+			} else {
+				args = append(args, "-af", normFilter)
+			}
 		}
 	}
 
@@ -356,7 +396,7 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, err
 	// Create metadata for URL-based decode
 	metadata := &StreamMetadata{
 		URL:        url,
-		Type:       "stream",
+		Type:       streamType, // Use the provided stream type
 		Format:     d.config.OutputFormat,
 		SampleRate: d.config.TargetSampleRate,
 		Channels:   d.config.TargetChannels,
@@ -364,6 +404,9 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, err
 		Headers:    make(map[string]string),
 		Timestamp:  time.Now(),
 	}
+
+	// Add stream type to metadata headers
+	metadata.Headers["stream_type"] = streamType
 
 	// Add normalization info if applied
 	if d.config.EnableNormalization {
@@ -380,6 +423,71 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration) (*AudioData, err
 		Timestamp:  time.Now(),
 		Metadata:   metadata,
 	}, nil
+}
+
+// ProbeURL probes a URL to extract audio metadata without decoding the entire stream
+func (d *Decoder) ProbeURL(ctx context.Context, url string) (*AudioMetadata, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component": "audio_decoder",
+		"function":  "ProbeURL",
+		"url":       url,
+	})
+
+	logger.Debug("Starting URL probe with FFprobe")
+
+	// Create timeout context if not already set
+	probeTimeout := 15 * time.Second
+	if d.config.Timeout > 0 && d.config.Timeout < probeTimeout {
+		probeTimeout = d.config.Timeout
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	// Build ffprobe command for URL
+	args := []string{
+		"-v", "quiet", // Suppress verbose output
+		"-print_format", "json", // JSON output
+		"-show_streams",          // Show stream info
+		"-select_streams", "a:0", // First audio stream only
+		"-analyzeduration", "10000000", // 10 seconds analysis
+		"-probesize", "5000000", // 5MB probe size
+		url,
+	}
+
+	cmd := exec.CommandContext(probeCtx, d.config.FFprobePath, args...)
+
+	logger.Debug("Running FFprobe URL command", logging.Fields{
+		"command": fmt.Sprintf("%s %s", d.config.FFprobePath, url),
+		"timeout": probeTimeout.Seconds(),
+	})
+
+	output, err := cmd.Output()
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			logger.Error(err, "FFprobe URL failed", logging.Fields{
+				"stderr": string(exitError.Stderr),
+			})
+			return nil, fmt.Errorf("ffprobe URL failed: %w, stderr: %s", err, string(exitError.Stderr))
+		}
+		return nil, fmt.Errorf("ffprobe URL failed: %w", err)
+	}
+
+	// Parse ffprobe JSON output
+	metadata, err := d.parseFFprobeOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	logger.Debug("FFprobe URL completed successfully", logging.Fields{
+		"sample_rate": metadata.SampleRate,
+		"channels":    metadata.Channels,
+		"codec":       metadata.Codec,
+		"bitrate":     metadata.Bitrate,
+		"format":      metadata.Format,
+	})
+
+	return metadata, nil
 }
 
 // probeAudioFile uses ffprobe to get audio information from a file

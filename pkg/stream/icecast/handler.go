@@ -297,17 +297,11 @@ func (h *Handler) applyDefaultMetadata() {
 	}
 }
 
-// ReadAudio reads audio data from the ICEcast stream
+// ReadAudio provides basic audio reading (falls back to FFmpeg approach)
 func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	logger := logging.WithFields(logging.Fields{
 		"component": "icecast_handler",
 		"function":  "ReadAudio",
-	})
-
-	logger.Debug("ReadAudio called", logging.Fields{
-		"connected":    h.connected,
-		"response_nil": h.response == nil,
-		"context_err":  ctx.Err(),
 	})
 
 	if !h.connected {
@@ -315,22 +309,17 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 			common.ErrCodeConnection, "not connected", nil)
 	}
 
-	// For Connection: Close servers, always create a fresh connection for audio
-	// This completely bypasses any context inheritance issues
-	connectionHeader := ""
-	if h.response != nil {
-		connectionHeader = h.response.Header.Get("Connection")
+	// Use a default duration for basic audio reading
+	defaultDuration := 10 * time.Second
+	if h.config != nil && h.config.Audio != nil && h.config.Audio.SampleDuration > 0 {
+		defaultDuration = h.config.Audio.SampleDuration
 	}
 
-	needsNewConnection := strings.ToLower(connectionHeader) == "close" || h.response == nil
+	logger.Info("Using FFmpeg approach for basic audio reading", logging.Fields{
+		"default_duration": defaultDuration.Seconds(),
+	})
 
-	if needsNewConnection {
-		logger.Debug("Creating dedicated audio connection due to Connection: Close")
-		return h.readAudioWithFreshConnection()
-	}
-
-	// For persistent connections, try the existing connection first
-	return h.readAudioFromExistingConnection()
+	return h.ReadAudioWithDuration(ctx, defaultDuration)
 }
 
 // readAudioWithFreshConnection creates a completely new HTTP connection just for reading audio
@@ -549,100 +538,6 @@ func (h *Handler) readAudioDataFromResponse(resp *http.Response, logger logging.
 		"duration_seconds": audioData.Duration.Seconds(),
 		"sample_rate":      audioData.SampleRate,
 		"channels":         audioData.Channels,
-	})
-
-	return audioData, nil
-}
-
-// ReadAudioWithDuration reads audio data with a specified duration using the streaming downloader
-func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
-	logger := logging.WithFields(logging.Fields{
-		"component":       "icecast_handler",
-		"function":        "ReadAudioWithDuration",
-		"target_duration": duration.Seconds(),
-	})
-
-	if !h.connected {
-		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
-			common.ErrCodeConnection, "not connected", nil)
-	}
-
-	// Get metadata to determine stream parameters
-	metadata, err := h.GetMetadata()
-	if err != nil {
-		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
-			common.ErrCodeMetadata, "failed to get metadata", err)
-	}
-
-	logger.Debug("Starting duration-based audio reading using streaming downloader", logging.Fields{
-		"sample_rate":     metadata.SampleRate,
-		"channels":        metadata.Channels,
-		"target_duration": duration.Seconds(),
-		"connection_type": h.response.Header.Get("Connection"),
-	})
-
-	// FIX: Create a fresh downloader with proper timeout configuration
-	downloaderConfig := DefaultDownloadConfig()
-	downloaderConfig.TargetDuration = duration
-	// Ensure timeouts are appropriate for the duration
-	downloaderConfig.InitialTimeout = 30 * time.Second    // Keep reasonable
-	downloaderConfig.StreamReadTimeout = 15 * time.Second // Keep reasonable
-
-	downloader := &AudioDownloader{
-		client:        h.client,
-		icecastConfig: h.config,
-		downloadStats: &DownloadStats{
-			AudioMetrics:  &AudioMetrics{},
-			LiveStartTime: &time.Time{},
-		},
-		config: downloaderConfig,
-	}
-	*downloader.downloadStats.LiveStartTime = time.Now()
-
-	// FIX: Use the original context directly, don't create new timeouts
-	logger.Debug("Starting audio download with configured timeouts", logging.Fields{
-		"initial_timeout_s": downloaderConfig.InitialTimeout.Seconds(),
-		"read_timeout_s":    downloaderConfig.StreamReadTimeout.Seconds(),
-		"target_duration_s": duration.Seconds(),
-	})
-
-	audioData, err := downloader.DownloadAudioSample(ctx, h.url, duration)
-	if err != nil {
-		return nil, common.NewStreamError(common.StreamTypeICEcast, h.url,
-			common.ErrCodeDecoding, "failed to download audio using streaming approach", err)
-	}
-
-	// Update handler statistics
-	h.stats.BytesReceived += int64(len(audioData.PCM) * 4) // Rough estimate for float64 samples
-
-	// Calculate average bitrate
-	elapsed := time.Since(h.startTime)
-	if elapsed > 0 {
-		h.stats.AverageBitrate = float64(h.stats.BytesReceived*8) / elapsed.Seconds() / 1000
-	}
-
-	// Update metadata with current timestamp
-	if audioData.Metadata != nil {
-		audioData.Metadata.Timestamp = time.Now()
-
-		// Merge with handler metadata for consistency
-		if metadata != nil {
-			audioData.Metadata.Station = metadata.Station
-			audioData.Metadata.Genre = metadata.Genre
-			audioData.Metadata.Title = metadata.Title
-			if metadata.Bitrate > 0 {
-				audioData.Metadata.Bitrate = metadata.Bitrate
-			}
-		}
-	}
-
-	logger.Debug("ICEcast duration-based audio extraction completed", logging.Fields{
-		"actual_duration":  audioData.Duration.Seconds(),
-		"target_duration":  duration.Seconds(),
-		"samples":          len(audioData.PCM),
-		"sample_rate":      audioData.SampleRate,
-		"channels":         audioData.Channels,
-		"efficiency_ratio": audioData.Duration.Seconds() / duration.Seconds(),
 	})
 
 	return audioData, nil

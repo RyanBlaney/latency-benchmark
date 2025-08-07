@@ -2,7 +2,7 @@
 # Based on working production setup
 
 # Application settings
-verbose: true
+verbose: false
 log_level: info
 output_format: json
 
@@ -17,7 +17,7 @@ test:
 # Stream handling (global defaults)
 stream:
   connection_timeout: 15s
-  read_timeout: 280s
+  read_timeout: 420s
   buffer_size: 16384
   max_redirects: 5
   user_agent: "TuneIn-CDN-Benchmark-Prod/1.0"
@@ -39,7 +39,6 @@ stream:
 
 # Audio processing (high quality)
 audio:
-  sample_rate: 48000
   channels: 2
   buffer_duration: 2s
   window_size: 4096
@@ -51,7 +50,7 @@ audio:
 # Quality thresholds
 quality:
   min_similarity: 0.75
-  max_latency: 240s
+  max_latency: 380s
   min_bitrate: 256
   max_dropouts: 1
   buffer_health: 0.95
@@ -77,11 +76,6 @@ hls:
     enable_url_patterns: true
     enable_header_mappings: true
     enable_segment_analysis: true
-    default_values:
-      codec: "aac"
-      channels: 2
-      sample_rate: 48000
-      bitrate: 280
 
   detection:
     url_patterns:
@@ -101,13 +95,13 @@ hls:
     user_agent: "TuneIn-CDN-Benchmark-HLS/2.0"
     accept_header: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain,*/*"
     connection_timeout: 10s
-    read_timeout: 280s
+    read_timeout: 420s
     max_redirects: 3
     buffer_size: 32768
     custom_headers: {}
 
   audio:
-    sample_duration: 260s
+    sample_duration: 400s
     buffer_duration: 3s
     max_segments: 50
     follow_live: true
@@ -119,10 +113,6 @@ icecast:
     enable_header_mappings: true
     enable_icy_metadata: true
     icy_metadata_timeout: 15s
-    default_values:
-      codec: "mp3"
-      channels: 2
-      sample_rate: 44100
 
   detection:
     url_patterns:
@@ -149,7 +139,7 @@ icecast:
     user_agent: "TuneIn-CDN-Benchmark-ICEcast/1.0"
     accept_header: "audio/*, application/ogg, */*"
     connection_timeout: 45s
-    read_timeout: 280s
+    read_timeout: 420s
     max_redirects: 3
     custom_headers: {}
     request_icy_meta: true
@@ -157,9 +147,9 @@ icecast:
   audio:
     buffer_size: 4096
     buffer_duration: 2s
-    sample_duration: 260s
+    sample_duration: 400s
     max_read_attempts: 10
-    read_timeout: 280s
+    read_timeout: 420s
     handle_icy_meta: true
     metadata_interval: 8192
 
@@ -167,16 +157,16 @@ icecast:
 benchmark:
   # Execution timeouts
   benchmark_timeout: 30m
-  operation_timeout: 280s
+  operation_timeout: 420s
 
   # Concurrency control
   max_concurrent_broadcasts: 3
   max_concurrent_streams: 4
 
   # Audio analysis parameters
-  audio_segment_duration: 260s
+  audio_segment_duration: 400s
   min_alignment_confidence: 0.22
-  max_alignment_offset: 240.0
+  max_alignment_offset: 380.0
   min_fingerprint_similarity: 0.55
 
   # Analysis options
