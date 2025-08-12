@@ -99,7 +99,7 @@ broadcast_groups:
             enabled: true
           bk_source:
             url: "http://stream1.skyviewnetworks.com:8010/CNN"
-            role: "backup"
+            role: "source"
             enabled: true
           ti_hls:
             url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
@@ -173,6 +173,8 @@ broadcast_groups:
             enabled: true
           ss_ais_mp3:
             url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
       espnfree:
         name: "ESPN Free"
