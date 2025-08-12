@@ -8,13 +8,13 @@ broadcast_groups:
     name: "O&O Talk"
     description: "O&O live talk and news broadcasts"
     content_type: "news"
-    enabled: false
+    enabled: true
     broadcasts:
       msnbcfree:
         name: "MSNBC Free"
         description: "MSNBC live news broadcast for CDN latency testing"
         content_type: "news"
-        enabled: true
+        enabled: false
         streams:
           pri_source:
             url: "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
