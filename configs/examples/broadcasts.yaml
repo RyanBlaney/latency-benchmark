@@ -1,291 +1,229 @@
-# TuneIn CDN Benchmark - Broadcast Groups Configuration
-# This file contains the actual stream endpoints for latency testing
-# Store this separately for security and deployment flexibility
-
 version: "1.0"
 environment: "production"
 updated_at: "2025-01-15T10:30:00Z"
 description: "TuneIn CDN benchmark broadcast groups - production streams"
 
 broadcast_groups:
-  # Major news broadcaster
-  msnbc_news:
-    name: "MSNBC News"
-    description: "MSNBC live news broadcast for CDN latency testing"
+  newsfree:
+    name: "O&O Talk"
+    description: "O&O live talk and news broadcasts"
     content_type: "news"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://msnbclive-f.akamaihd.net/i/MSNBC_1@129166/master.m3u8"
-        type: "hls"
-        role: "source"
+    enabled: false
+    broadcasts:
+      msnbcfree:
+        name: "MSNBC Free"
+        description: "MSNBC live news broadcast for CDN latency testing"
         content_type: "news"
         enabled: true
+        streams:
+          pri_source:
+            url: "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
+            type: "hls"
+            role: "source"
+            content_type: "news"
+            enabled: true
 
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/msnbc/live.m3u8"
-        type: "hls"
-        role: "cdn"
+          bk_source:
+            url: "http://stream1.skyviewnetworks.com:8010/MSNBC"
+            type: "icecast"
+            role: "source"
+            content_type: "news"
+            enabled: true
+
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            type: "hls"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+          ti_mp3:
+            url: "https://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            type: "icecast"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            type: "hls"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            type: "icecast"
+            role: "cdn"
+            content_type: "news"
+            enabled: true
+
+      cnbcfree:
+        name: CNBC Free
+        enabled: true
         content_type: "news"
-        enabled: true
+        streams:
+          pri_source:
+            url: "https://tni-drct-cnbc-wrld-ng93a.fast.nbcuni.com/live/master.m3u8"
+            role: "source"
+            enabled: true
+          bk_source:
+            url: "http://stream1.skyviewnetworks.com:8010/CNBC"
+            role: "source"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
-      icecast_source:
-        url: "https://opml.radiotime.com/Tune.ashx?id=s25111&formats=mp3"
-        type: "icecast"
-        role: "source"
+      cnnfree:
+        name: "CNN"
         content_type: "news"
-        enabled: true
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/msnbc/live.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
-
-  # Public radio classical music
-  kqed_classical:
-    name: "KQED Classical Music"
-    description: "KQED FM classical music stream"
-    content_type: "music"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://streams.kqed.org/kqedclassical.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "music"
-        enabled: true
-
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/kqed/classical.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "music"
-        enabled: true
-
-      icecast_source:
-        url: "https://streams.kqed.org/kqedclassical"
-        type: "icecast"
-        role: "source"
-        content_type: "music"
-        enabled: true
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/kqed/classical.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "music"
-        enabled: true
-
-  # Sports broadcaster
-  espn_radio:
-    name: "ESPN Sports Radio"
-    description: "ESPN live sports commentary and analysis"
-    content_type: "sports"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://espn-live.akamaized.net/hls/live/2011555/espn-radio/master.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "sports"
-        enabled: true
-
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/espn/radio.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "sports"
-        enabled: true
-
-      icecast_source:
-        url: "https://opml.radiotime.com/Tune.ashx?id=s80877&formats=mp3"
-        type: "icecast"
-        role: "source"
-        content_type: "sports"
-        enabled: true
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/espn/radio.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "sports"
-        enabled: true
-
-  # Talk radio
-  npr_news:
-    name: "NPR News"
-    description: "NPR hourly news updates and talk content"
-    content_type: "talk"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://npr-news.streaming.adswizz.com/nprnews.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "talk"
-        enabled: true
-
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/npr/news.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "talk"
-        enabled: true
-
-      icecast_source:
-        url: "https://npr-news.streaming.adswizz.com/nprnews"
-        type: "icecast"
-        role: "source"
-        content_type: "talk"
-        enabled: true
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/npr/news.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "talk"
-        enabled: true
-
-  # International broadcaster
-  bbc_world_service:
-    name: "BBC World Service"
-    description: "BBC World Service international news"
-    content_type: "news"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://stream.live.vc.bbcmedia.co.uk/bbc_world_service/master.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "news"
-        enabled: true
-
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/bbc/world-service.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
-
-      # ICEcast streams disabled for this broadcaster (example of partial config)
-      icecast_source:
-        url: "https://stream.live.vc.bbcmedia.co.uk/bbc_world_service"
-        type: "icecast"
-        role: "source"
-        content_type: "news"
-        enabled: false # Disabled - maybe source doesn't provide ICEcast
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/bbc/world-service.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "news"
-        enabled: false # Disabled - CDN doesn't support this stream
-
-  # High-traffic music station
-  kost_music:
-    name: "KOST 103.5 FM"
-    description: "Los Angeles adult contemporary music station"
-    content_type: "music"
-    enabled: true
-    streams:
-      hls_source:
-        url: "https://live.iheartmedia.com/live/2074/hls/master.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "music"
-        enabled: true
-
-      hls_cdn:
-        url: "https://cdn.tunein.com/streams/kost/live.m3u8"
-        type: "hls"
-        role: "cdn"
-        content_type: "music"
-        enabled: true
-
-      icecast_source:
-        url: "https://live.iheartmedia.com/live/2074/stream.mp3"
-        type: "icecast"
-        role: "source"
-        content_type: "music"
-        enabled: true
-
-      icecast_cdn:
-        url: "https://cdn.tunein.com/streams/kost/live.mp3"
-        type: "icecast"
-        role: "cdn"
-        content_type: "music"
-        enabled: true
-
-  # Example of cross-protocol timing test only
-  timing_test_only:
-    name: "Cross-Protocol Timing Analysis"
-    description: "Compare HLS vs ICEcast source timing without CDN"
-    content_type: "mixed"
-    enabled: false # Disabled by default - enable for specific timing analysis
-    streams:
-      hls_source:
-        url: "https://example-radio.streaming.com/live.m3u8"
-        type: "hls"
-        role: "source"
-        content_type: "mixed"
-        enabled: true
-
-      icecast_source:
-        url: "https://example-radio.streaming.com/live.mp3"
-        type: "icecast"
-        role: "source"
-        content_type: "mixed"
-        enabled: true
-
-      # No CDN streams - this is just for protocol comparison
-      hls_cdn:
-        url: ""
-        type: "hls"
-        role: "cdn"
-        content_type: "mixed"
         enabled: false
+        streams:
+          pri_source:
+            url: "https://turner-live-aka.cdn.turner.com/hls/live/2040557/cnnaudioonly/AUDIO_1_128000_eng.m3u8"
+            role: "source"
+            enabled: true
+          bk_source:
+            url: "http://stream1.skyviewnetworks.com:8010/CNN"
+            role: "backup"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
-      icecast_cdn:
-        url: ""
-        type: "icecast"
-        role: "cdn"
-        content_type: "mixed"
+      foxfree:
+        name: "Fox News"
         enabled: false
+        streams:
+          pri_source:
+            url: "https://188a2110c0c0aa3d.mediapackage.us-east-2.amazonaws.com/out/v1/67fcd733de1c4728ac189e5dec958a18/master_1_0.m3u8"
+            role: "source"
+            enabled: true
+          bk_source:
+            url: "http://stream1.skyviewnetworks.com:8010/FOX"
+            role: "source"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
-  # Local development/testing (using your test files)
-  local_test:
-    name: "Local Test Files"
-    description: "Local audio files for development testing"
-    content_type: "news"
-    enabled: false # Only enable for local development
-    streams:
-      hls_source:
-        url: "file://$(pwd)/test-audio/msnbc_hls_30s.wav"
-        type: "hls"
-        role: "source"
-        content_type: "news"
-        enabled: true
+      bloombergfree:
+        name: "Bloomberg Free"
+        enabled: false
+        streams:
+          pri_source:
+            url: "https://drsf4spw8el1i.cloudfront.net/rad/Channel-RAD-AWS-virginia-1/Source-RadBBR-96-1_live.m3u8"
+            role: "source"
+            enabled: true
+          bk_source:
+            url: "https://d2r83kn0fbyxcp.cloudfront.net/rad/Channel-RAD-AWS-oregon-1/Source-RadBBR-96-2_live.m3u8"
+            role: "source"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
 
-      hls_cdn:
-        url: "file://$(pwd)/test-audio/msnbc_hls_delayed_30s.wav"
-        type: "hls"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
+      espnfree:
+        name: "ESPN Free"
+        enabled: false
+        streams:
+          pri_source:
+            url: "https://ti.radio-prod.sportsradiocenter.com/ESPN/128k/program.m3u8"
+            role: "source"
+            enabled: true
+          bk_source:
+            url: "http://stream1.skyviewnetworks.com:8010/ESPN"
+            role: "source"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/msnbcfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/msnbcfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
-      icecast_source:
-        url: "file://$(pwd)/test-audio/msnbc_icecast_30s.wav"
-        type: "icecast"
-        role: "source"
-        content_type: "news"
-        enabled: true
-
-      icecast_cdn:
-        url: "file://$(pwd)/test-audio/msnbc_icecast_delayed_30s.wav"
-        type: "icecast"
-        role: "cdn"
-        content_type: "news"
-        enabled: true
+      skynewsfree:
+        name: "Sky News Free"
+        enabled: false
+        streams:
+          pri_source:
+            url: "https://linear-uk-hls1-prod-main.cloudfront.skycdn.it/OFF/159218/radiotunein/master_mobile.m3u8?x-tunein-headers=x-cdnAuth:VUtjZG5UMFBTTnByMGRDbDB1ZEZyMG50aDNhZDNyUGE1NQ=="
+            role: "source"
+            enabled: true
+          ti_hls:
+            url: "https://hls.tunein.com/v3/newsfree/skynewsfree/master.m3u8"
+            role: "cdn"
+            enabled: true
+          ti_mp3:
+            url: "http://cdn.tunein.com/v1/broadcast/newsfree/skynewsfree/stream.mp3"
+            role: "cdn"
+            enabled: true
+          ss_ais_hls:
+            url: "https://tunein.cdnstream1.com/3511_96.aac/playlist.m3u8"
+            role: "cdn"
+            enabled: true
+          ss_ais_mp3:
+            url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true

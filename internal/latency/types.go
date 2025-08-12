@@ -422,7 +422,7 @@ func (c *BroadcastConfig) validateBroadcastGroup(group *BroadcastGroup) error {
 
 	// Validate individual broadcasts
 	for broadcastName, broadcast := range group.Broadcasts {
-		if err := c.validateBroadcast(broadcast); err != nil {
+		if err := c.validateBroadcast(broadcast, group); err != nil {
 			return fmt.Errorf("invalid broadcast %s: %w", broadcastName, err)
 		}
 	}
@@ -431,7 +431,7 @@ func (c *BroadcastConfig) validateBroadcastGroup(group *BroadcastGroup) error {
 }
 
 // validateBroadcast validates a single broadcast
-func (c *BroadcastConfig) validateBroadcast(broadcast *Broadcast) error {
+func (c *BroadcastConfig) validateBroadcast(broadcast *Broadcast, group *BroadcastGroup) error {
 	if broadcast.Name == "" {
 		return fmt.Errorf("broadcast name is required")
 	}
@@ -440,9 +440,15 @@ func (c *BroadcastConfig) validateBroadcast(broadcast *Broadcast) error {
 		return fmt.Errorf("at least one stream is required")
 	}
 
+	if broadcast.ContentType == "" {
+		if group.ContentType != "" {
+			broadcast.ContentType = group.ContentType
+		}
+	}
+
 	// Validate individual streams
 	for streamName, stream := range broadcast.Streams {
-		if err := c.validateStreamEndpoint(stream); err != nil {
+		if err := c.validateStreamEndpoint(stream, broadcast); err != nil {
 			return fmt.Errorf("invalid stream %s: %w", streamName, err)
 		}
 	}
@@ -451,7 +457,7 @@ func (c *BroadcastConfig) validateBroadcast(broadcast *Broadcast) error {
 }
 
 // validateStreamEndpoint validates a single stream endpoint
-func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint) error {
+func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint, broadcast *Broadcast) error {
 	if stream.URL == "" {
 		return fmt.Errorf("stream URL is required")
 	}
@@ -467,7 +473,11 @@ func (c *BroadcastConfig) validateStreamEndpoint(stream *StreamEndpoint) error {
 	}
 
 	if stream.ContentType == "" {
-		return fmt.Errorf("content type is required")
+		if broadcast.ContentType != "" {
+			stream.ContentType = broadcast.ContentType
+		} else {
+			return fmt.Errorf("content type is required for stream, broadcast or group")
+		}
 	}
 
 	validContentTypes := map[string]bool{
