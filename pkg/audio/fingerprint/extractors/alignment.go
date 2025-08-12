@@ -55,7 +55,7 @@ type AlignmentFeatures struct {
 	Method          string  `json:"method"`           // Best alignment method
 	ProcessingTime  float64 `json:"processing_time"`  // Processing time (ms)
 	QueryLength     float64 `json:"query_length"`     // Query length in seconds
-	ReferenceLength float64 `json:"reference_length"` // Reference length in seconds
+	ReferenceLength float64 `json:"reference_length"` // Reference length in
 }
 
 // AlignmentResult wraps the stats package result with additional context

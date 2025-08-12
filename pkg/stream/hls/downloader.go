@@ -19,14 +19,15 @@ import (
 
 // AudioDownloader handles downloading and processing HLS audio segments for LIVE streams
 type AudioDownloader struct {
-	client        *http.Client
-	segmentCache  map[string][]byte
-	downloadStats *DownloadStats
-	config        *DownloadConfig
-	hlsConfig     *Config
-	tempDir       string
-	baseURL       string
-	seenSegments  map[string]bool // Track segments we've already downloaded
+	client          *http.Client
+	segmentCache    map[string][]byte
+	downloadStats   *DownloadStats
+	config          *DownloadConfig
+	hlsConfig       *Config
+	tempDir         string
+	baseURL         string
+	seenSegments    map[string]bool // Track segments we've already downloaded
+	isFirstPlaylist bool
 }
 
 // QueryParamRule defines when and what query parameters to add
@@ -113,16 +114,17 @@ func NewAudioDownloader(client *http.Client, config *DownloadConfig, hlsConfig *
 			AudioMetrics:  &AudioMetrics{},
 			LiveStartTime: &now,
 		},
-		config:    config,
-		hlsConfig: hlsConfig,
-		tempDir:   tempDir,
+		config:          config,
+		hlsConfig:       hlsConfig,
+		tempDir:         tempDir,
+		isFirstPlaylist: true,
 	}
 }
 
 // DefaultDownloadConfig returns default download configuration optimized for live streaming
 func DefaultDownloadConfig() *DownloadConfig {
 	return &DownloadConfig{
-		MaxSegments:             50, // Allow more segments for live streaming
+		MaxSegments:             80, // Allow more segments for live streaming
 		SegmentTimeout:          15 * time.Second,
 		MaxRetries:              3,
 		CacheSegments:           false, // Don't cache live segments
@@ -347,6 +349,174 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 
 	// FIX: Combine all segment data before decoding
 	return ad.combineAndDecodeSegments(segmentDataList, segmentDurations, mediaPlaylistURL)
+}
+
+func (ad *AudioDownloader) DownloadContinuousLiveEdge(ctx context.Context, playlistURL string, targetDuration time.Duration) (*common.AudioData, error) {
+	logger := logging.WithFields(logging.Fields{
+		"component":       "hls_audio_downloader",
+		"function":        "DownloadContinuousLiveEdge",
+		"playlist_url":    playlistURL,
+		"target_duration": targetDuration.Seconds(),
+	})
+
+	logger.Info("Starting continuous live edge HLS audio download")
+
+	// Add required query parameters
+	playlistURL = ad.applyQueryParamRules(playlistURL)
+
+	mediaPlaylistURL, err := ad.selectBestVariant(ctx, playlistURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select variant: %w", err)
+	}
+
+	logger.Info("Selected media playlist for live edge", logging.Fields{
+		"media_playlist_url": mediaPlaylistURL,
+	})
+
+	// Set base URL for resolving relative segment URLs
+	if baseURL, err := url.Parse(mediaPlaylistURL); err == nil {
+		baseURL.RawQuery = ""
+		baseURL.Fragment = ""
+		ad.baseURL = baseURL.String()
+	}
+
+	var allSegmentData [][]byte
+	var allSegmentDurations []time.Duration
+	var totalDuration time.Duration
+	startTime := time.Now()
+
+	// Create timeout context
+	downloadCtx, cancel := context.WithTimeout(ctx, targetDuration+(60*time.Second))
+	defer cancel()
+
+	logger.Info("Starting live edge collection loop")
+
+	for totalDuration < targetDuration {
+		select {
+		case <-downloadCtx.Done():
+			logger.Warn("Download context cancelled in live edge mode", logging.Fields{
+				"collected_duration": totalDuration.Seconds(),
+				"target_duration":    targetDuration.Seconds(),
+			})
+			if len(allSegmentData) == 0 {
+				return nil, downloadCtx.Err()
+			}
+			break
+		default:
+		}
+
+		// Fetch current playlist
+		playlist, err := ad.fetchPlaylist(downloadCtx, mediaPlaylistURL)
+		if err != nil {
+			logger.Warn("Failed to fetch playlist in live edge mode", logging.Fields{
+				"error": err.Error(),
+			})
+			// Wait a bit and continue
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		// CRITICAL: Always take only the NEWEST segment(s)
+		if len(playlist.Segments) > 0 {
+			// Take the last 1-2 segments (newest available)
+			newestSegments := playlist.Segments[len(playlist.Segments)-1:]
+
+			logger.Debug("Found newest segments", logging.Fields{
+				"total_playlist_segments": len(playlist.Segments),
+				"newest_segments":         len(newestSegments),
+			})
+
+			for _, segment := range newestSegments {
+				segmentURL := ad.resolveSegmentURL(playlist, segment.URI)
+
+				// Check if we've already seen this segment
+				if ad.seenSegments[segmentURL] {
+					continue
+				}
+
+				// Download the newest segment
+				segmentData, err := ad.downloadSegment(downloadCtx, segmentURL)
+				if err != nil {
+					logger.Warn("Failed to download newest segment", logging.Fields{
+						"segment_url": segmentURL,
+						"error":       err.Error(),
+					})
+					continue
+				}
+
+				// Mark as seen
+				ad.seenSegments[segmentURL] = true
+
+				// Add to collection
+				allSegmentData = append(allSegmentData, segmentData)
+				segmentDuration := time.Duration(segment.Duration * float64(time.Second))
+				if segmentDuration == 0 {
+					segmentDuration = 6 * time.Second // Default HLS segment duration
+				}
+				allSegmentDurations = append(allSegmentDurations, segmentDuration)
+				totalDuration += segmentDuration
+
+				// Update stats
+				ad.downloadStats.SegmentsDownloaded++
+				ad.downloadStats.BytesDownloaded += int64(len(segmentData))
+
+				logger.Debug("Downloaded newest segment", logging.Fields{
+					"segment_duration": segmentDuration.Seconds(),
+					"segment_size":     len(segmentData),
+					"total_duration":   totalDuration.Seconds(),
+					"segments_count":   len(allSegmentData),
+				})
+
+				// If we have too much data, remove oldest segments to stay at live edge
+				maxSegments := int(targetDuration.Seconds()/6) + 2 // Allow some buffer
+				if len(allSegmentData) > maxSegments {
+					// Remove oldest segment
+					allSegmentData = allSegmentData[1:]
+					removedDuration := allSegmentDurations[0]
+					allSegmentDurations = allSegmentDurations[1:]
+					totalDuration -= removedDuration
+
+					logger.Debug("Removed oldest segment to stay at live edge", logging.Fields{
+						"removed_duration":   removedDuration.Seconds(),
+						"remaining_segments": len(allSegmentData),
+						"total_duration":     totalDuration.Seconds(),
+					})
+				}
+			}
+		}
+
+		// If we have enough content, break
+		if totalDuration >= targetDuration {
+			break
+		}
+
+		// Wait for next segment to appear (typically 2-3 seconds for 6s segments)
+		logger.Debug("Waiting for new segments to appear")
+		select {
+		case <-downloadCtx.Done():
+			break
+		case <-time.After(3 * time.Second):
+			continue
+		}
+	}
+
+	if len(allSegmentData) == 0 {
+		return nil, fmt.Errorf("no segments collected in live edge mode")
+	}
+
+	downloadDuration := time.Since(startTime)
+	ad.downloadStats.DownloadTime += downloadDuration
+
+	logger.Info("Live edge HLS download completed", logging.Fields{
+		"segments_downloaded": len(allSegmentData),
+		"total_duration":      totalDuration.Seconds(),
+		"target_duration":     targetDuration.Seconds(),
+		"download_time":       downloadDuration.Seconds(),
+		"live_edge_mode":      true,
+	})
+
+	// Decode the newest segments we collected
+	return ad.combineAndDecodeSegments(allSegmentData, allSegmentDurations, mediaPlaylistURL)
 }
 
 // DownloadAudioSampleDirect downloads HLS audio using FFmpeg directly from URL
@@ -959,41 +1129,29 @@ func (ad *AudioDownloader) findNewSegments(playlist *M3U8Playlist) []M3U8Segment
 		"function":  "findNewSegments",
 	})
 
-	for _, segment := range playlist.Segments {
+	// FOR LIVE: Only consider the LAST few segments from the playlist
+	// This ensures we stay at the live edge
+	segmentsToConsider := playlist.Segments
+	if ad.isFirstPlaylist && len(playlist.Segments) > 0 {
+		// Take only the last 3 segments for live streaming
+		segmentsToConsider = playlist.Segments[len(playlist.Segments)-1:]
+		ad.isFirstPlaylist = false
+		logger.Debug("Live mode: considering only latest segments", logging.Fields{
+			"total_segments": len(playlist.Segments),
+			"considering":    len(segmentsToConsider),
+		})
+	}
+
+	for _, segment := range segmentsToConsider {
 		segmentURL := ad.resolveSegmentURL(playlist, segment.URI)
 
 		if !ad.seenSegments[segmentURL] {
 			newSegments = append(newSegments, segment)
 
-			// Debug log the first few new segments
-			if len(newSegments) <= 3 {
-				logger.Debug("Found new segment", logging.Fields{
-					"segment_uri": segment.URI,
-					"segment_url": segmentURL,
-					"duration":    segment.Duration,
-				})
-			}
-		}
-	}
-
-	// Add debug logging
-	if len(newSegments) == 0 && len(playlist.Segments) > 0 {
-		logger.Debug("No new segments - all seen", logging.Fields{
-			"total_segments": len(playlist.Segments),
-			"seen_count":     len(ad.seenSegments),
-		})
-
-		// Debug: show first few segment URLs being checked
-		for i, segment := range playlist.Segments {
-			if i >= 3 {
-				break
-			}
-			segmentURL := ad.resolveSegmentURL(playlist, segment.URI)
-			logger.Debug("Checking segment", logging.Fields{
-				"index":    i,
-				"uri":      segment.URI,
-				"resolved": segmentURL,
-				"seen":     ad.seenSegments[segmentURL],
+			logger.Debug("Found new segment", logging.Fields{
+				"segment_uri": segment.URI,
+				"segment_url": segmentURL,
+				"duration":    segment.Duration,
 			})
 		}
 	}

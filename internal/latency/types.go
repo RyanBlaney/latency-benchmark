@@ -238,18 +238,26 @@ type BroadcastMeasurement struct {
 	Timestamp              time.Time                         `json:"timestamp"`
 }
 
+// Liveness wraps the lag (in seconds) and the status of a stream.
+// The status is "MATCH" for both aligned and fingerprint valid,
+// "NO_ALIGNMENT" for alignment invalid, and "NO_MATCH" a fingerprint
+// failure implies that alignment failed.
+type Liveness struct {
+	LagSeconds float64 `json:"lag_seconds"`
+	Status     string  `json:"status"`
+}
+
 // LivenessMetrics represents how far behind live each stream is
 type LivenessMetrics struct {
-	PrimarySourceLag                  float64 `json:"primary_source_lag_seconds"`
-	BackupSourceLag                   float64 `json:"backup_source_lag_seconds"`
-	HLSCloudfrontCDNLag               float64 `json:"hls_cloudfront_cdn_lag_seconds"`
-	ICEcastCloudfrontCDNLag           float64 `json:"icecast_cloudfront_lag_seconds"`
-	HLSAISCDNLag                      float64 `json:"hls_ais_cdn_lag_seconds"`
-	ICEcastAISCDNLag                  float64 `json:"icecast_ais_cdn_lag_seconds"`
-	HLSCloudfrontCDNLagFromBackup     float64 `json:"hls_cloudfront_cdn_lag_seconds_from_backup,omitempty"`
-	ICEcastCloudfrontCDNLagFromBackup float64 `json:"icecast_cloudfront_lag_seconds_from_backup,omitempty"`
-	HLSAISCDNLagFromBackup            float64 `json:"hls_ais_cdn_lag_seconds_from_backup,omitempty"`
-	ICEcastAISCDNLagFromBackup        float64 `json:"icecast_ais_cdn_lag_seconds_from_backup,omitempty"`
+	HLSCloudfrontCDNLag               *Liveness `json:"pri_source_vs_ti_hls"`
+	ICEcastCloudfrontCDNLag           *Liveness `json:"pri_source_vs_ti_mp3"`
+	HLSAISCDNLag                      *Liveness `json:"pri_source_vs_ss_ais_hls"`
+	ICEcastAISCDNLag                  *Liveness `json:"pri_source_vs_ss_ais_mp3"`
+	SourceLag                         *Liveness `json:"pri_source_vs_bk_source"`
+	HLSCloudfrontCDNLagFromBackup     *Liveness `json:"bk_source_vs_ti_hls,omitempty"`
+	ICEcastCloudfrontCDNLagFromBackup *Liveness `json:"bk_source_vs_ti_mp3,omitempty"`
+	HLSAISCDNLagFromBackup            *Liveness `json:"bk_source_vs_ss_ais_hls,omitempty"`
+	ICEcastAISCDNLagFromBackup        *Liveness `json:"bk_source_vs_ss_ais_mp3,omitempty"`
 }
 
 // OverallValidation represents the overall health of all streams
@@ -280,7 +288,6 @@ type AverageLatencyMetrics struct {
 	AvgHLSCDNLag           float64 `json:"avg_hls_cdn_lag_seconds"`
 	AvgICEcastCDNLag       float64 `json:"avg_icecast_cdn_lag_seconds"`
 	AvgCDNLag              float64 `json:"avg_cdn_lag_seconds"`
-	AvgSourceLag           float64 `json:"avg_source_lag_seconds"`
 	AvgTimeToFirstByte     float64 `json:"avg_time_to_first_byte_ms"`
 	AvgAudioExtractionTime float64 `json:"avg_audio_extraction_time_ms"`
 }

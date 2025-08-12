@@ -125,8 +125,8 @@ func (s *SpeechFeatureExtractor) GetFeatureWeights() map[string]float64 {
 
 	// News content may benefit from slightly different weighting
 	if s.isNews {
-		weights["speech"] = 0.40 // Even higher emphasis on speech characteristics
-		weights["mfcc"] = 0.35   // Slightly lower MFCC weight
+		weights["speech"] = 0.40
+		weights["mfcc"] = 0.35
 	}
 
 	return weights

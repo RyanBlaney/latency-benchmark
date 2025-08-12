@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -146,7 +147,7 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 		"total_duration_s":      summary.TotalDuration.Seconds(),
 		"successful_broadcasts": summary.SuccessfulBroadcasts,
 		"failed_broadcasts":     summary.FailedBroadcasts,
-		"overall_health_score":  summary.OverallHealthScore,
+		// "overall_health_score":  summary.OverallHealthScore,
 	})
 
 	return summary, nil
@@ -194,17 +195,17 @@ func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey 
 	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements)
 
 	// Step 5: Perform overall validation
-	measurement.OverallValidation = o.validateOverallHealth(measurement)
+	// measurement.OverallValidation = o.validateOverallHealth(measurement)
 
 	measurement.TotalBenchmarkTime = time.Since(benchmarkStart)
 
 	o.logger.Info("Broadcast measurement completed", logging.Fields{
-		"broadcast_key":        broadcastKey,
-		"total_time_s":         measurement.TotalBenchmarkTime.Seconds(),
-		"valid_streams":        validStreams,
-		"alignment_count":      len(measurement.AlignmentMeasurements),
-		"fingerprint_count":    len(measurement.FingerprintComparisons),
-		"overall_health_score": measurement.OverallValidation.OverallHealthScore,
+		"broadcast_key":     broadcastKey,
+		"total_time_s":      measurement.TotalBenchmarkTime.Seconds(),
+		"valid_streams":     validStreams,
+		"alignment_count":   len(measurement.AlignmentMeasurements),
+		"fingerprint_count": len(measurement.FingerprintComparisons),
+		// "overall_health_score": measurement.OverallValidation.OverallHealthScore,
 	})
 
 	return measurement
@@ -287,155 +288,45 @@ func (o *Orchestrator) measureSourceToCDNAlignments(ctx context.Context, streamM
 		"total_comparisons": len(sourceStreams) * len(cdnStreams),
 	})
 
-	// Create alignments: each source vs each CDN
+	// Create alignments: each source vs each CDN (backup stream comparisons not needed)
 	for _, sourceKey := range sourceStreams {
-		for _, cdnKey := range cdnStreams {
-			alignmentName := fmt.Sprintf("%s_to_%s", sourceKey, cdnKey)
+		if contains(sourceKey, "pri") {
+			for _, cdnKey := range cdnStreams {
+				alignmentName := fmt.Sprintf("%s_vs_%s", sourceKey, cdnKey)
 
-			o.logger.Info("Performing temporal alignment", logging.Fields{
-				"alignment_name": alignmentName,
-				"source_stream":  sourceKey,
-				"cdn_stream":     cdnKey,
-				"source_url":     streamMeasurements[sourceKey].Endpoint.URL,
-				"cdn_url":        streamMeasurements[cdnKey].Endpoint.URL,
-			})
+				o.logger.Info("Performing temporal alignment", logging.Fields{
+					"alignment_name": alignmentName,
+					"source_stream":  sourceKey,
+					"cdn_stream":     cdnKey,
+					"source_url":     streamMeasurements[sourceKey].Endpoint.URL,
+					"cdn_url":        streamMeasurements[cdnKey].Endpoint.URL,
+				})
 
-			alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[sourceKey], streamMeasurements[cdnKey])
-			alignments[alignmentName] = alignment
+				alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[sourceKey], streamMeasurements[cdnKey])
+				alignments[alignmentName] = alignment
+			}
+
+			// Measure source to source latency
+			for _, source2Key := range sourceStreams {
+				if !contains(source2Key, "pri") {
+					alignmentName := fmt.Sprintf("%s_vs_%s", sourceKey, source2Key)
+
+					o.logger.Info("Performing temporal alignment", logging.Fields{
+						"alignment_name":    alignmentName,
+						"pri_source_stream": sourceKey,
+						"bk_source_stream":  source2Key,
+						"pri_source_url":    streamMeasurements[sourceKey].Endpoint.URL,
+						"bk_source_url":     streamMeasurements[source2Key].Endpoint.URL,
+					})
+
+					alignment := o.engine.MeasureAlignment(ctx, streamMeasurements[sourceKey], streamMeasurements[source2Key])
+					alignments[alignmentName] = alignment
+				}
+			}
 		}
 	}
 
 	return alignments
-}
-
-// calculateCorrectLivenessMetrics calculates liveness using the hardcoded config. Deprecated for automated approach.
-func (o *Orchestrator) calculateCorrectLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement, streamMeasurements map[string]*latency.StreamMeasurement) *latency.LivenessMetrics {
-	metrics := &latency.LivenessMetrics{}
-
-	o.logger.Info("Calculating liveness metrics using direct alignment measurements", logging.Fields{
-		"alignment_count": len(alignmentMeasurements),
-		"stream_count":    len(streamMeasurements),
-	})
-
-	// Step 1: Extract CDN latencies directly from alignment measurements
-	for alignmentName, alignment := range alignmentMeasurements {
-		if alignment.Error != nil || !alignment.IsValidAlignment {
-			o.logger.Info("Invalid alignment, skipping", logging.Fields{
-				"alignment_name": alignmentName,
-				"error":          alignment.Error,
-				"is_valid":       alignment.IsValidAlignment,
-			})
-			continue
-		}
-
-		switch alignmentName {
-		case "primary_source_to_hls_cloudfront_cdn":
-			metrics.HLSCloudfrontCDNLag = alignment.LatencySeconds
-			o.logger.Info("HLS Cloudfront latency from direct alignment", logging.Fields{
-				"latency_seconds": metrics.HLSCloudfrontCDNLag,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "primary_source_to_icecast_cloudfront_cdn":
-			metrics.ICEcastCloudfrontCDNLag = alignment.LatencySeconds
-			o.logger.Info("ICEcast Cloudfront latency from direct alignment", logging.Fields{
-				"latency_seconds": metrics.ICEcastCloudfrontCDNLag,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "primary_source_to_hls_ais_cdn":
-			metrics.HLSAISCDNLag = alignment.LatencySeconds
-			o.logger.Info("HLS Soundstack lag from direct alignment", logging.Fields{
-				"latency_seconds": metrics.HLSAISCDNLag,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "primary_source_to_icecast_ais_cdn":
-			metrics.ICEcastAISCDNLag = alignment.LatencySeconds
-			o.logger.Info("ICEcast Soundstack lag from direct alignment", logging.Fields{
-				"latency_seconds": metrics.HLSAISCDNLag,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "backup_source_to_hls_cloudfront_cdn":
-			metrics.HLSCloudfrontCDNLagFromBackup = alignment.LatencySeconds
-			o.logger.Info("HLS Cloudfront latency from direct alignment (via backup stream)", logging.Fields{
-				"latency_seconds": metrics.HLSCloudfrontCDNLagFromBackup,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "backup_source_to_icecast_cloudfront_cdn":
-			metrics.ICEcastCloudfrontCDNLagFromBackup = alignment.LatencySeconds
-			o.logger.Info("ICEcast Cloudfront latency from direct alignment (via backup stream)", logging.Fields{
-				"latency_seconds": metrics.ICEcastCloudfrontCDNLagFromBackup,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "backup_source_to_hls_ais_cdn":
-			metrics.HLSAISCDNLagFromBackup = alignment.LatencySeconds
-			o.logger.Info("HLS Soundstack lag from direct alignment (via backup stream)", logging.Fields{
-				"latency_seconds": metrics.HLSAISCDNLagFromBackup,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-
-		case "backup_source_to_icecast_ais_cdn":
-			metrics.ICEcastAISCDNLagFromBackup = alignment.LatencySeconds
-			o.logger.Info("ICEcast Soundstack lag from direct alignment (via backup stream)", logging.Fields{
-				"latency_seconds": metrics.HLSAISCDNLagFromBackup,
-				"confidence":      alignment.AlignmentResult.OffsetConfidence,
-			})
-		}
-	}
-
-	// Step 2: Calculate individual stream lags (for completeness)
-	// These are derived by adding TTFB to the CDN latencies
-	streamTTFBs := make(map[string]time.Duration)
-	for _, stream := range streamMeasurements {
-		if stream.Error != nil {
-			continue
-		}
-		streamKey := fmt.Sprintf("%s_%s", stream.Endpoint.Type, stream.Endpoint.Role)
-		streamTTFBs[streamKey] = stream.TimeToFirstByte
-	}
-
-	// Set source lags to their TTFB (they are the reference points)
-	if ttfb, exists := streamTTFBs["primary_source_to_hls_cloudfront_cdn"]; exists {
-		metrics.HLSCloudfrontCDNLag += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["primary_source_to_icecast_cloudfront_cdn"]; exists {
-		metrics.ICEcastCloudfrontCDNLag += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["primary_source_to_hls_ais_cdn"]; exists {
-		metrics.HLSAISCDNLag += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["primary_source_to_icecast_ais_cdn"]; exists {
-		metrics.ICEcastAISCDNLag += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["backup_source_to_hls_cloudfront_cdn"]; exists {
-		metrics.HLSCloudfrontCDNLagFromBackup += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["backup_source_to_icecast_cloudfront_cdn"]; exists {
-		metrics.ICEcastCloudfrontCDNLagFromBackup += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["backup_source_to_hls_ais_cdn"]; exists {
-		metrics.HLSAISCDNLagFromBackup += ttfb.Seconds()
-	}
-	if ttfb, exists := streamTTFBs["backup_source_to_icecast_ais_cdn"]; exists {
-		metrics.ICEcastAISCDNLagFromBackup += ttfb.Seconds()
-	}
-
-	o.logger.Info("Liveness metrics completed using direct measurements", logging.Fields{
-		"primary_source_to_hls_cloudfront_cdn":     metrics.HLSCloudfrontCDNLag,
-		"primary_source_to_icecast_cloudfront_cdn": metrics.ICEcastCloudfrontCDNLag,
-		"primary_source_to_hls_ais_cdn":            metrics.HLSAISCDNLag,
-		"primary_source_to_icecast_ais_cdn":        metrics.ICEcastAISCDNLag,
-		"backup_source_to_hls_cloudfront_cdn":      metrics.HLSCloudfrontCDNLagFromBackup,
-		"backup_source_to_icecast_cloudfront_cdn":  metrics.ICEcastCloudfrontCDNLagFromBackup,
-		"backup_source_to_hls_ais_cdn":             metrics.HLSAISCDNLagFromBackup,
-		"backup_source_to_icecast_ais_cdn":         metrics.ICEcastAISCDNLagFromBackup,
-	})
-
-	return metrics
 }
 
 // measureFingerprintComparisons performs fingerprint comparisons using alignment data
@@ -462,67 +353,6 @@ func (o *Orchestrator) measureFingerprintComparisons(ctx context.Context, alignm
 	return comparisons
 }
 
-// validateOverallHealth validates the overall health of all streams
-func (o *Orchestrator) validateOverallHealth(measurement *latency.BroadcastMeasurement) *latency.OverallValidation {
-	validation := &latency.OverallValidation{
-		AllStreamsValid:         true,
-		ValidStreamCount:        0,
-		InvalidStreamCount:      0,
-		StreamValidityIssues:    []string{},
-		FingerprintMatchesValid: true,
-		AlignmentQualityGood:    true,
-	}
-
-	// Validate individual streams
-	for streamName, stream := range measurement.StreamMeasurements {
-		if stream.Error != nil {
-			validation.AllStreamsValid = false
-			validation.InvalidStreamCount++
-			validation.StreamValidityIssues = append(validation.StreamValidityIssues,
-				fmt.Sprintf("stream %s: %v", streamName, stream.Error))
-			continue
-		}
-
-		if stream.StreamValidation.IsValid {
-			validation.ValidStreamCount++
-		} else {
-			validation.AllStreamsValid = false
-			validation.InvalidStreamCount++
-			for _, err := range stream.StreamValidation.ValidationErrors {
-				validation.StreamValidityIssues = append(validation.StreamValidityIssues,
-					fmt.Sprintf("stream %s: %s", streamName, err))
-			}
-		}
-	}
-
-	// Validate fingerprint matches
-	for _, comparison := range measurement.FingerprintComparisons {
-		if comparison.Error == nil && !comparison.IsValidMatch {
-			validation.FingerprintMatchesValid = false
-			break
-		}
-	}
-
-	// Validate alignment quality
-	for _, alignment := range measurement.AlignmentMeasurements {
-		if alignment.Error == nil && alignment.IsValidAlignment {
-			// TODO: GET A WORKING ALIGNMENT QUALITY
-			if alignment.LatencySeconds >= 0 {
-				validation.AlignmentQualityGood = true
-			}
-			/* if alignment.AlignmentResult.AlignmentQuality < 0.5 { // Configurable threshold
-				validation.AlignmentQualityGood = false
-				break
-			} */
-		}
-	}
-
-	// Calculate overall health score
-	validation.OverallHealthScore = o.calculateHealthScore(validation)
-
-	return validation
-}
-
 // Helper functions
 
 func (o *Orchestrator) countValidStreams(measurements map[string]*latency.StreamMeasurement) int {
@@ -536,49 +366,104 @@ func (o *Orchestrator) countValidStreams(measurements map[string]*latency.Stream
 }
 
 // calculateLivenessMetrics calculates liveness metrics from alignment data
-func (o *Orchestrator) calculateLivenessMetrics(alignmentMeasurements map[string]*latency.AlignmentMeasurement) *latency.LivenessMetrics {
+func (o *Orchestrator) calculateLivenessMetrics(
+	alignments map[string]*latency.AlignmentMeasurement) *latency.LivenessMetrics {
 	metrics := &latency.LivenessMetrics{}
 
 	o.logger.Info("Calculating liveness metrics from alignments", logging.Fields{
-		"alignment_count": len(alignmentMeasurements),
+		"alignment_count": len(alignments),
 	})
 
 	// Extract latencies from source-to-CDN alignments
-	for alignmentName, alignment := range alignmentMeasurements {
+	for alignmentName, alignment := range alignments {
 		if alignment.Error != nil || !alignment.IsValidAlignment {
 			continue
 		}
 
-		latency := alignment.LatencySeconds
-
 		// Map based on stream names in the alignment
 		// Pattern: {source_name}_to_{cdn_name}
 		switch {
-		case contains(alignmentName, "primary_source") && contains(alignmentName, "hls") && contains(alignmentName, "cloudfront"):
-			metrics.HLSCloudfrontCDNLag = latency
-		case contains(alignmentName, "primary_source") && contains(alignmentName, "hls") && contains(alignmentName, "ais"):
-			metrics.HLSAISCDNLag = latency
-		case contains(alignmentName, "primary_source") && contains(alignmentName, "icecast") && contains(alignmentName, "cloudfront"):
-			metrics.ICEcastCloudfrontCDNLag = latency
-		case contains(alignmentName, "primary_source") && contains(alignmentName, "icecast") && contains(alignmentName, "ais"):
-			metrics.ICEcastAISCDNLag = latency
-		case contains(alignmentName, "backup_source") && contains(alignmentName, "hls") && contains(alignmentName, "cloudfront"):
-			metrics.HLSCloudfrontCDNLagFromBackup = latency
-		case contains(alignmentName, "backup_source") && contains(alignmentName, "hls") && contains(alignmentName, "ais"):
-			metrics.HLSAISCDNLagFromBackup = latency
-		case contains(alignmentName, "backup_source") && contains(alignmentName, "icecast") && contains(alignmentName, "cloudfront"):
-			metrics.ICEcastCloudfrontCDNLagFromBackup = latency
-		case contains(alignmentName, "backup_source") && contains(alignmentName, "icecast") && contains(alignmentName, "ais"):
-			metrics.ICEcastAISCDNLagFromBackup = latency
-		}
+		case contains(alignmentName, "pri_source") &&
+			contains(alignmentName, "hls") &&
+			contains(alignmentName, "ti"):
+			metrics.HLSCloudfrontCDNLag = o.calculateLiveness(alignment)
 
-		o.logger.Debug("Mapped alignment to liveness metric", logging.Fields{
-			"alignment_name": alignmentName,
-			"latency":        latency,
-		})
+		case contains(alignmentName, "pri_source") &&
+			contains(alignmentName, "hls") &&
+			contains(alignmentName, "ss_ais"):
+			metrics.HLSAISCDNLag = o.calculateLiveness(alignment)
+
+		case contains(alignmentName, "pri_source") &&
+			contains(alignmentName, "mp3") &&
+			contains(alignmentName, "ti"):
+			metrics.ICEcastCloudfrontCDNLag = o.calculateLiveness(alignment)
+
+		case contains(alignmentName, "pri_source") &&
+			contains(alignmentName, "mp3") &&
+			contains(alignmentName, "ss_ais"):
+			metrics.ICEcastAISCDNLag = o.calculateLiveness(alignment)
+
+		case contains(alignmentName, "pri_source") &&
+			contains(alignmentName, "bk_source"):
+			metrics.SourceLag = o.calculateSourceLiveness(alignment)
+		}
 	}
 
 	return metrics
+}
+
+func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement) *latency.Liveness {
+	var status string
+	lagSeconds := roundToDecimalPlaces(alignment.LatencySeconds, o.benchmarkConfig.Output.Precision)
+
+	if lagSeconds < 0 || !alignment.IsValidAlignment {
+		status = "NO_ALIGNMENT"
+	}
+
+	if alignment.AlignmentResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
+		status = "NO_MATCH"
+		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
+	}
+
+	if status != "NO_ALIGNMENT" && status != "NO_MATCH" {
+		status = "MATCH"
+	}
+
+	return &latency.Liveness{
+		LagSeconds: lagSeconds,
+		Status:     status,
+	}
+}
+
+func (o *Orchestrator) calculateSourceLiveness(alignment *latency.AlignmentMeasurement) *latency.Liveness {
+	var primaryLiveness *latency.Liveness
+	lagSeconds := roundToDecimalPlaces(alignment.LatencySeconds, o.benchmarkConfig.Output.Precision)
+
+	if !alignment.IsValidAlignment {
+		primaryLiveness = &latency.Liveness{
+			LagSeconds: 0,
+			Status:     "NO_ALIGNMENT",
+		}
+	} else {
+		primaryLiveness = &latency.Liveness{
+			LagSeconds: lagSeconds,
+		}
+	}
+
+	if alignment.AlignmentResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
+		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
+		primaryLiveness.Status = "NO_MATCH"
+	}
+
+	if primaryLiveness.Status != "NO_ALIGNMENT" && primaryLiveness.Status != "NO_MATCH" {
+		primaryLiveness.Status = "MATCH"
+	}
+	return primaryLiveness
+}
+
+func roundToDecimalPlaces(f float64, decimals int) float64 {
+	multiplier := math.Pow10(decimals)
+	return math.Round(f*multiplier) / multiplier
 }
 
 func contains(str, substr string) bool {
@@ -592,41 +477,9 @@ func contains(str, substr string) bool {
 	}()
 }
 
-func (o *Orchestrator) calculateHealthScore(validation *latency.OverallValidation) float64 {
-	if validation.ValidStreamCount == 0 {
-		return 0.0
-	}
-
-	// Base score from stream validity
-	streamScore := float64(validation.ValidStreamCount) / float64(validation.ValidStreamCount+validation.InvalidStreamCount)
-
-	// Bonus for fingerprint matches
-	fingerprintBonus := 0.0
-	if validation.FingerprintMatchesValid {
-		fingerprintBonus = 0.1
-	}
-
-	// Bonus for good alignment quality
-	alignmentBonus := 0.0
-	if validation.AlignmentQualityGood {
-		alignmentBonus = 0.1
-	}
-
-	totalScore := streamScore + fingerprintBonus + alignmentBonus
-	if totalScore > 1.0 {
-		totalScore = 1.0
-	}
-
-	return totalScore
-}
-
 func (o *Orchestrator) calculateSummaryMetrics(summary *latency.BenchmarkSummary) {
-	totalBroadcasts := len(summary.BroadcastMeasurements)
 	successCount := 0
 	failureCount := 0
-
-	var avgMetrics latency.AverageLatencyMetrics
-	var totalHealthScore float64
 
 	for _, broadcast := range summary.BroadcastMeasurements {
 		if broadcast.Error != nil {
@@ -635,57 +488,10 @@ func (o *Orchestrator) calculateSummaryMetrics(summary *latency.BenchmarkSummary
 		}
 
 		successCount++
-		totalHealthScore += broadcast.OverallValidation.OverallHealthScore
-
-		// TODO: ensure that only valid measurements are used
-		if broadcast.LivenessMetrics != nil {
-			avgMetrics.AvgSourceLag = broadcast.LivenessMetrics.PrimarySourceLag
-
-			backupHLS := 0.0
-			backupICEcast := 0.0
-			div := 2.0
-			if broadcast.LivenessMetrics.BackupSourceLag != 0.0 {
-				backupHLS = broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup + broadcast.LivenessMetrics.HLSAISCDNLagFromBackup
-				backupICEcast = broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup + broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup
-				div *= 2
-
-				avgMetrics.AvgSourceLag = (avgMetrics.AvgSourceLag + broadcast.LivenessMetrics.BackupSourceLag) / 2.0
-			}
-			avgMetrics.AvgHLSCDNLag =
-				(broadcast.LivenessMetrics.HLSCloudfrontCDNLag +
-					broadcast.LivenessMetrics.HLSAISCDNLag +
-					backupHLS) / div
-			avgMetrics.AvgICEcastCDNLag =
-				(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag +
-					broadcast.LivenessMetrics.ICEcastAISCDNLag +
-					backupICEcast) / div
-			avgMetrics.AvgCDNLag = (avgMetrics.AvgHLSCDNLag + avgMetrics.AvgICEcastCDNLag/2.0)
-		}
-
-		// Aggregate stream performance metrics
-		for _, stream := range broadcast.StreamMeasurements {
-			if stream.Error == nil {
-				avgMetrics.AvgTimeToFirstByte += float64(stream.TimeToFirstByte.Milliseconds())
-				avgMetrics.AvgAudioExtractionTime += float64(stream.TotalProcessingTime.Milliseconds())
-			}
-		}
 	}
 
 	streamCount := 0
 	for _, broadcast := range summary.BroadcastMeasurements {
 		streamCount += len(broadcast.StreamMeasurements)
-	}
-
-	if streamCount > 0 {
-		avgMetrics.AvgTimeToFirstByte /= float64(streamCount)
-		avgMetrics.AvgAudioExtractionTime /= float64(streamCount)
-	}
-
-	summary.SuccessfulBroadcasts = successCount
-	summary.FailedBroadcasts = failureCount
-	summary.AverageLatencyMetrics = &avgMetrics
-
-	if totalBroadcasts > 0 {
-		summary.OverallHealthScore = totalHealthScore / float64(totalBroadcasts)
 	}
 }

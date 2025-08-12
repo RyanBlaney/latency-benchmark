@@ -128,13 +128,11 @@ func outputToFile(urlStr string, audioData *common.AudioData) error {
 	if err := os.MkdirAll("./live-test", 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-
 	// Clean URL to make it filesystem-safe
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return fmt.Errorf("failed to parse URL: %w", err)
 	}
-
 	// Create filename from URL (remove protocol, replace invalid chars)
 	filename := strings.ReplaceAll(parsedURL.Host+parsedURL.Path, "/", "_")
 	filename = strings.ReplaceAll(filename, ":", "_")
@@ -144,11 +142,9 @@ func outputToFile(urlStr string, audioData *common.AudioData) error {
 	if filename == "" {
 		filename = "audio"
 	}
-
 	// Create temporary raw PCM file
 	tempPCMFile := filepath.Join("./live-test", filename+"_temp.pcm")
-	wavFile := filepath.Join("./live-test", filename+".wav")
-
+	mp3File := filepath.Join("./live-test", filename+".mp3")
 	// Convert float64 to 16-bit PCM and write to temp file
 	file, err := os.Create(tempPCMFile)
 	if err != nil {
@@ -156,7 +152,6 @@ func outputToFile(urlStr string, audioData *common.AudioData) error {
 	}
 	defer file.Close()
 	defer os.Remove(tempPCMFile) // Clean up temp file
-
 	for _, sample := range audioData.PCM {
 		// Clamp to [-1.0, 1.0] and convert to 16-bit signed integer
 		if sample > 1.0 {
@@ -164,30 +159,28 @@ func outputToFile(urlStr string, audioData *common.AudioData) error {
 		} else if sample < -1.0 {
 			sample = -1.0
 		}
-
 		pcm16 := int16(sample * 32767)
 		if err := binary.Write(file, binary.LittleEndian, pcm16); err != nil {
 			return fmt.Errorf("failed to write PCM data: %w", err)
 		}
 	}
 	file.Close()
-
-	// Use ffmpeg to convert raw PCM to WAV
+	// Use ffmpeg to convert raw PCM to MP3
 	cmd := exec.Command("ffmpeg",
 		"-f", "s16le", // 16-bit signed little-endian
 		"-ar", fmt.Sprintf("%d", audioData.SampleRate),
 		"-ac", fmt.Sprintf("%d", audioData.Channels),
 		"-i", tempPCMFile, // input file
+		"-codec:a", "libmp3lame", // MP3 encoder
+		"-b:a", "128k", // bitrate (adjust as needed: 64k, 96k, 128k, 192k, 256k, 320k)
 		"-y",    // overwrite output file
-		wavFile, // output file
+		mp3File, // output file
 	)
-
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg failed: %w\nOutput: %s", err, string(output))
 	}
-
-	fmt.Printf("Successfully created WAV file: %s\n", wavFile)
+	fmt.Printf("Successfully created MP3 file: %s\n", mp3File)
 	return nil
 }
 
@@ -232,7 +225,8 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 	}
 
 	measurement.AlignmentResult = alignmentFeatures
-	measurement.IsValidAlignment = alignmentFeatures.OffsetConfidence >= e.minAlignmentConf
+	measurement.IsValidAlignment =
+		alignmentFeatures.OffsetConfidence >= e.minAlignmentConf
 
 	if measurement.IsValidAlignment {
 		measurement.LatencySeconds = alignmentFeatures.TemporalOffset

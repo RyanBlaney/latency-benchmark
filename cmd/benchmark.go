@@ -83,7 +83,7 @@ func init() {
 	benchmarkCmd.Flags().BoolVarP(&benchmarkVerbose, "verbose", "v", false, "verbose output")
 	benchmarkCmd.Flags().BoolVarP(&benchmarkQuiet, "quiet", "q", false, "quiet output (errors only)")
 
-	benchmarkCmd.Flags().IntVar(&benchmarkBroadcastIndex, "broadcast-index", 0, "job index to select broadcast")
+	benchmarkCmd.Flags().IntVarP(&benchmarkBroadcastIndex, "index", "i", 0, "job index to select broadcast")
 
 	// Add subcommands
 	benchmarkCmd.AddCommand(generateConfigCmd)

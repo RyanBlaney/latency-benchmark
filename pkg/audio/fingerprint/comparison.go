@@ -508,7 +508,7 @@ func (fc *FingerprintComparator) compareMFCC(mfcc1, mfcc2 [][]float64, contentTy
 		combinedSimilarity = 0.15*statsSimilarity + 0.35*sequenceSimilarity + 0.50*dtwSimilarity
 
 	case config.ContentTalk, config.ContentNews:
-		// Speech: Stats capture spectral envelope (formants), sequence for prosody
+		// Speech: Stats capture spectral envelope (formants), sequence for speech rhythm
 		// DTW handles speaking rate differences between encodings
 		combinedSimilarity = 0.40*statsSimilarity + 0.35*sequenceSimilarity + 0.25*dtwSimilarity
 

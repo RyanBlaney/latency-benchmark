@@ -73,7 +73,6 @@ type ReliabilityMetrics struct {
 // CalculatePerformanceMetrics calculates detailed performance metrics
 func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.BenchmarkSummary) *PerformanceMetrics {
 	var latencySource []float64
-	var latencyBackup []float64
 	var latencyCloudfrontHLS []float64
 	var latencyCloudfrontICEcast []float64
 	var latencyAISHLS []float64
@@ -93,37 +92,63 @@ func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.Benchm
 			continue
 		}
 
+		metrics := broadcast.LivenessMetrics
+
 		// Collect latency data
-		if broadcast.LivenessMetrics != nil {
-			if broadcast.LivenessMetrics.PrimarySourceLag != 0 {
-				latencySource = append(latencySource, math.Abs(broadcast.LivenessMetrics.PrimarySourceLag))
+		if metrics != nil {
+			if metrics.SourceLag != nil {
+				liveness := metrics.SourceLag
+				if liveness.Status == "MATCH" {
+					latencySource = append(latencySource, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.BackupSourceLag != 0 {
-				latencyBackup = append(latencyBackup, math.Abs(broadcast.LivenessMetrics.BackupSourceLag))
+			if metrics.HLSCloudfrontCDNLag != nil {
+				liveness := metrics.HLSCloudfrontCDNLag
+				if liveness.Status == "MATCH" {
+					latencyCloudfrontHLS = append(latencyCloudfrontHLS, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.HLSCloudfrontCDNLag != 0 {
-				latencyCloudfrontHLS = append(latencyCloudfrontHLS, math.Abs(broadcast.LivenessMetrics.HLSCloudfrontCDNLag))
+			if metrics.ICEcastCloudfrontCDNLag != nil {
+				liveness := metrics.ICEcastCloudfrontCDNLag
+				if liveness.Status == "MATCH" {
+					latencyCloudfrontICEcast = append(latencyCloudfrontICEcast, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag != 0 {
-				latencyCloudfrontICEcast = append(latencyCloudfrontICEcast, math.Abs(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLag))
+			if metrics.HLSAISCDNLag != nil {
+				liveness := metrics.HLSAISCDNLag
+				if liveness.Status == "MATCH" {
+					latencyAISHLS = append(latencyAISHLS, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.HLSAISCDNLag != 0 {
-				latencyAISHLS = append(latencyAISHLS, math.Abs(broadcast.LivenessMetrics.HLSAISCDNLag))
+			if metrics.ICEcastAISCDNLag != nil {
+				liveness := metrics.ICEcastAISCDNLag
+				if liveness.Status == "MATCH" {
+					latencyAISICEcast = append(latencyAISICEcast, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.ICEcastAISCDNLag != 0 {
-				latencyAISICEcast = append(latencyAISICEcast, math.Abs(broadcast.LivenessMetrics.ICEcastAISCDNLag))
+			if metrics.HLSCloudfrontCDNLagFromBackup != nil {
+				liveness := metrics.HLSCloudfrontCDNLagFromBackup
+				if liveness.Status == "MATCH" {
+					latencyCloudfrontHLSFromBackup = append(latencyCloudfrontHLSFromBackup, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup != 0 {
-				latencyCloudfrontHLSFromBackup = append(latencyCloudfrontHLSFromBackup, math.Abs(broadcast.LivenessMetrics.HLSCloudfrontCDNLagFromBackup))
+			if metrics.ICEcastCloudfrontCDNLagFromBackup != nil {
+				liveness := metrics.ICEcastCloudfrontCDNLagFromBackup
+				if liveness.Status == "MATCH" {
+					latencyCloudfrontICEcastFromBackup = append(latencyCloudfrontICEcastFromBackup, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup != 0 {
-				latencyCloudfrontICEcastFromBackup = append(latencyCloudfrontICEcastFromBackup, math.Abs(broadcast.LivenessMetrics.ICEcastCloudfrontCDNLagFromBackup))
+			if metrics.HLSAISCDNLagFromBackup != nil {
+				liveness := metrics.HLSAISCDNLagFromBackup
+				if liveness.Status == "MATCH" {
+					latencyAISHLSFromBackup = append(latencyAISHLSFromBackup, math.Abs(liveness.LagSeconds))
+				}
 			}
-			if broadcast.LivenessMetrics.HLSAISCDNLagFromBackup != 0 {
-				latencyAISHLSFromBackup = append(latencyAISHLSFromBackup, math.Abs(broadcast.LivenessMetrics.HLSAISCDNLagFromBackup))
-			}
-			if broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup != 0 {
-				latencyAISICEcastFromBackup = append(latencyAISICEcastFromBackup, math.Abs(broadcast.LivenessMetrics.ICEcastAISCDNLagFromBackup))
+			if metrics.ICEcastAISCDNLagFromBackup != nil {
+				liveness := metrics.ICEcastAISCDNLagFromBackup
+				if liveness.Status == "MATCH" {
+					latencyAISICEcastFromBackup = append(latencyAISICEcastFromBackup, math.Abs(liveness.LagSeconds))
+				}
 			}
 		}
 
@@ -150,10 +175,9 @@ func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.Benchm
 		}
 	}
 
-	if len(latencyBackup) != 0 {
+	if len(latencySource) != 0 {
 		return &PerformanceMetrics{
 			LatencySource:                      mc.calculateStats(latencySource),
-			LatencyBackup:                      mc.calculateStats(latencyBackup),
 			LatencyCloudfrontHLS:               mc.calculateStats(latencyCloudfrontHLS),
 			LatencyCloudfrontICEcast:           mc.calculateStats(latencyCloudfrontICEcast),
 			LatencyAISHLS:                      mc.calculateStats(latencyAISHLS),
@@ -169,17 +193,14 @@ func (mc *MetricsCalculator) CalculatePerformanceMetrics(summary *latency.Benchm
 		}
 	} else {
 		return &PerformanceMetrics{
-			LatencySource:                  mc.calculateStats(latencySource),
-			LatencyBackup:                  mc.calculateStats(latencyBackup),
-			LatencyCloudfrontHLS:           mc.calculateStats(latencyCloudfrontHLS),
-			LatencyCloudfrontICEcast:       mc.calculateStats(latencyCloudfrontICEcast),
-			LatencyAISHLS:                  mc.calculateStats(latencyAISHLS),
-			LatencyAISICEcast:              mc.calculateStats(latencyAISICEcast),
-			LatencyCloudfrontHLSFromBackup: mc.calculateStats(latencyCloudfrontHLS),
-			TimeToFirstByte:                mc.calculateStats(ttfbValues),
-			ProcessingTime:                 mc.calculateStats(processingTimes),
-			AlignmentConfidence:            mc.calculateStats(alignmentConfidences),
-			FingerprintSimilarity:          mc.calculateStats(fingerprintSimilarities),
+			LatencyCloudfrontHLS:     mc.calculateStats(latencyCloudfrontHLS),
+			LatencyCloudfrontICEcast: mc.calculateStats(latencyCloudfrontICEcast),
+			LatencyAISHLS:            mc.calculateStats(latencyAISHLS),
+			LatencyAISICEcast:        mc.calculateStats(latencyAISICEcast),
+			TimeToFirstByte:          mc.calculateStats(ttfbValues),
+			ProcessingTime:           mc.calculateStats(processingTimes),
+			AlignmentConfidence:      mc.calculateStats(alignmentConfidences),
+			FingerprintSimilarity:    mc.calculateStats(fingerprintSimilarities),
 		}
 	}
 }

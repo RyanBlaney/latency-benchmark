@@ -279,97 +279,6 @@ func (h *Handler) ResolveMasterPlaylist(ctx context.Context, masterPlaylist *M3U
 	return mediaPlaylist, nil
 }
 
-// ReadAudioWithDurationOld reads audio data with a specified duration
-// TODO: Remove if deprecated
-func (h *Handler) ReadAudioWithDurationOld(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
-	if !h.connected {
-		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
-			common.ErrCodeConnection, "not connected", nil)
-	}
-
-	if h.playlist == nil {
-		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
-			common.ErrCodeInvalidFormat, "no playlist available", nil)
-	}
-
-	logger := logging.WithFields(logging.Fields{
-		"component":       "hls_handler",
-		"function":        "ReadAudioWithDuration",
-		"target_duration": duration.Seconds(),
-	})
-
-	// Resolve master playlist to media playlist if needed
-	mediaPlaylist := h.playlist
-	if h.playlist.IsMaster {
-		resolvedPlaylist, err := h.ResolveMasterPlaylist(ctx, h.playlist)
-		if err != nil {
-			return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
-				common.ErrCodeInvalidFormat, "failed to resolve master playlist", err)
-		}
-		mediaPlaylist = resolvedPlaylist
-	}
-
-	// Create downloader with custom duration configuration
-	downloadConfig := &DownloadConfig{
-		MaxSegments:        10,
-		SegmentTimeout:     10 * time.Second,
-		MaxRetries:         3,
-		MaxPlaylistRetries: 10,
-		CacheSegments:      true,
-		TargetDuration:     duration, // Use the specified duration
-		PreferredBitrate:   128,
-		OutputSampleRate:   44100,
-		OutputChannels:     1,
-		NormalizePCM:       true,
-		ResampleQuality:    "medium",
-		CleanupTempFiles:   true,
-	}
-
-	// Override with existing config values if available
-	if h.config != nil && h.config.Audio != nil {
-		if h.config.Audio.MaxSegments > 0 {
-			downloadConfig.MaxSegments = h.config.Audio.MaxSegments
-		}
-		// Always use the specified duration, not config duration
-		downloadConfig.TargetDuration = duration
-	}
-
-	downloader := NewAudioDownloader(h.client, downloadConfig, h.config)
-
-	// Set the base URL for resolving relative segment URLs
-	downloader.SetBaseURL(h.url)
-
-	defer downloader.Close()
-
-	logger.Debug("Starting audio download with custom duration", logging.Fields{
-		"playlist_segments": len(mediaPlaylist.Segments),
-		"is_live":           mediaPlaylist.IsLive,
-		"target_duration":   duration.Seconds(),
-	})
-
-	audioData, err := downloader.DownloadAudioSample(ctx, h.url, duration)
-	if err != nil {
-		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
-			common.ErrCodeDecoding, "failed to download audio sample", err)
-	}
-
-	// Enrich metadata from playlist/stream info
-	h.enrichAudioMetadata(audioData)
-
-	// Update stats
-	h.stats.SegmentsReceived = downloader.GetDownloadStats().SegmentsDownloaded
-	h.stats.BytesReceived = downloader.GetDownloadStats().BytesDownloaded
-
-	logger.Debug("Audio download completed", logging.Fields{
-		"actual_duration": audioData.Duration.Seconds(),
-		"samples":         len(audioData.PCM),
-		"sample_rate":     audioData.SampleRate,
-		"channels":        audioData.Channels,
-	})
-
-	return audioData, nil
-}
-
 // ReadAudioWithDuration reads audio using FFmpeg directly (bypasses HLS parsing)
 func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Duration) (*common.AudioData, error) {
 	if !h.connected {
@@ -403,7 +312,9 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 	logger.Debug("Using direct FFmpeg method for HLS download")
 
 	// Use the direct FFmpeg method
-	audioData, err := h.downloader.DownloadAudioSampleDirect(ctx, h.url, duration)
+	var audioData *common.AudioData
+	var err error
+	audioData, err = h.downloader.DownloadAudioSampleDirect(ctx, h.url, duration)
 	if err != nil {
 		logger.Warn("Direct FFmpeg method failed, falling back to standard HLS parsing", logging.Fields{
 			"error": err.Error(),
@@ -523,7 +434,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 	// Download audio sample using configured duration
 	targetDuration := h.config.Audio.SampleDuration
 
-	audioData, err := h.downloader.DownloadAudioSample(ctx, h.url, targetDuration)
+	audioData, err := h.downloader.DownloadAudioSampleDirect(ctx, h.url, targetDuration)
 	if err != nil {
 		return nil, common.NewStreamError(common.StreamTypeHLS, h.url,
 			common.ErrCodeDecoding, "failed to download audio sample", err)

@@ -42,7 +42,6 @@ This tool provides automated testing and analysis of CDN performance across
 multiple geographic regions with support for HLS and ICEcast streams.
 
 Key features:
-- Multi-region performance testing
 - HLS and ICEcast stream support  
 - Audio quality analysis and fingerprinting
 - Latency measurement and statistical analysis

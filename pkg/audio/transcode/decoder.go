@@ -280,14 +280,32 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration, streamType strin
 	case "icecast":
 		// Add reconnection flags for Icecast streams
 		args = append(args,
+			"-re",
 			"-reconnect", "1",
 			"-reconnect_at_eof", "1",
 			"-reconnect_streamed", "1",
-			"-fflags", "+genpts", // Generate presentation timestamps
+			"-reconnect_delay_max", "2",
+			"-fflags", "+genpts+igndts", // Generate PTS, ignore DTS for live
+			"-rw_timeout", "30000000", // 30 second read timeout
+			"-timeout", "60000000", // 60 second total timeout
 		)
 	case "hls":
-		// HLS doesn't need special reconnection flags
-		// Could add HLS-specific options here if needed in the future
+		// HLS live streaming optimizations
+		args = append(args,
+			"-re",
+			"-fflags", "+genpts+igndts+flush_packets",
+			"-live_start_index", "9999", // Start 1 segments back from live edge for stability
+			"-probesize", "500000", // 500KB - enough to detect streams reliably
+			"-analyzeduration", "2000000", // 2 seconds - balance speed vs reliability
+			"-rw_timeout", "30000000", // 30 second read timeout (consistent with ICEcast)
+			"-reconnect", "1",
+			"-reconnect_at_eof", "1",
+			"-reconnect_streamed", "1",
+			"-timeout", "60000000", // 60 second timeout (consistent with ICEcast)
+			"-reconnect_delay_max", "2",
+			"-avoid_negative_ts", "make_zero", // Normalize timestamps to start at 0
+			"-fflags", "+discardcorrupt", // Discard corrupt packets
+		)
 	default:
 		// For unknown stream types, log a warning but continue
 		logger.Debug("Unknown stream type, using default settings", logging.Fields{
@@ -303,6 +321,18 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration, streamType strin
 		args = append(args, "-t", fmt.Sprintf("%.3f", duration.Seconds()))
 	}
 
+	switch streamType {
+	case "hls":
+		// For HLS: explicitly select first audio stream, ignore video
+		args = append(args, "-map", "0:a:0")
+	case "icecast":
+		// ICEcast is audio-only, but be explicit
+		args = append(args, "-map", "0:a:0?")
+	default:
+		// Try to find audio stream
+		args = append(args, "-map", "0:a:0?")
+	}
+
 	// Add output format parameters
 	args = append(args,
 		"-vn",         // No video
@@ -311,29 +341,22 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration, streamType strin
 		"-ar", strconv.Itoa(d.config.TargetSampleRate), // Target sample rate
 	)
 
-	// For Icecast streams, add explicit resampling to avoid timing issues
-	if streamType == "icecast" {
-		// Force specific resampling method for Icecast to avoid timing issues
-		args = append(args, "-af", fmt.Sprintf("aresample=%d:resampler=soxr", d.config.TargetSampleRate))
-	}
+	var audioFilters []string
+
+	// Always add resampling for consistency
+	audioFilters = append(audioFilters, fmt.Sprintf("aresample=%d:resampler=soxr", d.config.TargetSampleRate))
 
 	// Add normalization if enabled
 	if d.config.EnableNormalization {
 		normFilter := d.buildNormalizationFilter()
 		if normFilter != "" {
-			// Check if we already have an audio filter for Icecast
-			if streamType == "icecast" {
-				// Combine with existing aresample filter
-				for i, arg := range args {
-					if arg == "-af" && i+1 < len(args) {
-						args[i+1] = args[i+1] + "," + normFilter
-						break
-					}
-				}
-			} else {
-				args = append(args, "-af", normFilter)
-			}
+			audioFilters = append(audioFilters, normFilter)
 		}
+	}
+
+	// Apply all audio filters
+	if len(audioFilters) > 0 {
+		args = append(args, "-af", strings.Join(audioFilters, ","))
 	}
 
 	// Output to stdout
