@@ -173,6 +173,8 @@ broadcast_groups:
             enabled: true
           ss_ais_mp3:
             url: "https://tunein.cdnstream1.com/3511_96.mp3"
+            role: "cdn"
+            enabled: true
 
       espnfree:
         name: "ESPN Free"
