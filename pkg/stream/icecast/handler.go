@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // Handler implements StreamHandler for ICEcast streams with full configuration support
@@ -315,7 +315,7 @@ func (h *Handler) ReadAudio(ctx context.Context) (*common.AudioData, error) {
 		defaultDuration = h.config.Audio.SampleDuration
 	}
 
-	logger.Info("Using FFmpeg approach for basic audio reading", logging.Fields{
+	logger.Debug("Using FFmpeg approach for basic audio reading", logging.Fields{
 		"default_duration": defaultDuration.Seconds(),
 	})
 

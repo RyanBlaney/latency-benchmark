@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/configs"
-	"github.com/tunein/cdn-benchmark-cli/internal/latency"
+	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/internal/latency"
 	"gopkg.in/yaml.v3"
 )
 

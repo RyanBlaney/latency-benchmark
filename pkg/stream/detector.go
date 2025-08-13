@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/hls"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/icecast"
 )
 
 // Detector implements the StreamDetector interface and provides stream type
@@ -227,4 +227,3 @@ func (d *Detector) ProbeStream(ctx context.Context, streamURL string) (*common.S
 		)
 	}
 }
-

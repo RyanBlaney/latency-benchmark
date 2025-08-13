@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/hls"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/icecast"
 	"github.com/spf13/viper"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/icecast"
 )
 
 // Config represents the application configuration

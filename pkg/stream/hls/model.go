@@ -1,7 +1,7 @@
 package hls
 
 import (
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // M3U8Playlist represents a parsed M3U8 playlist

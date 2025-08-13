@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/audio/transcode"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // AudioDownloader handles continuous streaming download from ICEcast servers
@@ -401,7 +401,7 @@ streamLoop:
 		if elapsed >= targetDuration {
 			minDataForTime := int(float64(targetBytes) * 0.7) // At least 70% of expected data
 			if len(audioData) >= minDataForTime {
-				logger.Info("Target duration reached with sufficient data", logging.Fields{
+				logger.Debug("Target duration reached with sufficient data", logging.Fields{
 					"elapsed_seconds":   elapsed.Seconds(),
 					"target_duration":   targetDuration.Seconds(),
 					"bytes_collected":   len(audioData),
@@ -415,7 +415,7 @@ streamLoop:
 		// FIX: Extended time allowance - allow up to 125% of target duration if we still need more data
 		maxDuration := targetDuration + (targetDuration / 4) // 125% of target duration
 		if elapsed >= maxDuration {
-			logger.Info("Maximum duration reached, stopping collection", logging.Fields{
+			logger.Debug("Maximum duration reached, stopping collection", logging.Fields{
 				"elapsed_seconds":   elapsed.Seconds(),
 				"max_duration":      maxDuration.Seconds(),
 				"bytes_collected":   len(audioData),
@@ -426,7 +426,7 @@ streamLoop:
 
 		// Secondary condition: if we have significantly more data than expected, we can stop
 		if len(audioData) >= targetBytesWithBuffer {
-			logger.Info("Buffer threshold reached", logging.Fields{
+			logger.Debug("Buffer threshold reached", logging.Fields{
 				"bytes_collected":    len(audioData),
 				"target_with_buffer": targetBytesWithBuffer,
 				"elapsed_seconds":    elapsed.Seconds(),
@@ -446,7 +446,7 @@ streamLoop:
 		d.downloadStats.AverageBitrate = bitsDownloaded / seconds / 1000 // kbps
 	}
 
-	logger.Info("ICEcast streaming collection completed", logging.Fields{
+	logger.Debug("ICEcast streaming collection completed", logging.Fields{
 		"final_bytes":         len(audioData),
 		"target_bytes":        targetBytes,
 		"total_reads":         readCount,
@@ -597,7 +597,7 @@ func (d *AudioDownloader) processStreamedAudioWithFFmpeg(audioBytes []byte, url 
 		Metadata:   d.convertMetadata(audioData.Metadata, url),
 	}
 
-	logger.Info("ICEcast streaming audio processing completed", logging.Fields{
+	logger.Debug("ICEcast streaming audio processing completed", logging.Fields{
 		"final_samples":      len(finalAudioData.PCM),
 		"final_duration_sec": finalAudioData.Duration.Seconds(),
 		"final_sample_rate":  finalAudioData.SampleRate,
@@ -708,7 +708,7 @@ func (d *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, streamU
 		"method":          "ffmpeg_direct",
 	})
 
-	logger.Info("Starting direct FFmpeg ICEcast audio download")
+	logger.Debug("Starting direct FFmpeg ICEcast audio download")
 
 	// Apply query parameters if needed
 	processedURL := d.applyQueryParamRules(streamURL)
@@ -743,7 +743,7 @@ func (d *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, streamU
 	decoder := transcode.NewDecoder(decoderConfig)
 	defer decoder.Close()
 
-	logger.Info("Created FFmpeg decoder with ICEcast stream type", logging.Fields{
+	logger.Debug("Created FFmpeg decoder with ICEcast stream type", logging.Fields{
 		"target_sample_rate": decoderConfig.TargetSampleRate,
 		"target_channels":    decoderConfig.TargetChannels,
 		"max_duration":       decoderConfig.MaxDuration.Seconds(),
@@ -801,7 +801,7 @@ func (d *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, streamU
 	d.downloadStats.BytesDownloaded = int64(len(audioData.PCM) * 8) // Estimate based on PCM data
 	d.downloadStats.DownloadTime = downloadTime
 
-	logger.Info("Direct FFmpeg ICEcast download completed", logging.Fields{
+	logger.Debug("Direct FFmpeg ICEcast download completed", logging.Fields{
 		"actual_duration": audioData.Duration.Seconds(),
 		"target_duration": targetDuration.Seconds(),
 		"samples":         len(audioData.PCM),

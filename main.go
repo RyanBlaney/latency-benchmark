@@ -1,6 +1,6 @@
 package main
 
-import "github.com/tunein/cdn-benchmark-cli/cmd"
+import "github.com/RyanBlaney/latency-benchmark/cmd"
 
 func main() {
 	cmd.Execute()

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
 
 func TestDefaultConfig(t *testing.T) {

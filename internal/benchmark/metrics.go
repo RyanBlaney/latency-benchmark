@@ -3,8 +3,8 @@ package benchmark
 import (
 	"math"
 
-	"github.com/tunein/cdn-benchmark-cli/internal/latency"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/internal/latency"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
 )
 
 // MetricsCalculator handles calculation of various performance metrics

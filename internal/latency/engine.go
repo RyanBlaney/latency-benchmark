@@ -11,14 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/configs"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/config"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
+	"github.com/RyanBlaney/sonido-sonar/fingerprint"
+	"github.com/RyanBlaney/sonido-sonar/fingerprint/config"
+	"github.com/RyanBlaney/sonido-sonar/fingerprint/extractors"
+	"github.com/RyanBlaney/sonido-sonar/transcode"
 )
 
 // MeasurementEngine handles latency measurements for streams
@@ -74,7 +74,7 @@ func (e *MeasurementEngine) MeasureStream(ctx context.Context, endpoint *StreamE
 		Timestamp: time.Now(),
 	}
 
-	e.logger.Info("Starting stream measurement", map[string]any{
+	e.logger.Debug("Starting stream measurement", map[string]any{
 		"url":          endpoint.URL,
 		"type":         endpoint.Type,
 		"role":         endpoint.Role,
@@ -197,7 +197,7 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 		return measurement
 	}
 
-	e.logger.Info("Starting alignment measurement", map[string]any{
+	e.logger.Debug("Starting alignment measurement", map[string]any{
 		"stream1_url": stream1.Endpoint.URL,
 		"stream2_url": stream2.Endpoint.URL,
 	})
@@ -234,7 +234,7 @@ func (e *MeasurementEngine) MeasureAlignment(ctx context.Context, stream1, strea
 
 	measurement = e.TruncateToAlignment(ctx, measurement, alignmentExtractor)
 
-	e.logger.Info("Alignment measurement completed", map[string]any{
+	e.logger.Debug("Alignment measurement completed", map[string]any{
 		"stream1_url":        stream1.Endpoint.URL,
 		"stream2_url":        stream2.Endpoint.URL,
 		"offset_seconds":     alignmentFeatures.TemporalOffset,
@@ -258,7 +258,7 @@ func (e *MeasurementEngine) TruncateToAlignment(ctx context.Context, alignment *
 		return alignment
 	}
 
-	e.logger.Info("Truncating streams to aligned segments", map[string]any{
+	e.logger.Debug("Truncating streams to aligned segments", map[string]any{
 		"stream1_url":    alignment.Stream1.Endpoint.URL,
 		"stream2_url":    alignment.Stream2.Endpoint.URL,
 		"offset_seconds": alignment.AlignmentResult.TemporalOffset,
@@ -320,7 +320,7 @@ func (e *MeasurementEngine) TruncateToAlignment(ctx context.Context, alignment *
 	alignment.Stream1 = stream1Copy
 	alignment.Stream2 = stream2Copy
 
-	e.logger.Info("Stream truncation completed", map[string]any{
+	e.logger.Debug("Stream truncation completed", map[string]any{
 		"stream1_url":      alignment.Stream1.Endpoint.URL,
 		"stream2_url":      alignment.Stream2.Endpoint.URL,
 		"aligned_len1":     len(alignedPCM1),
@@ -347,7 +347,7 @@ func (e *MeasurementEngine) CompareFingerprintSimilarity(ctx context.Context, st
 		return comparison
 	}
 
-	e.logger.Info("Starting fingerprint comparison", map[string]any{
+	e.logger.Debug("Starting fingerprint comparison", map[string]any{
 		"stream1_url":   stream1.Endpoint.URL,
 		"stream2_url":   stream2.Endpoint.URL,
 		"has_alignment": alignmentFeatures != nil,
@@ -381,7 +381,7 @@ func (e *MeasurementEngine) CompareFingerprintSimilarity(ctx context.Context, st
 	comparison.SimilarityResult = result
 	comparison.IsValidMatch = result.OverallSimilarity >= e.minSimilarity
 
-	e.logger.Info("Fingerprint comparison completed", map[string]any{
+	e.logger.Debug("Fingerprint comparison completed", map[string]any{
 		"stream1_url":        stream1.Endpoint.URL,
 		"stream2_url":        stream2.Endpoint.URL,
 		"overall_similarity": result.OverallSimilarity,

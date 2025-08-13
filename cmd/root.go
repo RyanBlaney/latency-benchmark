@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
-	"github.com/tunein/cdn-benchmark-cli/configs"
 )
 
 var (

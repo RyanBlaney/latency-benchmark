@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -620,4 +620,3 @@ func (me *MetadataExtractor) ValidateMetadata(metadata *common.StreamMetadata) [
 
 	return issues
 }
-

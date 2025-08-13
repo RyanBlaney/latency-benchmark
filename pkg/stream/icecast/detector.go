@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/audio/transcode"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // Detector handles ICEcast stream detection with configurable options
@@ -167,7 +167,7 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 	metadata, err := probeWithFFprobe(ctx, streamURL, config, logger)
 
 	if err == nil && metadata != nil && isValidProbeResult(metadata) {
-		logger.Info("FFprobe detection successful", logging.Fields{
+		logger.Debug("FFprobe detection successful", logging.Fields{
 			"sample_rate": metadata.SampleRate,
 			"channels":    metadata.Channels,
 			"bitrate":     metadata.Bitrate,
@@ -188,7 +188,7 @@ func ProbeStreamWithConfig(ctx context.Context, streamURL string, config *Config
 	metadata, err = probeWithHeaders(ctx, streamURL, config, logger)
 
 	if err == nil && metadata != nil && isValidProbeResult(metadata) {
-		logger.Info("HTTP header detection successful", logging.Fields{
+		logger.Debug("HTTP header detection successful", logging.Fields{
 			"sample_rate": metadata.SampleRate,
 			"channels":    metadata.Channels,
 			"bitrate":     metadata.Bitrate,
@@ -492,7 +492,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 			common.ErrCodeConnection, "not connected", nil)
 	}
 
-	logger.Info("Starting FFmpeg-based duration audio reading", logging.Fields{
+	logger.Debug("Starting FFmpeg-based duration audio reading", logging.Fields{
 		"target_duration": duration.Seconds(),
 		"url":             h.url,
 	})
@@ -510,7 +510,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		detectedSampleRate = probedMetadata.SampleRate
 		detectedChannels = probedMetadata.Channels
 
-		logger.Info("Successfully probed stream format", logging.Fields{
+		logger.Debug("Successfully probed stream format", logging.Fields{
 			"approach":             "ffmpeg_direct",
 			"detected_sample_rate": detectedSampleRate,
 			"detected_channels":    detectedChannels,
@@ -555,7 +555,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 	downloaderConfig.OutputSampleRate = detectedSampleRate // Use FFprobe detected rate!
 	downloaderConfig.OutputChannels = detectedChannels     // Use FFprobe detected channels!
 
-	logger.Info("Using detected audio properties for downloader", logging.Fields{
+	logger.Debug("Using detected audio properties for downloader", logging.Fields{
 		"approach":        "ffmpeg_direct",
 		"sample_rate":     downloaderConfig.OutputSampleRate,
 		"channels":        downloaderConfig.OutputChannels,
@@ -626,7 +626,7 @@ func (h *Handler) ReadAudioWithDuration(ctx context.Context, duration time.Durat
 		}
 	}
 
-	logger.Info("ICEcast FFmpeg-based audio extraction completed successfully", logging.Fields{
+	logger.Debug("ICEcast FFmpeg-based audio extraction completed successfully", logging.Fields{
 		"approach":         "ffmpeg_direct",
 		"actual_duration":  audioData.Duration.Seconds(),
 		"target_duration":  duration.Seconds(),

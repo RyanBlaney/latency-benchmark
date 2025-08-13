@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 	"github.com/stretchr/testify/assert"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
 
 var testHLSSRCStreamURL = "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"

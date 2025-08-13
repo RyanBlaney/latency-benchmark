@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 	"github.com/stretchr/testify/assert"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
 
 var testICEcastSRCStreamURL = "http://stream1.skyviewnetworks.com:8010/MSNBC"

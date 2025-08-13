@@ -9,7 +9,7 @@ output_format: json
 # Stream handling (global defaults)
 stream:
   connection_timeout: 15s
-  read_timeout: 320s
+  read_timeout: 340s
   buffer_size: 16384
   max_redirects: 5
   user_agent: "TuneIn-CDN-Benchmark-Prod/1.0"
@@ -42,7 +42,7 @@ audio:
 # Quality thresholds
 quality:
   min_similarity: 0.74
-  max_latency: 300s
+  max_latency: 320s
   min_bitrate: 256
   max_dropouts: 1
   buffer_health: 0.95
@@ -87,13 +87,13 @@ hls:
     user_agent: "TuneIn-CDN-Benchmark-HLS/2.0"
     accept_header: "application/vnd.apple.mpegurl,application/x-mpegurl,text/plain,*/*"
     connection_timeout: 10s
-    read_timeout: 320s
+    read_timeout: 340s
     max_redirects: 3
     buffer_size: 32768
     custom_headers: {}
 
   audio:
-    sample_duration: 320s
+    sample_duration: 340s
     buffer_duration: 3s
     max_segments: 50
     follow_live: true
@@ -131,7 +131,7 @@ icecast:
     user_agent: "TuneIn-CDN-Benchmark-ICEcast/1.0"
     accept_header: "audio/*, application/ogg, */*"
     connection_timeout: 45s
-    read_timeout: 320s
+    read_timeout: 340s
     max_redirects: 3
     custom_headers: {}
     request_icy_meta: true
@@ -139,9 +139,9 @@ icecast:
   audio:
     buffer_size: 4096
     buffer_duration: 2s
-    sample_duration: 320s
+    sample_duration: 340s
     max_read_attempts: 10
-    read_timeout: 320s
+    read_timeout: 340s
     handle_icy_meta: true
     metadata_interval: 8192
 
@@ -150,16 +150,16 @@ benchmark:
   # Execution timeouts
   verbose: false
   benchmark_timeout: 30m
-  operation_timeout: 320s
+  operation_timeout: 340s
 
   # Concurrency control
   max_concurrent_broadcasts: 3
   max_concurrent_streams: 4
 
   # Audio analysis parameters
-  audio_segment_duration: 320s
-  min_alignment_confidence: 0.32
-  max_alignment_offset: 300.0
+  audio_segment_duration: 340s
+  min_alignment_confidence: 0.25
+  max_alignment_offset: 320.0
   min_fingerprint_similarity: 0.65
 
   # Analysis options

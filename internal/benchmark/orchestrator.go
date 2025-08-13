@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/internal/latency"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/internal/latency"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
 )
 
 // Orchestrator coordinates the entire CDN benchmarking process
@@ -55,7 +55,7 @@ func NewOrchestrator(benchmarkCfg *latency.BenchmarkConfig, broadcastCfg *latenc
 func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSummary, error) {
 	startTime := time.Now()
 
-	o.logger.Info("Starting CDN benchmark", logging.Fields{
+	o.logger.Debug("Starting CDN benchmark", logging.Fields{
 		"enabled_groups":    len(o.broadcastConfig.GetEnabledBroadcastGroups()),
 		"segment_duration":  o.benchmarkConfig.Benchmark.AudioSegmentDuration.Seconds(),
 		"operation_timeout": o.benchmarkConfig.Benchmark.OperationTimeout.Seconds(),
@@ -69,7 +69,7 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 		return nil, fmt.Errorf("failed to select broadcast by index 0: %w", err)
 	}
 
-	o.logger.Info("Selected broadcast for benchmarking", logging.Fields{
+	o.logger.Debug("Selected broadcast for benchmarking", logging.Fields{
 		"broadcast_key": broadcastKey,
 		"stream_count":  len(broadcast.Streams),
 		"content_type":  broadcast.ContentType,
@@ -101,7 +101,7 @@ func (o *Orchestrator) RunBenchmark(ctx context.Context) (*latency.BenchmarkSumm
 func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*latency.BenchmarkSummary, error) {
 	startTime := time.Now()
 
-	o.logger.Info("Starting CDN benchmark by index", logging.Fields{
+	o.logger.Debug("Starting CDN benchmark by index", logging.Fields{
 		"index":             index,
 		"segment_duration":  o.benchmarkConfig.Benchmark.AudioSegmentDuration.Seconds(),
 		"operation_timeout": o.benchmarkConfig.Benchmark.OperationTimeout.Seconds(),
@@ -116,7 +116,7 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 		return nil, fmt.Errorf("failed to select broadcast by index %d: %w", index, err)
 	}
 
-	o.logger.Info("Selected broadcast for benchmarking", logging.Fields{
+	o.logger.Debug("Selected broadcast for benchmarking", logging.Fields{
 		"index":         index,
 		"broadcast_key": broadcastKey,
 		"stream_count":  len(broadcast.Streams),
@@ -142,7 +142,7 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 
 	o.calculateSummaryMetrics(summary)
 
-	o.logger.Info("CDN benchmark completed", logging.Fields{
+	o.logger.Debug("CDN benchmark completed", logging.Fields{
 		"index":                 index,
 		"total_duration_s":      summary.TotalDuration.Seconds(),
 		"successful_broadcasts": summary.SuccessfulBroadcasts,
@@ -156,7 +156,8 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 // measureSingleBroadcast measures a single broadcast (the 5-6 streams)
 func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey string, broadcast *latency.Broadcast) *latency.BroadcastMeasurement {
 	measurement := &latency.BroadcastMeasurement{
-		Group:                  broadcast, // Fixed: point to the actual broadcast
+		Broadcast:              broadcast,
+		Group:                  o.broadcastConfig.GetBroadcastGroup(broadcastKey),
 		StreamMeasurements:     make(map[string]*latency.StreamMeasurement),
 		AlignmentMeasurements:  make(map[string]*latency.AlignmentMeasurement),
 		FingerprintComparisons: make(map[string]*latency.FingerprintComparison),
@@ -165,7 +166,7 @@ func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey 
 
 	benchmarkStart := time.Now()
 
-	o.logger.Info("Starting broadcast measurement", logging.Fields{
+	o.logger.Debug("Starting broadcast measurement", logging.Fields{
 		"broadcast_key": broadcastKey,
 		"stream_count":  len(broadcast.Streams),
 		"content_type":  broadcast.ContentType,
@@ -192,14 +193,14 @@ func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey 
 	}
 
 	// Step 4: Calculate liveness metrics
-	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements)
+	measurement.LivenessMetrics = o.calculateLivenessMetrics(measurement.AlignmentMeasurements, measurement.FingerprintComparisons)
 
 	// Step 5: Perform overall validation
 	// measurement.OverallValidation = o.validateOverallHealth(measurement)
 
 	measurement.TotalBenchmarkTime = time.Since(benchmarkStart)
 
-	o.logger.Info("Broadcast measurement completed", logging.Fields{
+	o.logger.Debug("Broadcast measurement completed", logging.Fields{
 		"broadcast_key":     broadcastKey,
 		"total_time_s":      measurement.TotalBenchmarkTime.Seconds(),
 		"valid_streams":     validStreams,
@@ -224,7 +225,7 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 	for streamName, stream := range broadcast.Streams {
 		if stream.Enabled != nil {
 			if !*stream.Enabled {
-				o.logger.Info("Skipping disabled stream", logging.Fields{
+				o.logger.Debug("Skipping disabled stream", logging.Fields{
 					"stream_name": streamName,
 					"url":         stream.URL,
 				})
@@ -250,7 +251,7 @@ func (o *Orchestrator) measureAllStreamsInBroadcast(ctx context.Context, broadca
 	// Small delay to ensure all goroutines are ready and waiting
 	time.Sleep(100 * time.Millisecond)
 
-	o.logger.Info("Starting synchronized stream measurements", logging.Fields{
+	o.logger.Debug("Starting synchronized stream measurements", logging.Fields{
 		"stream_count": len(results) + 1, // +1 for the streams being started
 	})
 
@@ -282,7 +283,7 @@ func (o *Orchestrator) measureSourceToCDNAlignments(ctx context.Context, streamM
 		}
 	}
 
-	o.logger.Info("Found streams for alignment", logging.Fields{
+	o.logger.Debug("Found streams for alignment", logging.Fields{
 		"source_streams":    sourceStreams,
 		"cdn_streams":       cdnStreams,
 		"total_comparisons": len(sourceStreams) * len(cdnStreams),
@@ -294,7 +295,7 @@ func (o *Orchestrator) measureSourceToCDNAlignments(ctx context.Context, streamM
 			for _, cdnKey := range cdnStreams {
 				alignmentName := fmt.Sprintf("%s_vs_%s", sourceKey, cdnKey)
 
-				o.logger.Info("Performing temporal alignment", logging.Fields{
+				o.logger.Debug("Performing temporal alignment", logging.Fields{
 					"alignment_name": alignmentName,
 					"source_stream":  sourceKey,
 					"cdn_stream":     cdnKey,
@@ -311,7 +312,7 @@ func (o *Orchestrator) measureSourceToCDNAlignments(ctx context.Context, streamM
 				if !contains(source2Key, "pri") {
 					alignmentName := fmt.Sprintf("%s_vs_%s", sourceKey, source2Key)
 
-					o.logger.Info("Performing temporal alignment", logging.Fields{
+					o.logger.Debug("Performing temporal alignment", logging.Fields{
 						"alignment_name":    alignmentName,
 						"pri_source_stream": sourceKey,
 						"bk_source_stream":  source2Key,
@@ -367,10 +368,11 @@ func (o *Orchestrator) countValidStreams(measurements map[string]*latency.Stream
 
 // calculateLivenessMetrics calculates liveness metrics from alignment data
 func (o *Orchestrator) calculateLivenessMetrics(
-	alignments map[string]*latency.AlignmentMeasurement) *latency.LivenessMetrics {
+	alignments map[string]*latency.AlignmentMeasurement,
+	fingerprints map[string]*latency.FingerprintComparison) *latency.LivenessMetrics {
 	metrics := &latency.LivenessMetrics{}
 
-	o.logger.Info("Calculating liveness metrics from alignments", logging.Fields{
+	o.logger.Debug("Calculating liveness metrics from alignments", logging.Fields{
 		"alignment_count": len(alignments),
 	})
 
@@ -380,39 +382,44 @@ func (o *Orchestrator) calculateLivenessMetrics(
 			continue
 		}
 
+		fingerprint := fingerprints[fmt.Sprintf("%s_fingerprint", alignmentName)]
+		if fingerprint == nil {
+			continue
+		}
+
 		// Map based on stream names in the alignment
 		// Pattern: {source_name}_to_{cdn_name}
 		switch {
 		case contains(alignmentName, "pri_source") &&
 			contains(alignmentName, "hls") &&
 			contains(alignmentName, "ti"):
-			metrics.HLSCloudfrontCDNLag = o.calculateLiveness(alignment)
+			metrics.HLSCloudfrontCDNLag = o.calculateLiveness(alignment, fingerprint)
 
 		case contains(alignmentName, "pri_source") &&
 			contains(alignmentName, "hls") &&
 			contains(alignmentName, "ss_ais"):
-			metrics.HLSAISCDNLag = o.calculateLiveness(alignment)
+			metrics.HLSAISCDNLag = o.calculateLiveness(alignment, fingerprint)
 
 		case contains(alignmentName, "pri_source") &&
 			contains(alignmentName, "mp3") &&
 			contains(alignmentName, "ti"):
-			metrics.ICEcastCloudfrontCDNLag = o.calculateLiveness(alignment)
+			metrics.ICEcastCloudfrontCDNLag = o.calculateLiveness(alignment, fingerprint)
 
 		case contains(alignmentName, "pri_source") &&
 			contains(alignmentName, "mp3") &&
 			contains(alignmentName, "ss_ais"):
-			metrics.ICEcastAISCDNLag = o.calculateLiveness(alignment)
+			metrics.ICEcastAISCDNLag = o.calculateLiveness(alignment, fingerprint)
 
 		case contains(alignmentName, "pri_source") &&
 			contains(alignmentName, "bk_source"):
-			metrics.SourceLag = o.calculateSourceLiveness(alignment)
+			metrics.SourceLag = o.calculateSourceLiveness(alignment, fingerprint)
 		}
 	}
 
 	return metrics
 }
 
-func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement) *latency.Liveness {
+func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement, fingerprint *latency.FingerprintComparison) *latency.Liveness {
 	var status string
 	lagSeconds := roundToDecimalPlaces(alignment.LatencySeconds, o.benchmarkConfig.Output.Precision)
 
@@ -420,7 +427,7 @@ func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement
 		status = "NO_ALIGNMENT"
 	}
 
-	if alignment.AlignmentResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
+	if fingerprint.SimilarityResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
 		status = "NO_MATCH"
 		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
 	}
@@ -435,7 +442,7 @@ func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement
 	}
 }
 
-func (o *Orchestrator) calculateSourceLiveness(alignment *latency.AlignmentMeasurement) *latency.Liveness {
+func (o *Orchestrator) calculateSourceLiveness(alignment *latency.AlignmentMeasurement, fingerprint *latency.FingerprintComparison) *latency.Liveness {
 	var primaryLiveness *latency.Liveness
 	lagSeconds := roundToDecimalPlaces(alignment.LatencySeconds, o.benchmarkConfig.Output.Precision)
 
@@ -450,7 +457,7 @@ func (o *Orchestrator) calculateSourceLiveness(alignment *latency.AlignmentMeasu
 		}
 	}
 
-	if alignment.AlignmentResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
+	if fingerprint.SimilarityResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
 		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
 		primaryLiveness.Status = "NO_MATCH"
 	}

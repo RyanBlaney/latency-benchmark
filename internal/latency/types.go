@@ -6,11 +6,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/configs"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint"
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/fingerprint/extractors"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
+	"github.com/RyanBlaney/sonido-sonar/fingerprint"
+	"github.com/RyanBlaney/sonido-sonar/fingerprint/extractors"
 )
 
 // BenchmarkConfig extends the base config with benchmark-specific settings
@@ -227,7 +227,8 @@ type FingerprintComparison struct {
 
 // BroadcastMeasurement represents all measurements for a single broadcast
 type BroadcastMeasurement struct {
-	Group                  *Broadcast                        `json:"broadcast"`
+	Broadcast              *Broadcast                        `json:"broadcast"`
+	Group                  *BroadcastGroup                   `json:"broadcast_group"`
 	StreamMeasurements     map[string]*StreamMeasurement     `json:"stream_measurements"`
 	AlignmentMeasurements  map[string]*AlignmentMeasurement  `json:"alignment_measurements"`
 	FingerprintComparisons map[string]*FingerprintComparison `json:"fingerprint_comparisons"`
@@ -506,6 +507,18 @@ func (c *BroadcastConfig) GetEnabledBroadcastGroups() map[string]*BroadcastGroup
 		}
 	}
 	return enabled
+}
+
+// GetBroadcastGroup returns the broadcast group corresponding to the `broadcastKey`
+func (c *BroadcastConfig) GetBroadcastGroup(broadcastKey string) *BroadcastGroup {
+	for _, group := range c.GetEnabledBroadcastGroups() {
+		for key := range group.Broadcasts {
+			if key == broadcastKey {
+				return group
+			}
+		}
+	}
+	return nil
 }
 
 // GetFirstBroadcastGroup returns the first enabled broadcast group

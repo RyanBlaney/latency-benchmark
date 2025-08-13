@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/hls"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tunein/cdn-benchmark-cli/configs"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/hls"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

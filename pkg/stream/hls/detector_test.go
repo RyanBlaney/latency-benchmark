@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 	"github.com/stretchr/testify/assert"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
 )
 
 func TestNewDetector(t *testing.T) {

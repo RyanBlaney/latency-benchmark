@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/audio/transcode"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // Config holds configuration for HLS processing

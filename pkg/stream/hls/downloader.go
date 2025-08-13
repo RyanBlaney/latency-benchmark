@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/audio/transcode"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/pkg/audio/transcode"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
 )
 
 // AudioDownloader handles downloading and processing HLS audio segments for LIVE streams
@@ -173,7 +173,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Info("Starting live HLS audio download")
+	logger.Debug("Starting live HLS audio download")
 
 	// Add required query parameters based on configuration
 	playlistURL = ad.applyQueryParamRules(playlistURL)
@@ -184,7 +184,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 		return nil, fmt.Errorf("failed to select variant: %w", err)
 	}
 
-	logger.Info("Selected media playlist", logging.Fields{
+	logger.Debug("Selected media playlist", logging.Fields{
 		"media_playlist_url": mediaPlaylistURL,
 	})
 
@@ -202,7 +202,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 	startTime := time.Now()
 
 	// Create a context with timeout for the entire download process
-	downloadCtx, cancel := context.WithTimeout(ctx, targetDuration+(60*time.Second))
+	downloadCtx, cancel := context.WithTimeout(ctx, targetDuration+(90*time.Second))
 	defer cancel()
 
 	// Reduced logging frequency
@@ -252,7 +252,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 		newSegments := ad.findNewSegments(playlist)
 
 		if time.Since(lastLogTime) > logInterval {
-			logger.Info("Playlist status", logging.Fields{
+			logger.Debug("Playlist status", logging.Fields{
 				"total_segments":     len(playlist.Segments),
 				"new_segments":       len(newSegments),
 				"collected_duration": totalDuration.Seconds(),
@@ -317,7 +317,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 
 		// If this is not a live playlist, break after processing all segments
 		if !playlist.IsLive {
-			logger.Info("Non-live playlist detected, stopping after current segments")
+			logger.Debug("Non-live playlist detected, stopping after current segments")
 			break
 		}
 
@@ -339,7 +339,7 @@ func (ad *AudioDownloader) DownloadAudioSample(ctx context.Context, playlistURL 
 	downloadDuration := time.Since(startTime)
 	ad.downloadStats.DownloadTime += downloadDuration
 
-	logger.Info("Live HLS download completed", logging.Fields{
+	logger.Debug("Live HLS download completed", logging.Fields{
 		"segments_downloaded": len(segmentDataList),
 		"total_duration":      totalDuration.Seconds(),
 		"target_duration":     targetDuration.Seconds(),
@@ -359,7 +359,7 @@ func (ad *AudioDownloader) DownloadContinuousLiveEdge(ctx context.Context, playl
 		"target_duration": targetDuration.Seconds(),
 	})
 
-	logger.Info("Starting continuous live edge HLS audio download")
+	logger.Debug("Starting continuous live edge HLS audio download")
 
 	// Add required query parameters
 	playlistURL = ad.applyQueryParamRules(playlistURL)
@@ -369,7 +369,7 @@ func (ad *AudioDownloader) DownloadContinuousLiveEdge(ctx context.Context, playl
 		return nil, fmt.Errorf("failed to select variant: %w", err)
 	}
 
-	logger.Info("Selected media playlist for live edge", logging.Fields{
+	logger.Debug("Selected media playlist for live edge", logging.Fields{
 		"media_playlist_url": mediaPlaylistURL,
 	})
 
@@ -389,7 +389,7 @@ func (ad *AudioDownloader) DownloadContinuousLiveEdge(ctx context.Context, playl
 	downloadCtx, cancel := context.WithTimeout(ctx, targetDuration+(60*time.Second))
 	defer cancel()
 
-	logger.Info("Starting live edge collection loop")
+	logger.Debug("Starting live edge collection loop")
 
 	for totalDuration < targetDuration {
 		select {
@@ -507,7 +507,7 @@ func (ad *AudioDownloader) DownloadContinuousLiveEdge(ctx context.Context, playl
 	downloadDuration := time.Since(startTime)
 	ad.downloadStats.DownloadTime += downloadDuration
 
-	logger.Info("Live edge HLS download completed", logging.Fields{
+	logger.Debug("Live edge HLS download completed", logging.Fields{
 		"segments_downloaded": len(allSegmentData),
 		"total_duration":      totalDuration.Seconds(),
 		"target_duration":     targetDuration.Seconds(),
@@ -530,7 +530,7 @@ func (ad *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, playli
 		"method":          "ffmpeg_direct",
 	})
 
-	logger.Info("Starting direct FFmpeg HLS audio download")
+	logger.Debug("Starting direct FFmpeg HLS audio download")
 
 	// Apply query parameters if needed
 	processedURL := ad.applyQueryParamRules(playlistURL)
@@ -622,7 +622,7 @@ func (ad *AudioDownloader) DownloadAudioSampleDirect(ctx context.Context, playli
 	ad.downloadStats.BytesDownloaded = int64(len(audioData.PCM) * 8) // Estimate based on PCM data
 	ad.downloadStats.DownloadTime = downloadTime
 
-	logger.Info("Direct FFmpeg HLS download completed", logging.Fields{
+	logger.Debug("Direct FFmpeg HLS download completed", logging.Fields{
 		"actual_duration": audioData.Duration.Seconds(),
 		"target_duration": targetDuration.Seconds(),
 		"samples":         len(audioData.PCM),
@@ -648,7 +648,7 @@ func (ad *AudioDownloader) combineAndDecodeSegments(segmentDataList [][]byte, se
 		totalSize += len(data)
 	}
 
-	logger.Info("Combining segment data for decoding", logging.Fields{
+	logger.Debug("Combining segment data for decoding", logging.Fields{
 		"segment_count": len(segmentDataList),
 		"total_bytes":   totalSize,
 	})
@@ -665,7 +665,7 @@ func (ad *AudioDownloader) combineAndDecodeSegments(segmentDataList [][]byte, se
 		totalDuration += duration
 	}
 
-	logger.Info("Decoding combined segment data", logging.Fields{
+	logger.Debug("Decoding combined segment data", logging.Fields{
 		"combined_size":    len(combinedData),
 		"total_duration_s": totalDuration.Seconds(),
 	})
@@ -677,7 +677,7 @@ func (ad *AudioDownloader) combineAndDecodeSegments(segmentDataList [][]byte, se
 	var err error
 
 	if ad.hlsConfig != nil && ad.hlsConfig.AudioDecoder != nil {
-		logger.Info("Using injected audio decoder for combined data")
+		logger.Debug("Using injected audio decoder for combined data")
 
 		anyData, err := ad.hlsConfig.AudioDecoder.DecodeBytes(combinedData)
 		if err != nil {
@@ -697,7 +697,7 @@ func (ad *AudioDownloader) combineAndDecodeSegments(segmentDataList [][]byte, se
 			}
 		}
 	} else {
-		logger.Info("No injected decoder, using basic audio extraction")
+		logger.Debug("No injected decoder, using basic audio extraction")
 		audioData, err = ad.basicAudioExtraction(combinedData, playlistURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract audio from combined data: %w", err)
@@ -719,7 +719,7 @@ func (ad *AudioDownloader) combineAndDecodeSegments(segmentDataList [][]byte, se
 	// Update audio metrics
 	ad.updateAudioMetrics(audioData)
 
-	logger.Info("Audio decoding completed successfully", logging.Fields{
+	logger.Debug("Audio decoding completed successfully", logging.Fields{
 		"final_samples":     len(audioData.PCM),
 		"final_duration_s":  audioData.Duration.Seconds(),
 		"final_sample_rate": audioData.SampleRate,

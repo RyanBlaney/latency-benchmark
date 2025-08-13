@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
 )
 
 // AudioData represents decoded audio data
@@ -290,21 +290,16 @@ func (d *Decoder) DecodeURL(url string, duration time.Duration, streamType strin
 			"-timeout", "60000000", // 60 second total timeout
 		)
 	case "hls":
-		// HLS live streaming optimizations
 		args = append(args,
-			"-re",
+			"-protocol_whitelist", "file,http,https,tcp,tls",
+			"-timeout", "60000000",
+			"-rw_timeout", "30000000",
+			"-user_agent", "Mozilla/5.0",
+			"-live_start_index", "-3", // Force latest segment
 			"-fflags", "+genpts+igndts+flush_packets",
-			"-live_start_index", "9999", // Start 1 segments back from live edge for stability
-			"-probesize", "500000", // 500KB - enough to detect streams reliably
-			"-analyzeduration", "2000000", // 2 seconds - balance speed vs reliability
-			"-rw_timeout", "30000000", // 30 second read timeout (consistent with ICEcast)
-			"-reconnect", "1",
-			"-reconnect_at_eof", "1",
-			"-reconnect_streamed", "1",
-			"-timeout", "60000000", // 60 second timeout (consistent with ICEcast)
-			"-reconnect_delay_max", "2",
-			"-avoid_negative_ts", "make_zero", // Normalize timestamps to start at 0
-			"-fflags", "+discardcorrupt", // Discard corrupt packets
+			"-avoid_negative_ts", "disabled",
+			"-probesize", "32",
+			"-analyzeduration", "0",
 		)
 	default:
 		// For unknown stream types, log a warning but continue

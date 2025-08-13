@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tunein/cdn-benchmark-cli/configs"
-	"github.com/tunein/cdn-benchmark-cli/internal/benchmark"
-	"github.com/tunein/cdn-benchmark-cli/internal/latency"
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
-	"github.com/tunein/cdn-benchmark-cli/pkg/output"
+	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/internal/benchmark"
+	"github.com/RyanBlaney/latency-benchmark/internal/latency"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/output"
 )
 
 // Context holds the application context and configuration
@@ -249,8 +249,8 @@ func cleanBenchmarkSummary(summary *latency.BenchmarkSummary, verbose bool) map[
 		var cleanBroadcast map[string]any
 		if verbose {
 			cleanBroadcast = map[string]any{
-				"group_name":                   broadcast.Group.Name,
-				"content_type":                 broadcast.Group.ContentType,
+				"broadcast_name":               broadcast.Broadcast.Name,
+				"content_type":                 broadcast.Broadcast.ContentType,
 				"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
 				"liveness_metrics":             broadcast.LivenessMetrics,
 				"overall_validation":           broadcast.OverallValidation,
@@ -260,8 +260,8 @@ func cleanBenchmarkSummary(summary *latency.BenchmarkSummary, verbose bool) map[
 			}
 		} else {
 			cleanBroadcast = map[string]any{
-				"group_name":                   broadcast.Group.Name,
-				"content_type":                 broadcast.Group.ContentType,
+				"broadcast_name":               broadcast.Broadcast.Name,
+				"content_type":                 broadcast.Broadcast.ContentType,
 				"total_benchmark_time_seconds": broadcast.TotalBenchmarkTime.Seconds(),
 				"liveness_metrics":             broadcast.LivenessMetrics,
 				"overall_validation":           broadcast.OverallValidation,
@@ -394,7 +394,7 @@ func (app *BenchmarkApp) writeToFile(data []byte) error {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
-	app.logger.Info("Results written to file", logging.Fields{
+	app.logger.Debug("Results written to file", logging.Fields{
 		"output_file": app.ctx.OutputFile,
 		"size_bytes":  len(data),
 	})

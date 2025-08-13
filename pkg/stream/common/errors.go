@@ -3,7 +3,7 @@ package common
 import (
 	"maps"
 
-	"github.com/tunein/cdn-benchmark-cli/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
 )
 
 // StreamError represents stream-related errors with integrated logging

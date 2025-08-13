@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark/internal/app"
 	"github.com/spf13/cobra"
-	"github.com/tunein/cdn-benchmark-cli/internal/app"
 )
 
 var (

@@ -60,7 +60,7 @@ broadcast_groups:
 
       cnbcfree:
         name: CNBC Free
-        enabled: true
+        enabled: false
         content_type: "news"
         streams:
           pri_source:
@@ -91,7 +91,7 @@ broadcast_groups:
       cnnfree:
         name: "CNN"
         content_type: "news"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://turner-live-aka.cdn.turner.com/hls/live/2040557/cnnaudioonly/AUDIO_1_128000_eng.m3u8"
