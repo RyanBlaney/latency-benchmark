@@ -13,8 +13,8 @@ import (
 	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/RyanBlaney/latency-benchmark/internal/benchmark"
 	"github.com/RyanBlaney/latency-benchmark/internal/latency"
-	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
-	"github.com/RyanBlaney/latency-benchmark/pkg/output"
+	"github.com/RyanBlaney/latency-benchmark-common/logging"
+	"github.com/RyanBlaney/latency-benchmark-common/output"
 )
 
 // Context holds the application context and configuration

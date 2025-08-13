@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/hls"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/icecast"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/hls"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/icecast"
 	"github.com/spf13/viper"
 )
 

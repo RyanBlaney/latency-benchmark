@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/RyanBlaney/latency-benchmark/configs"
+	"github.com/RyanBlaney/latency-benchmark/internal/app"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -19,6 +22,17 @@ var (
 	outputFormat string
 	configDir    string
 	dataDir      string
+
+	// Benchmark-specific flags
+	benchmarkBroadcastConfigFile string
+	benchmarkOutputFile          string
+	benchmarkTimeout             time.Duration
+	benchmarkSegmentDuration     time.Duration
+	benchmarkMaxConcurrent       int
+	benchmarkQuiet               bool
+	benchmarkDetailedAnalysis    bool
+	benchmarkSkipFingerprint     bool
+	benchmarkBroadcastIndex      int
 )
 
 const (
@@ -35,11 +49,19 @@ const (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "cdn-benchmark",
-	Short: "TuneIn CDN Performance Benchmark Suite",
-	Long: `A comprehensive CDN performance benchmarking tool for TuneIn Radio.
-This tool provides automated testing and analysis of CDN performance across
-multiple geographic regions with support for HLS and ICEcast streams.
+	Use:   "cdn-benchmark-cli",
+	Short: "Run comprehensive CDN latency benchmark",
+	Long: `Run a comprehensive benchmark of CDN latency across multiple broadcast groups.
+
+This command measures end-to-end latency by:
+1. Extracting audio segments from HLS and ICEcast streams (both source and CDN)
+2. Generating audio fingerprints optimized for the content type
+3. Measuring temporal alignment between stream pairs to calculate latency
+4. Validating stream quality and fingerprint similarity
+5. Calculating comprehensive latency and performance metrics
+
+The benchmark requires a configuration file specifying broadcast groups with their
+respective stream endpoints.
 
 Key features:
 - HLS and ICEcast stream support  
@@ -47,9 +69,27 @@ Key features:
 - Latency measurement and statistical analysis
 - Integration with DataDog monitoring
 - Configurable test profiles and thresholds`,
+	Example: `  # Run benchmark with broadcast configuration
+  cdn-benchmark-cli --broadcasts broadcasts.yaml
+
+  # Run with custom app config and broadcast config
+  cdn-benchmark-cli \
+    --config app-config.yaml \
+    --broadcasts broadcasts.yaml \
+    --index 0 \
+    --timeout 30m \
+    --output results.json \
+    --format json
+
+  # Quick alignment-only benchmark
+  cdn-benchmark-cli \
+    --broadcasts broadcasts.yaml \
+    --skip-fingerprint \
+    --segment-duration 15s`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return initializeConfig(cmd)
 	},
+	RunE: runBenchmark,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately
@@ -78,8 +118,25 @@ func init() {
 		"verbose output")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info",
 		"log level (debug, info, error)")
-	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table",
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "json",
 		"output format (json, table, csv, yaml)")
+
+	// Benchmark-specific flags
+	rootCmd.Flags().StringVarP(&benchmarkBroadcastConfigFile, "broadcasts", "b", "", "broadcast groups configuration file (required)")
+	rootCmd.MarkFlagRequired("broadcasts")
+
+	rootCmd.Flags().StringVar(&benchmarkOutputFile, "output-file", "", "output file (default: stdout)")
+	rootCmd.Flags().DurationVar(&benchmarkTimeout, "timeout", time.Minute*30, "overall benchmark timeout")
+	rootCmd.Flags().DurationVarP(&benchmarkSegmentDuration, "segment-duration", "t", 0, "audio segment duration")
+	rootCmd.Flags().IntVar(&benchmarkMaxConcurrent, "max-concurrent", 3, "maximum concurrent broadcast measurements")
+
+	// Analysis options
+	rootCmd.Flags().BoolVar(&benchmarkDetailedAnalysis, "detailed-analysis", false, "enable detailed feature analysis")
+	rootCmd.Flags().BoolVar(&benchmarkSkipFingerprint, "skip-fingerprint", false, "skip fingerprint comparison")
+
+	// Additional logging options
+	rootCmd.Flags().BoolVarP(&benchmarkQuiet, "quiet", "q", false, "quiet output (errors only)")
+	rootCmd.Flags().IntVarP(&benchmarkBroadcastIndex, "index", "i", 0, "job index to select broadcast")
 
 	// Bind flags to viper with correct keys to avoid namespace conflicts
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
@@ -87,6 +144,53 @@ func init() {
 	viper.BindPFlag("output_format", rootCmd.PersistentFlags().Lookup("output")) // Bind --output flag to output_format config
 	viper.BindPFlag("config_dir", rootCmd.PersistentFlags().Lookup("config-dir"))
 	viper.BindPFlag("data_dir", rootCmd.PersistentFlags().Lookup("data-dir"))
+}
+
+func runBenchmark(cmd *cobra.Command, args []string) error {
+	// Determine the output format - prioritize command line flag if explicitly set, then config file
+	finalOutputFormat := "json" // Default to JSON
+
+	// Check if output flag was explicitly set by user
+	outputFlagChanged := cmd.Flags().Changed("output")
+
+	if outputFlagChanged {
+		// User explicitly set the output format via flag
+		finalOutputFormat = outputFormat
+	} else if viper.IsSet("output_format") {
+		// Use config file setting
+		finalOutputFormat = viper.GetString("output_format")
+	} else if viper.IsSet("benchmark.output_format") {
+		// Check benchmark-specific output format in config
+		finalOutputFormat = viper.GetString("benchmark.output_format")
+	}
+
+	// Create application context
+	appCtx := &app.Context{
+		ConfigFile:          configFile,
+		BroadcastConfigFile: benchmarkBroadcastConfigFile,
+		OutputFile:          benchmarkOutputFile,
+		OutputFormat:        finalOutputFormat,
+		Timeout:             benchmarkTimeout,
+		SegmentDuration:     benchmarkSegmentDuration,
+		MaxConcurrent:       benchmarkMaxConcurrent,
+		Verbose:             verbose, // Use the global verbose flag
+		Quiet:               benchmarkQuiet,
+		DetailedAnalysis:    benchmarkDetailedAnalysis,
+		SkipFingerprint:     benchmarkSkipFingerprint,
+		BroadcastIndex:      benchmarkBroadcastIndex,
+	}
+
+	// Initialize application
+	benchmarkApp, err := app.NewBenchmarkApp(appCtx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize benchmark app: %w", err)
+	}
+
+	// Run benchmark
+	ctx, cancel := context.WithTimeout(context.Background(), benchmarkTimeout)
+	defer cancel()
+
+	return benchmarkApp.Run(ctx)
 }
 
 // initConfig reads in config file and ENV variables if set

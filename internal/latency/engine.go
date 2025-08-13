@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/RyanBlaney/latency-benchmark/configs"
-	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
+	"github.com/RyanBlaney/latency-benchmark-common/logging"
+	"github.com/RyanBlaney/latency-benchmark-common/stream"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/common"
 	"github.com/RyanBlaney/sonido-sonar/fingerprint"
 	"github.com/RyanBlaney/sonido-sonar/fingerprint/config"
 	"github.com/RyanBlaney/sonido-sonar/fingerprint/extractors"

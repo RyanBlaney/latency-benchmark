@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark-common/logging"
 	"github.com/RyanBlaney/latency-benchmark/internal/latency"
-	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
 )
 
 // Orchestrator coordinates the entire CDN benchmarking process

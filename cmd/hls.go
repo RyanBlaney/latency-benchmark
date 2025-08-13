@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/RyanBlaney/latency-benchmark/configs"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/hls"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/common"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/hls"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/text/cases"

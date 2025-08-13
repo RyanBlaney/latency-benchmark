@@ -1,3 +1,5 @@
+github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250813214932-9ef22c90ff5d h1:TAkV0dg0ZH3QPODmr0OI+dVYbn+25ExxlaGW7fMO7Zg=
+github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250813214932-9ef22c90ff5d/go.mod h1:gSalucCHCVj5uu+sjMLGnrW2Vk28cBoGnlgaDIcMulM=
 github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5 h1:ILYVtjzQEUdGg3Do1wDgPFvdrCnKwtgdUEqRKqg0Nu4=
 github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5/go.mod h1:Q+isU9TagL0+TQrj84sv6D0AKqmSKTEGL7RTeyzwAiE=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
@@ -51,8 +53,8 @@ go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=
 go.uber.org/multierr v1.11.0/go.mod h1:20+QtiLqy0Nd6FdQB9TLXag12DsQkrbs3htMFfDN80Y=
 golang.org/x/sys v0.29.0 h1:TPYlXGxvx1MGTn2GiZDhnjPA9wZzZeGKHHmKhHYvgaU=
 golang.org/x/sys v0.29.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
-golang.org/x/text v0.23.0 h1:D71I7dUrlY+VX0gQShAThNGHFxZ13dGLBHQLVl1mJlY=
-golang.org/x/text v0.23.0/go.mod h1:/BLNzu4aZCJ1+kcD0DNRotWKage4q2rGVAg4o22unh4=
+golang.org/x/text v0.28.0 h1:rhazDwis8INMIwQ4tpjLDzUhx6RlXqZNPEM0huQojng=
+golang.org/x/text v0.28.0/go.mod h1:U8nCwOR8jO/marOQ0QbDiOngZVEBB7MAiitBuMjXiNU=
 gonum.org/v1/gonum v0.16.0 h1:5+ul4Swaf3ESvrOnidPp4GZbzf0mxVQpDCYUQE7OJfk=
 gonum.org/v1/gonum v0.16.0/go.mod h1:fef3am4MQ93R2HHpKnLk4/Tbh/s0+wqD5nfa6Pnwy4E=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=

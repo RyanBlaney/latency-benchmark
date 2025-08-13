@@ -3,12 +3,12 @@ module github.com/RyanBlaney/latency-benchmark
 go 1.24.5
 
 require (
+	github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250813214932-9ef22c90ff5d
 	github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.20.1
-	github.com/stretchr/testify v1.10.0
-	golang.org/x/text v0.23.0
+	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

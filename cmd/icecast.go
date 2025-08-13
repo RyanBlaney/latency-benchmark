@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/RyanBlaney/latency-benchmark/configs"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/common"
-	"github.com/RyanBlaney/latency-benchmark/pkg/stream/icecast"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/common"
+	"github.com/RyanBlaney/latency-benchmark-common/stream/icecast"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )

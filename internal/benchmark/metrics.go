@@ -4,7 +4,7 @@ import (
 	"math"
 
 	"github.com/RyanBlaney/latency-benchmark/internal/latency"
-	"github.com/RyanBlaney/latency-benchmark/pkg/logging"
+	"github.com/RyanBlaney/latency-benchmark-common/logging"
 )
 
 // MetricsCalculator handles calculation of various performance metrics

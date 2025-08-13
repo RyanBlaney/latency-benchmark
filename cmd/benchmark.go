@@ -1,5 +1,7 @@
 package cmd
 
+/*
+
 import (
 	"context"
 	"fmt"
@@ -190,4 +192,4 @@ var validateBroadcastsCmd = &cobra.Command{
 
 		return app.ValidateBroadcastConfig(configFile)
 	},
-}
+}*/
