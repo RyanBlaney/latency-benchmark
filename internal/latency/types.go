@@ -6,9 +6,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/RyanBlaney/latency-benchmark-common/stream"
 	"github.com/RyanBlaney/latency-benchmark-common/stream/common"
+	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/RyanBlaney/sonido-sonar/fingerprint"
 	"github.com/RyanBlaney/sonido-sonar/fingerprint/extractors"
 )
@@ -111,6 +111,7 @@ type BroadcastGroup struct {
 // Broadcast represents a single broadcast with 5-6 streams for comparison
 type Broadcast struct {
 	Name        string                     `json:"name" yaml:"name"`
+	GroupName   string                     `json:"groupName"`
 	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
 	ContentType string                     `json:"content_type,omitempty" yaml:"content_type,omitempty"`
 	Streams     map[string]*StreamEndpoint `json:"streams" yaml:"streams"`
@@ -228,7 +229,6 @@ type FingerprintComparison struct {
 // BroadcastMeasurement represents all measurements for a single broadcast
 type BroadcastMeasurement struct {
 	Broadcast              *Broadcast                        `json:"broadcast"`
-	Group                  *BroadcastGroup                   `json:"broadcast_group"`
 	StreamMeasurements     map[string]*StreamMeasurement     `json:"stream_measurements"`
 	AlignmentMeasurements  map[string]*AlignmentMeasurement  `json:"alignment_measurements"`
 	FingerprintComparisons map[string]*FingerprintComparison `json:"fingerprint_comparisons"`
@@ -357,6 +357,7 @@ func (c *BroadcastConfig) ApplyInheritance() {
 			if broadcast.ContentType == "" {
 				broadcast.ContentType = group.ContentType
 			}
+			broadcast.GroupName = group.Name
 
 			if broadcast.Enabled == nil {
 				defaultVal := true

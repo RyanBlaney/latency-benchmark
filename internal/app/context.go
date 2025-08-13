@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RyanBlaney/latency-benchmark-common/logging"
+	"github.com/RyanBlaney/latency-benchmark-common/output"
 	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/RyanBlaney/latency-benchmark/internal/benchmark"
 	"github.com/RyanBlaney/latency-benchmark/internal/latency"
-	"github.com/RyanBlaney/latency-benchmark-common/logging"
-	"github.com/RyanBlaney/latency-benchmark-common/output"
+	"github.com/tunein/go-logging/v7/pkg/rootcollector"
 )
 
 // Context holds the application context and configuration
@@ -229,6 +230,94 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 
 	_, err = os.Stdout.Write(formattedData)
 	return err
+}
+
+// collectLivenessMetrics sends liveness metrics to rootcollector
+func (app *BenchmarkApp) collectLivenessMetrics(summary *latency.BenchmarkSummary) {
+	if summary == nil || summary.BroadcastMeasurements == nil {
+		return
+	}
+
+	for broadcastKey, measurement := range summary.BroadcastMeasurements {
+		if measurement.LivenessMetrics == nil {
+			continue
+		}
+
+		// Parse broadcast group and name from the key (e.g., "newsfree_cnnfree")
+		// Assuming format is "{group}_{broadcast}"
+		parts := strings.SplitN(broadcastKey, "_", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		broadcastGroup := parts[0] // e.g., "newsfree"
+		broadcastName := parts[1]  // e.g., "cnnfree"
+
+		// Use the broadcast_name from the measurement if available, otherwise use parsed name
+		displayName := broadcastName
+		if measurement.Broadcast.Name != "" {
+			displayName = measurement.Broadcast.Name
+		}
+
+		// Create base tags for this broadcast
+		baseTags := []string{
+			"group:" + broadcastGroup,
+			"broadcast:" + displayName,
+		}
+
+		livenessMetrics := measurement.LivenessMetrics
+
+		// Send metrics for each liveness measurement
+		app.sendLivenessMetric(livenessMetrics.HLSCloudfrontCDNLag, "pri_source_vs_ti_hls", baseTags)
+		app.sendLivenessMetric(livenessMetrics.ICEcastCloudfrontCDNLag, "pri_source_vs_ti_mp3", baseTags)
+		app.sendLivenessMetric(livenessMetrics.HLSAISCDNLag, "pri_source_vs_ss_ais_hls", baseTags)
+		app.sendLivenessMetric(livenessMetrics.ICEcastAISCDNLag, "pri_source_vs_ss_ais_mp3", baseTags)
+		app.sendLivenessMetric(livenessMetrics.SourceLag, "pri_source_vs_bk_source", baseTags)
+		app.sendLivenessMetric(livenessMetrics.HLSCloudfrontCDNLagFromBackup, "bk_source_vs_ti_hls", baseTags)
+		app.sendLivenessMetric(livenessMetrics.ICEcastCloudfrontCDNLagFromBackup, "bk_source_vs_ti_mp3", baseTags)
+		app.sendLivenessMetric(livenessMetrics.HLSAISCDNLagFromBackup, "bk_source_vs_ss_ais_hls", baseTags)
+		app.sendLivenessMetric(livenessMetrics.ICEcastAISCDNLagFromBackup, "bk_source_vs_ss_ais_mp3", baseTags)
+
+		// Send total benchmark time if available
+		if measurement.TotalBenchmarkTime.Seconds() > 0 {
+			benchmarkTimeMs := measurement.TotalBenchmarkTime.Milliseconds()
+			rootcollector.Metric("streaming.benchmark.duration.milliseconds", benchmarkTimeMs, baseTags)
+		}
+	}
+
+	// Send summary metrics
+	if summary.TotalDuration > 0 {
+		totalDurationMs := summary.TotalDuration.Milliseconds()
+		rootcollector.Metric("streaming.benchmark.total.duration.milliseconds", totalDurationMs)
+	}
+}
+
+// sendLivenessMetric sends metrics for a single liveness measurement
+func (app *BenchmarkApp) sendLivenessMetric(liveness *latency.Liveness, comparisonType string, baseTags []string) {
+	if liveness == nil {
+		return
+	}
+
+	// Create tags with comparison type
+	tags := append(baseTags, "comparison:"+comparisonType)
+
+	// Send lag seconds metric (convert to milliseconds for consistency)
+	lagMs := int64(liveness.LagSeconds * 1000)
+	rootcollector.Metric("streaming.liveness.lag.milliseconds", lagMs, tags)
+
+	// Send status metric (convert status to numeric value)
+	var statusValue int64
+	switch liveness.Status {
+	case "MATCH":
+		statusValue = 1
+	case "NO_ALIGNMENT":
+		statusValue = 0
+	case "NO_MATCH":
+		statusValue = -1
+	default:
+		statusValue = -2 // Unknown status
+	}
+	rootcollector.Metric("streaming.liveness.status", statusValue, tags)
 }
 
 // cleanBenchmarkSummary removes raw data from the benchmark summary

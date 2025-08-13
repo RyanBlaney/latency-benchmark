@@ -157,7 +157,6 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 func (o *Orchestrator) measureSingleBroadcast(ctx context.Context, broadcastKey string, broadcast *latency.Broadcast) *latency.BroadcastMeasurement {
 	measurement := &latency.BroadcastMeasurement{
 		Broadcast:              broadcast,
-		Group:                  o.broadcastConfig.GetBroadcastGroup(broadcastKey),
 		StreamMeasurements:     make(map[string]*latency.StreamMeasurement),
 		AlignmentMeasurements:  make(map[string]*latency.AlignmentMeasurement),
 		FingerprintComparisons: make(map[string]*latency.FingerprintComparison),
