@@ -123,8 +123,6 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 
 // setupLogging configures logging based on context
 func setupLogging(ctx *Context) logging.Logger {
-	// TODO: Create logger with appropriate level based on ctx.Verbose/ctx.Quiet
-	// For now, return default logger
 	return logging.NewDefaultLogger()
 }
 
@@ -284,12 +282,6 @@ func (app *BenchmarkApp) collectLivenessMetrics(summary *latency.BenchmarkSummar
 			rootcollector.Metric("streaming.benchmark.duration.milliseconds", benchmarkTimeMs, baseTags)
 		}
 	}
-
-	// Send summary metrics
-	if summary.TotalDuration > 0 {
-		totalDurationMs := summary.TotalDuration.Milliseconds()
-		rootcollector.Metric("streaming.benchmark.total.duration.milliseconds", totalDurationMs)
-	}
 }
 
 // sendLivenessMetric sends metrics for a single liveness measurement
@@ -298,26 +290,13 @@ func (app *BenchmarkApp) sendLivenessMetric(liveness *latency.Liveness, comparis
 		return
 	}
 
-	// Create tags with comparison type
-	tags := append(baseTags, "comparison:"+comparisonType)
-
-	// Send lag seconds metric (convert to milliseconds for consistency)
+	// Send lag seconds metric (convert to milliseconds because int64)
 	lagMs := int64(liveness.LagSeconds * 1000)
-	rootcollector.Metric("streaming.liveness.lag.milliseconds", lagMs, tags)
 
-	// Send status metric (convert status to numeric value)
-	var statusValue int64
-	switch liveness.Status {
-	case "MATCH":
-		statusValue = 1
-	case "NO_ALIGNMENT":
-		statusValue = 0
-	case "NO_MATCH":
-		statusValue = -1
-	default:
-		statusValue = -2 // Unknown status
-	}
-	rootcollector.Metric("streaming.liveness.status", statusValue, tags)
+	// Create tags with comparison type and status
+	tags := append(baseTags, "comparison:"+comparisonType, "status:"+liveness.Status)
+
+	rootcollector.Metric("streaming.latency.benchmark.ms", lagMs, tags)
 }
 
 // cleanBenchmarkSummary removes raw data from the benchmark summary
