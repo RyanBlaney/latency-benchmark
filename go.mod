@@ -3,7 +3,7 @@ module github.com/RyanBlaney/latency-benchmark
 go 1.24.5
 
 require (
-	github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814185829-e4a21f122b6f
+	github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814202149-d3ddaf01c550
 	github.com/RyanBlaney/sonido-sonar v0.0.0-20250814190341-101cd9e6f65d
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
