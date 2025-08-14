@@ -3,8 +3,8 @@ github.com/DataDog/datadog-go/v5 v5.5.0/go.mod h1:K9kcYBlxkcPP8tvvjZZKs/m1edNAUF
 github.com/Microsoft/go-winio v0.5.0/go.mod h1:JPGBdM1cNvN/6ISo+n8V5iA4v8pBzdOpzfwIujj1a84=
 github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migciow=
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
-github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250813214932-9ef22c90ff5d h1:TAkV0dg0ZH3QPODmr0OI+dVYbn+25ExxlaGW7fMO7Zg=
-github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250813214932-9ef22c90ff5d/go.mod h1:gSalucCHCVj5uu+sjMLGnrW2Vk28cBoGnlgaDIcMulM=
+github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814185829-e4a21f122b6f h1:ZP6dnqFwUvGqG1Eu+ChIywIlcycBfy8SyQSaCglo6C8=
+github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814185829-e4a21f122b6f/go.mod h1:gSalucCHCVj5uu+sjMLGnrW2Vk28cBoGnlgaDIcMulM=
 github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5 h1:ILYVtjzQEUdGg3Do1wDgPFvdrCnKwtgdUEqRKqg0Nu4=
 github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5/go.mod h1:Q+isU9TagL0+TQrj84sv6D0AKqmSKTEGL7RTeyzwAiE=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=

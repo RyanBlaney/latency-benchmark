@@ -16,12 +16,13 @@ import (
 )
 
 var (
-	configFile   string
-	verbose      bool
-	logLevel     string
-	outputFormat string
-	configDir    string
-	dataDir      string
+	configFile     string
+	verbose        bool
+	logLevel       string
+	outputFormat   string
+	configDir      string
+	dataDir        string
+	sampleDuration time.Duration
 
 	// Benchmark-specific flags
 	benchmarkBroadcastConfigFile string

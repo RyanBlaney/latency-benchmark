@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/RyanBlaney/latency-benchmark-common/logging"
@@ -15,7 +16,10 @@ import (
 	"github.com/RyanBlaney/latency-benchmark/configs"
 	"github.com/RyanBlaney/latency-benchmark/internal/benchmark"
 	"github.com/RyanBlaney/latency-benchmark/internal/latency"
+	"github.com/tunein/go-logging/v7/pkg/logger"
+	"github.com/tunein/go-logging/v7/pkg/logger/logtypes"
 	"github.com/tunein/go-logging/v7/pkg/rootcollector"
+	"github.com/tunein/go-logging/v7/pkg/rootlogger"
 )
 
 // Context holds the application context and configuration
@@ -221,6 +225,8 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 		}
 	}
 
+	app.collectLivenessMetrics(summary)
+
 	// Write to file or stdout
 	if app.ctx.OutputFile != "" {
 		return app.writeToFile(formattedData)
@@ -234,6 +240,15 @@ func (app *BenchmarkApp) outputResults(summary *latency.BenchmarkSummary, perfor
 func (app *BenchmarkApp) collectLivenessMetrics(summary *latency.BenchmarkSummary) {
 	if summary == nil || summary.BroadcastMeasurements == nil {
 		return
+	}
+
+	err := rootlogger.Configure(logger.LogOptions{
+		Out:          "/tmp/test.log",
+		ReopenSignal: syscall.SIGHUP,
+		Level:        logtypes.InfoLevel,
+	})
+	if err != nil {
+		logging.Error(err, "Failed configuring log writer")
 	}
 
 	for broadcastKey, measurement := range summary.BroadcastMeasurements {
