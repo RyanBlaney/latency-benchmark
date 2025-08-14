@@ -5,8 +5,8 @@ github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migc
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
 github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814185829-e4a21f122b6f h1:ZP6dnqFwUvGqG1Eu+ChIywIlcycBfy8SyQSaCglo6C8=
 github.com/RyanBlaney/latency-benchmark-common v0.0.0-20250814185829-e4a21f122b6f/go.mod h1:gSalucCHCVj5uu+sjMLGnrW2Vk28cBoGnlgaDIcMulM=
-github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5 h1:ILYVtjzQEUdGg3Do1wDgPFvdrCnKwtgdUEqRKqg0Nu4=
-github.com/RyanBlaney/sonido-sonar v0.0.0-20250813155835-9b0271bcc6b5/go.mod h1:Q+isU9TagL0+TQrj84sv6D0AKqmSKTEGL7RTeyzwAiE=
+github.com/RyanBlaney/sonido-sonar v0.0.0-20250814190341-101cd9e6f65d h1:7yNTNxadE2T0LIW6eWKYlvzJnB6la689v36dKmu87Zs=
+github.com/RyanBlaney/sonido-sonar v0.0.0-20250814190341-101cd9e6f65d/go.mod h1:Q+isU9TagL0+TQrj84sv6D0AKqmSKTEGL7RTeyzwAiE=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
