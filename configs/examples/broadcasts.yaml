@@ -14,7 +14,7 @@ broadcast_groups:
         name: "MSNBC Free"
         description: "MSNBC live news broadcast for CDN latency testing"
         content_type: "news"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://tni-drct-msnbc-int-jg89w.fast.nbcuni.com/live/master.m3u8"
@@ -60,7 +60,7 @@ broadcast_groups:
 
       cnbcfree:
         name: CNBC Free
-        enabled: false
+        enabled: true
         content_type: "news"
         streams:
           pri_source:
@@ -120,7 +120,7 @@ broadcast_groups:
 
       foxfree:
         name: "Fox News"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://188a2110c0c0aa3d.mediapackage.us-east-2.amazonaws.com/out/v1/67fcd733de1c4728ac189e5dec958a18/master_1_0.m3u8"
@@ -149,7 +149,7 @@ broadcast_groups:
 
       bloombergfree:
         name: "Bloomberg Free"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://drsf4spw8el1i.cloudfront.net/rad/Channel-RAD-AWS-virginia-1/Source-RadBBR-96-1_live.m3u8"
@@ -178,7 +178,7 @@ broadcast_groups:
 
       espnfree:
         name: "ESPN Free"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://ti.radio-prod.sportsradiocenter.com/ESPN/128k/program.m3u8"
@@ -207,7 +207,7 @@ broadcast_groups:
 
       skynewsfree:
         name: "Sky News Free"
-        enabled: false
+        enabled: true
         streams:
           pri_source:
             url: "https://linear-uk-hls1-prod-main.cloudfront.skycdn.it/OFF/159218/radiotunein/master_mobile.m3u8?x-tunein-headers=x-cdnAuth:VUtjZG5UMFBTTnByMGRDbDB1ZEZyMG50aDNhZDNyUGE1NQ=="
