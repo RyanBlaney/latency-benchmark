@@ -117,11 +117,6 @@ func (app *BenchmarkApp) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to output results: %w", err)
 	}
 
-	// Return error if all broadcasts failed
-	if summary.FailedBroadcasts > 0 && summary.SuccessfulBroadcasts == 0 {
-		return fmt.Errorf("all benchmark measurements failed")
-	}
-
 	return nil
 }
 
@@ -320,9 +315,6 @@ func cleanBenchmarkSummary(summary *latency.BenchmarkSummary, verbose bool) map[
 		"start_time":              summary.StartTime,
 		"end_time":                summary.EndTime,
 		"total_duration":          summary.TotalDuration.Seconds(),
-		"successful_broadcasts":   summary.SuccessfulBroadcasts,
-		"failed_broadcasts":       summary.FailedBroadcasts,
-		"overall_health_score":    summary.OverallHealthScore,
 		"average_latency_metrics": summary.AverageLatencyMetrics,
 		"broadcast_measurements":  make(map[string]any),
 	}
@@ -415,7 +407,7 @@ func cleanAlignmentMeasurements(measurements map[string]*latency.AlignmentMeasur
 			cleanMeasurement["alignment_result"] = map[string]any{
 				"temporal_offset_seconds": measurement.AlignmentResult.TemporalOffset,
 				"offset_confidence":       measurement.AlignmentResult.OffsetConfidence,
-				"overall_similarity":      measurement.AlignmentResult.OverallSimilarity,
+				"alignment_similarity":    measurement.AlignmentResult.AlignmentSimilarity,
 				"alignment_quality":       measurement.AlignmentResult.AlignmentQuality,
 				"time_stretch":            measurement.AlignmentResult.TimeStretch,
 				"method":                  measurement.AlignmentResult.Method,

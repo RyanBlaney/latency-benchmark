@@ -3,8 +3,8 @@ package benchmark
 import (
 	"math"
 
-	"github.com/RyanBlaney/latency-benchmark/internal/latency"
 	"github.com/RyanBlaney/latency-benchmark-common/logging"
+	"github.com/RyanBlaney/latency-benchmark/internal/latency"
 )
 
 // MetricsCalculator handles calculation of various performance metrics
@@ -298,9 +298,6 @@ func (mc *MetricsCalculator) CalculateQualityMetrics(summary *latency.BenchmarkS
 
 // CalculateReliabilityMetrics calculates reliability metrics
 func (mc *MetricsCalculator) CalculateReliabilityMetrics(summary *latency.BenchmarkSummary) *ReliabilityMetrics {
-	totalBroadcasts := len(summary.BroadcastMeasurements)
-	successfulBroadcasts := summary.SuccessfulBroadcasts
-
 	streamTypeStats := map[string]struct {
 		total      int
 		successful int
@@ -348,10 +345,6 @@ func (mc *MetricsCalculator) CalculateReliabilityMetrics(summary *latency.Benchm
 		StreamTypeReliability: streamTypeReliability,
 		ErrorDistribution:     errorDistribution,
 		RetryRate:             0.0, // Would need retry tracking in the orchestrator
-	}
-
-	if totalBroadcasts > 0 {
-		metrics.OverallSuccessRate = float64(successfulBroadcasts) / float64(totalBroadcasts)
 	}
 
 	return metrics

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/RyanBlaney/latency-benchmark-common/stream"
@@ -278,10 +279,7 @@ type BenchmarkSummary struct {
 	StartTime             time.Time                        `json:"start_time"`
 	EndTime               time.Time                        `json:"end_time"`
 	TotalDuration         time.Duration                    `json:"total_duration"`
-	SuccessfulBroadcasts  int                              `json:"successful_broadcasts"`
-	FailedBroadcasts      int                              `json:"failed_broadcasts"`
-	AverageLatencyMetrics *AverageLatencyMetrics           `json:"average_latency_metrics"`
-	OverallHealthScore    float64                          `json:"overall_health_score"`
+	AverageLatencyMetrics *AverageLatencyMetrics           `json:"average_latency_metrics,omitempty"`
 }
 
 // AverageLatencyMetrics represents average latency across all broadcasts
@@ -535,35 +533,38 @@ func (c *BroadcastConfig) GetFirstBroadcastGroup() (*BroadcastGroup, string, err
 }
 
 // SelectBroadcastByIndex selects a broadcast from the first enabled group by index
+// with consistent ordering based on alphabetically sorted keys
 func (c *BroadcastConfig) SelectBroadcastByIndex(index int) (*Broadcast, string, error) {
 	group, groupName, err := c.GetFirstBroadcastGroup()
 	if err != nil {
 		return nil, "", err
 	}
 
-	// Convert map to slice for indexing
-	var broadcasts []*Broadcast
-	var broadcastKeys []string
-
+	// Get all enabled broadcast keys and sort them for consistent ordering
+	var enabledKeys []string
 	for key, broadcast := range group.Broadcasts {
-		if broadcast.Enabled != nil {
-			if *broadcast.Enabled {
-				broadcasts = append(broadcasts, broadcast)
-				broadcastKeys = append(broadcastKeys, key)
-			}
+		if broadcast.Enabled != nil && *broadcast.Enabled {
+			enabledKeys = append(enabledKeys, key)
 		}
 	}
 
-	if len(broadcasts) == 0 {
+	if len(enabledKeys) == 0 {
 		return nil, "", fmt.Errorf("no enabled broadcasts found in group %s", groupName)
 	}
 
-	if index < 0 || index >= len(broadcasts) {
-		return nil, "", fmt.Errorf("index %d out of range [0, %d) for broadcasts in group %s", index, len(broadcasts), groupName)
+	// Sort keys alphabetically to ensure consistent ordering
+	sort.Strings(enabledKeys)
+
+	if index < 0 || index >= len(enabledKeys) {
+		return nil, "", fmt.Errorf("index %d out of range [0, %d) for broadcasts in group %s", index, len(enabledKeys), groupName)
 	}
 
-	broadcastKey := fmt.Sprintf("%s_%s", groupName, broadcastKeys[index])
-	return broadcasts[index], broadcastKey, nil
+	// Get the broadcast using the sorted key
+	selectedKey := enabledKeys[index]
+	selectedBroadcast := group.Broadcasts[selectedKey]
+
+	broadcastKey := fmt.Sprintf("%s_%s", groupName, selectedKey)
+	return selectedBroadcast, broadcastKey, nil
 }
 
 // GetTotalEnabledBroadcasts returns the total number of enabled broadcasts across all enabled groups

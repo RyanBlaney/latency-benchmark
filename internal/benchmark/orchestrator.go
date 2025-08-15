@@ -143,11 +143,8 @@ func (o *Orchestrator) RunBenchmarkByIndex(ctx context.Context, index int) (*lat
 	o.calculateSummaryMetrics(summary)
 
 	o.logger.Debug("CDN benchmark completed", logging.Fields{
-		"index":                 index,
-		"total_duration_s":      summary.TotalDuration.Seconds(),
-		"successful_broadcasts": summary.SuccessfulBroadcasts,
-		"failed_broadcasts":     summary.FailedBroadcasts,
-		// "overall_health_score":  summary.OverallHealthScore,
+		"index":            index,
+		"total_duration_s": summary.TotalDuration.Seconds(),
 	})
 
 	return summary, nil
@@ -428,7 +425,7 @@ func (o *Orchestrator) calculateLiveness(alignment *latency.AlignmentMeasurement
 
 	if fingerprint.SimilarityResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
 		status = "NO_MATCH"
-		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
+		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", fingerprint.SimilarityResult.OverallSimilarity)
 	}
 
 	if status != "NO_ALIGNMENT" && status != "NO_MATCH" {
@@ -457,7 +454,7 @@ func (o *Orchestrator) calculateSourceLiveness(alignment *latency.AlignmentMeasu
 	}
 
 	if fingerprint.SimilarityResult.OverallSimilarity < o.benchmarkConfig.Benchmark.MinFingerprintSimilarity {
-		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", alignment.AlignmentResult.OverallSimilarity)
+		fmt.Printf("OVERALL SIMILARITY TOO LOW: %f\n", fingerprint.SimilarityResult.OverallSimilarity)
 		primaryLiveness.Status = "NO_MATCH"
 	}
 
